@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2021 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -33,6 +33,7 @@ using System.Net.Sockets;
 using System.Net.Security;
 using System.Threading.Tasks;
 using System.Collections.Generic;
+using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
 using SslProtocols = System.Security.Authentication.SslProtocols;
 
@@ -49,7 +50,7 @@ namespace MailKit {
 	/// </remarks>
 	public abstract class MailService : IMailService
 	{
-#if NET48 || NET50
+#if NET48 || NET5_0
 		const SslProtocols DefaultSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13;
 #else
 		const SslProtocols DefaultSslProtocols = SslProtocols.Tls12 | (SslProtocols) 12288;
@@ -132,22 +133,22 @@ namespace MailKit {
 		}
 
 		/// <summary>
-		/// Gets or sets the SSL and TLS protocol versions that the client is allowed to use.
+		/// Gets or sets the set of enabled SSL and/or TLS protocol versions that the client is allowed to use.
 		/// </summary>
 		/// <remarks>
-		/// <para>Gets or sets the SSL and TLS protocol versions that the client is allowed to use.</para>
-		/// <para>By default, MailKit initializes this value to support only TLS v1.2 and greater and
-		/// does not support TLS v1.1, TLS v1.0 or any version of SSL due to those protocols being
+		/// <para>Gets or sets the enabled SSL and/or TLS protocol versions that the client is allowed to use.</para>
+		/// <para>By default, MailKit initializes this value to enable only TLS v1.2 and greater.
+		/// TLS v1.1, TLS v1.0 and all versions of SSL are not enabled by default due to them all being
 		/// susceptible to security vulnerabilities such as POODLE.</para>
 		/// <para>This property should be set before calling any of the
 		/// <a href="Overload_MailKit_MailService_Connect.htm">Connect</a> methods.</para>
 		/// </remarks>
-		/// <value>The SSL and TLS protocol versions that are supported.</value>
+		/// <value>The SSL and TLS protocol versions that are enabled.</value>
 		public SslProtocols SslProtocols {
 			get; set;
 		}
 
-#if NET50
+#if NET5_0
 		/// <summary>
 		/// Gets or sets the cipher suites allowed to be used when negotiating an SSL or TLS connection.
 		/// </summary>
@@ -299,6 +300,83 @@ namespace MailKit {
 		}
 
 		/// <summary>
+		/// Get the negotiated SSL or TLS protocol version.
+		/// </summary>
+		/// <remarks>
+		/// <para>Gets the negotiated SSL or TLS protocol version once an SSL or TLS connection has been made.</para>
+		/// </remarks>
+		/// <value>The negotiated SSL or TLS protocol version.</value>
+		public abstract SslProtocols SslProtocol {
+			get;
+		}
+
+		/// <summary>
+		/// Get the negotiated SSL or TLS cipher algorithm.
+		/// </summary>
+		/// <remarks>
+		/// Gets the negotiated SSL or TLS cipher algorithm once an SSL or TLS connection has been made.
+		/// </remarks>
+		/// <value>The negotiated SSL or TLS cipher algorithm.</value>
+		public abstract CipherAlgorithmType? SslCipherAlgorithm {
+			get;
+		}
+
+		/// <summary>
+		/// Get the negotiated SSL or TLS cipher algorithm strength.
+		/// </summary>
+		/// <remarks>
+		/// Gets the negotiated SSL or TLS cipher algorithm strength once an SSL or TLS connection has been made.
+		/// </remarks>
+		/// <value>The negotiated SSL or TLS cipher algorithm strength.</value>
+		public abstract int? SslCipherStrength {
+			get;
+		}
+
+		/// <summary>
+		/// Get the negotiated SSL or TLS hash algorithm.
+		/// </summary>
+		/// <remarks>
+		/// Gets the negotiated SSL or TLS hash algorithm once an SSL or TLS connection has been made.
+		/// </remarks>
+		/// <value>The negotiated SSL or TLS hash algorithm.</value>
+		public abstract HashAlgorithmType? SslHashAlgorithm {
+			get;
+		}
+
+		/// <summary>
+		/// Get the negotiated SSL or TLS hash algorithm strength.
+		/// </summary>
+		/// <remarks>
+		/// Gets the negotiated SSL or TLS hash algorithm strength once an SSL or TLS connection has been made.
+		/// </remarks>
+		/// <value>The negotiated SSL or TLS hash algorithm strength.</value>
+		public abstract int? SslHashStrength {
+			get;
+		}
+
+		/// <summary>
+		/// Get the negotiated SSL or TLS key exchange algorithm.
+		/// </summary>
+		/// <remarks>
+		/// Gets the negotiated SSL or TLS key exchange algorithm once an SSL or TLS connection has been made.
+		/// </remarks>
+		/// <value>The negotiated SSL or TLS key exchange algorithm.</value>
+		public abstract ExchangeAlgorithmType? SslKeyExchangeAlgorithm {
+			get;
+		}
+
+		/// <summary>
+		/// Get the negotiated SSL or TLS key exchange algorithm strength.
+		/// </summary>
+		/// <remarks>
+		/// Gets the negotiated SSL or TLS key exchange algorithm strength once an SSL or TLS connection has been made.
+		/// </remarks>
+		/// <value>The negotiated SSL or TLS key exchange algorithm strength.</value>
+		public abstract int? SslKeyExchangeStrength {
+			get;
+		}
+
+		/// <summary>
 		/// Get whether or not the client is currently authenticated with the mail server.
 		/// </summary>
 		/// <remarks>
@@ -326,13 +404,14 @@ namespace MailKit {
 
 		const string AppleCertificateIssuer = "C=US, S=California, O=Apple Inc., CN=Apple Public Server RSA CA 12 - G1";
 		const string GMailCertificateIssuer = "CN=GTS CA 1O1, O=Google Trust Services, C=US";
+		const string GMailCertificateIssuer2 = "CN=GTS CA 1C3, O=Google Trust Services LLC, C=US";
 		const string OutlookCertificateIssuer = "CN=DigiCert Cloud Services CA-1, O=DigiCert Inc, C=US";
 		const string YahooCertificateIssuer = "CN=DigiCert SHA2 High Assurance Server CA, OU=www.digicert.com, O=DigiCert Inc, C=US";
 		const string GmxDotComCertificateIssuer = "CN=GeoTrust RSA CA 2018, OU=www.digicert.com, O=DigiCert Inc, C=US";
 		const string GmxDotNetCertificateIssuer = "CN=TeleSec ServerPass Extended Validation Class 3 CA, STREET=Untere Industriestr. 20, L=Netphen, PostalCode=57250, S=Nordrhein Westfalen, OU=T-Systems Trust Center, O=T-Systems International GmbH, C=DE";
 
 		// Note: This method auto-generated by https://gist.github.com/jstedfast/7cd36a51cee740ed84b18435106eaea5
-		static bool IsKnownMailServerCertificate (X509Certificate2 certificate)
+		internal static bool IsKnownMailServerCertificate (X509Certificate2 certificate)
 		{
 			var cn = certificate.GetNameInfo (X509NameType.SimpleName, false);
 			var fingerprint = certificate.Thumbprint;
@@ -341,29 +420,65 @@ namespace MailKit {
 
 			switch (cn) {
 			case "imap.gmail.com":
-				return issuer == GMailCertificateIssuer && serial == "15E3ABFBE021A3890500000000859178" && fingerprint == "E37ADB0D16CF5EB8F9FC6401B915F59D7BE79BE9"; // Expires 3/30/2021 8:11:15 AM
+				switch (issuer) {
+				case GMailCertificateIssuer:
+					return (serial == "00A15434C2695FB1880300000000CBF786" && fingerprint == "F351BCB631771F19AF41DFF22EB0A0839092DA51") // Expires 7/6/2021 6:15:47 AM
+						|| (serial == "35A5E0504C84EE78050000000087D205" && fingerprint == "87D4E6C66E70D45A133B0BC660EBCBADB01F861E") // Expires 8/1/2021 11:14:58 PM
+						|| (serial == "00C0CEADAB616F1F51050000000087D9CE" && fingerprint == "DC8A13CF705E8D95BD1ABD61687CF05A3CA56142"); // Expires 8/8/2021 11:07:00 PM
+				case GMailCertificateIssuer2:
+					return (serial == "5243D328A1B3764B0A00000000D56A81" && fingerprint == "83F1C54A009C0D4EE7CEAA1FD1466095B26544E2") // Expires 8/8/2021 11:07:07 PM
+						|| (serial == "00F2252BCEAD7C61830A00000000DC9A6F" && fingerprint == "671251A2594CB8A6E7AEC2CAD04C76A68755C592") // Expires 8/22/2021 11:00:36 PM
+						|| (serial == "00B66B3B6D37B3F5B60A00000000E05AF6" && fingerprint == "E7D9D439E4E40C078EFF84ED0A28B9B11C3570BC"); // Expires 8/29/2021 11:05:12 PM
+				default:
+					return false;
+				}
 			case "pop.gmail.com":
-				return issuer == GMailCertificateIssuer && serial == "00D47573DD756091B10300000000C7CDA5" && fingerprint == "AF29AA51E75C3F2C74518087E9F3B257344664F0"; // Expires 3/30/2021 8:11:16 AM
+				switch (issuer) {
+				case GMailCertificateIssuer:
+					return (serial == "00ADE0870C95CFCB30050000000087BC0D" && fingerprint == "D1E6036A1C9307CED83914B9DDFC4C84F0E9A702") // Expires 7/6/2021 6:15:50 AM
+						|| (serial == "00F58BC741E628A259050000000087D206" && fingerprint == "11F31922F7AE9CAC0E807F83298B385133764022") // Expires 8/1/2021 11:15:26 PM
+						|| (serial == "00EBE45B38519C9D3F0300000000CC2415" && fingerprint == "5890C2702F4943FEAA182E432BFEA2C872430209") // Expires 8/8/2021 11:07:31 PM
+						|| (serial == "00BA079BFB006A1E740300000000CC341B" && fingerprint == "B72F6D8385D8D2F3FC9EBEC3B587DD647678ABD8") // Expires 8/22/2021 11:00:59 PM
+						|| (serial == "00BB5405B5EECFE18C050000000087EA40" && fingerprint == "6E55F749282332F81AF3292D9EAC6FE329503C51"); // Expires 8/29/2021 11:05:35 PM
+				default:
+					return false;
+				}
 			case "smtp.gmail.com":
-				return issuer == GMailCertificateIssuer && serial == "00E44401FC458A1C58050000000085917D" && fingerprint == "217BC6DA8C393C1CB2FF0250DD46D656E0A6D282"; // Expires 3/30/2021 8:11:23 AM
+				switch (issuer) {
+				case GMailCertificateIssuer:
+					return (serial == "5645821E254664EF0300000000CBF788" && fingerprint == "B24907A7684FDE6875D43278B3EE880DD107ACBE") // Expires 7/6/2021 6:15:54 AM
+						|| (serial == "00DBDE269412152FE5050000000087D20B" && fingerprint == "EF2B8EBCCDD3EF711590B57C8B729ACFFE027AD1") // Expires 8/1/2021 11:17:56 PM
+						|| (serial == "0644BDA7346D8EB2050000000087D9D4" && fingerprint == "A42F8EA1FBC76190536D5A7CA6EB7A7A8C015180") // Expires 8/8/2021 11:10:18 PM
+						|| (serial == "00C662770E90C81534050000000087E452" && fingerprint == "77678E4D2923F6A7FEE300FC083D1FA52DFCC07C") // Expires 8/22/2021 11:03:31 PM
+						|| (serial == "627FD20711D64376050000000087EA44" && fingerprint == "8F81D50252CB00658FD397497066240FC625F3C1"); // Expires 8/29/2021 11:08:11 PM
+				default:
+					return false;
+				}
 			case "outlook.com":
-				return issuer == OutlookCertificateIssuer && serial == "07C8ACB7CCF0C64CEE3B1CE0CD1E9901" && fingerprint == "FEBBA28254D315A82080C6BE4B23CBC8F1E471AE"; // Expires 1/10/2022 6:59:59 PM
+				return issuer == OutlookCertificateIssuer && serial == "0CCAC32B0EF281026392B8852AB15642" && fingerprint == "CBAA1582F1E49AD1D108193B5D38B966BE4993C6"; // Expires 1/21/2022 6:59:59 PM
 			case "imap.mail.me.com":
 				return issuer == AppleCertificateIssuer && serial == "7693E9D2C3B5564F4F9A487D15A54116" && fingerprint == "FACBDEB692021F6404BE8B88A563767B282F98EE"; // Expires 10/3/2021 5:51:43 PM
 			case "smtp.mail.me.com":
 				return issuer == AppleCertificateIssuer && serial == "0A3048DECAB5CAA796E163E011CAE82E" && fingerprint == "B14CE4D4FF15FBC3C16C4848F1C632552184BD79"; // Expires 10/3/2021 6:12:03 PM
 			case "*.imap.mail.yahoo.com":
-				return issuer == YahooCertificateIssuer && serial == "0644DDCE32898E80C7B9FDD42C516396" && fingerprint == "1EC290720506325E9F48D258BD2E51E5779E85EA"; // Expires 5/25/2021 7:59:59 PM
+				return issuer == YahooCertificateIssuer && serial == "090883C7E8D9B60E60ABA19D508BD988" && fingerprint == "4018766D324ED3CC37A05D5997405E5B33A7CAEF"; // Expires 10/20/2021 7:59:59 PM
 			case "legacy.pop.mail.yahoo.com":
-				return issuer == YahooCertificateIssuer && serial == "058035C3D2AC58483DD14D3E2F9145B8" && fingerprint == "167AF555D510FACCA7B0B48EE0D10C360B512960"; // Expires 3/3/2021 7:00:00 AM
+				switch (issuer) {
+				case YahooCertificateIssuer:
+					return (serial == "0867B5394892A22A820DDFC97B22DFC4" && fingerprint == "A97792FD0708311430AD5D0431B69BA1B49B6B92") // Expires 7/27/2021 7:59:59 PM
+						|| (serial == "0CFADAA16F51AA5B67DCD15DCE388CF0" && fingerprint == "443D3B8F6F9A2439D0F3B9B2A2F90BBA70D8677F") // Expires 11/17/2021 6:59:59 PM
+						|| (serial == "09CC4977A4C14D4388D90CF6676385FE" && fingerprint == "7BA05AF724299FF0688842ADEF2837DE25F3C4FD"); // Expires 12/22/2021 6:59:59 PM
+				default:
+					return false;
+				}
 			case "smtp.mail.yahoo.com":
-				return issuer == YahooCertificateIssuer && serial == "0D6261AF405FAF9B39510CBD9E630676" && fingerprint == "14CBE3DAD16D7CA9A841AEA29C5EAB535DD49701"; // Expires 6/22/2021 7:59:59 PM
+				return issuer == YahooCertificateIssuer && serial == "0CFADAA16F51AA5B67DCD15DCE388CF0" && fingerprint == "443D3B8F6F9A2439D0F3B9B2A2F90BBA70D8677F"; // Expires 11/17/2021 6:59:59 PM
 			case "mout.gmx.com":
 				return issuer == GmxDotComCertificateIssuer && serial == "06206F2270494CD7AD11F2B17E286C2C" && fingerprint == "A7D3BCC363B307EC3BDE21269A2F05117D6614A8"; // Expires 7/12/2022 8:00:00 AM
 			case "mail.gmx.com":
 				return issuer == GmxDotComCertificateIssuer && serial == "0719A4D33A18B550133DDA3253AF6C96" && fingerprint == "948B0C3FA22BC12C91EEE5B1631A6C41B4A01B9C"; // Expires 7/12/2022 8:00:00 AM
 			case "mail.gmx.net":
-				return issuer == GmxDotNetCertificateIssuer && serial == "218296213149726650EB233346353EEA" && fingerprint == "67DED57393303E005937D5EDECB6A29C136024CA"; // Expires 5/13/2021 7:59:59 PM
+				return issuer == GmxDotNetCertificateIssuer && serial == "070E7CD59BB7AFD73E8A206219C4F011" && fingerprint == "E66DC8FE17C9A7718D17441CBE347D1D6F7BF3D2"; // Expires 5/3/2022 7:59:59 PM
 			default:
 				return false;
 			}
@@ -420,7 +535,7 @@ namespace MailKit {
 			return false;
 		}
 
-#if NET50
+#if NET5_0 || NETSTANDARD2_1
 		/// <summary>
 		/// Gets the SSL/TLS client authentication options for use with .NET5's SslStream.AuthenticateAsClient() API.
 		/// </summary>
@@ -434,8 +549,11 @@ namespace MailKit {
 		{
 			return new SslClientAuthenticationOptions {
 				CertificateRevocationCheckMode = CheckCertificateRevocation ? X509RevocationMode.Online : X509RevocationMode.NoCheck,
+				ApplicationProtocols = new List<SslApplicationProtocol> { new SslApplicationProtocol (Protocol) },
 				RemoteCertificateValidationCallback = remoteCertificateValidationCallback,
+#if NET5_0
 				CipherSuitesPolicy = SslCipherSuitesPolicy,
+#endif
 				ClientCertificates = ClientCertificates,
 				EnabledSslProtocols = SslProtocols,
 				TargetHost = host

@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2021 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -37,6 +37,7 @@ using System.Threading.Tasks;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Security.Cryptography;
+using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
 
 using MimeKit;
@@ -46,6 +47,7 @@ using MailKit.Security;
 
 using SslStream = MailKit.Net.SslStream;
 using NetworkStream = MailKit.Net.NetworkStream;
+using AuthenticationException = MailKit.Security.AuthenticationException;
 
 namespace MailKit.Net.Pop3 {
 	/// <summary>
@@ -69,6 +71,7 @@ namespace MailKit.Net.Pop3 {
 			UIDL   = (1 << 1)
 		}
 
+		readonly Pop3AuthenticationSecretDetector detector = new Pop3AuthenticationSecretDetector ();
 		readonly MimeParser parser = new MimeParser (Stream.Null);
 		readonly Pop3Engine engine;
 		ProbedCapabilities probed;
@@ -95,6 +98,7 @@ namespace MailKit.Net.Pop3 {
 		/// </exception>
 		public Pop3Client (IProtocolLogger protocolLogger) : base (protocolLogger)
 		{
+			protocolLogger.AuthenticationSecretDetector = detector;
 			engine = new Pop3Engine ();
 		}
 
@@ -406,6 +410,139 @@ namespace MailKit.Net.Pop3 {
 		}
 
 		/// <summary>
+		/// Get the negotiated SSL or TLS protocol version.
+		/// </summary>
+		/// <remarks>
+		/// <para>Gets the negotiated SSL or TLS protocol version once an SSL or TLS connection has been made.</para>
+		/// </remarks>
+		/// <example>
+		/// <code language="c#" source="Examples\Pop3Examples.cs" region="SslConnectionInformation"/>
+		/// </example>
+		/// <value>The negotiated SSL or TLS protocol version.</value>
+		public override SslProtocols SslProtocol {
+			get {
+				if (IsSecure && (engine.Stream.Stream is SslStream sslStream))
+					return sslStream.SslProtocol;
+
+				return SslProtocols.None;
+			}
+		}
+
+		/// <summary>
+		/// Get the negotiated SSL or TLS cipher algorithm.
+		/// </summary>
+		/// <remarks>
+		/// Gets the negotiated SSL or TLS cipher algorithm once an SSL or TLS connection has been made.
+		/// </remarks>
+		/// <example>
+		/// <code language="c#" source="Examples\Pop3Examples.cs" region="SslConnectionInformation"/>
+		/// </example>
+		/// <value>The negotiated SSL or TLS cipher algorithm.</value>
+		public override CipherAlgorithmType? SslCipherAlgorithm {
+			get {
+				if (IsSecure && (engine.Stream.Stream is SslStream sslStream))
+					return sslStream.CipherAlgorithm;
+
+				return null;
+			}
+		}
+
+		/// <summary>
+		/// Get the negotiated SSL or TLS cipher algorithm strength.
+		/// </summary>
+		/// <remarks>
+		/// Gets the negotiated SSL or TLS cipher algorithm strength once an SSL or TLS connection has been made.
+		/// </remarks>
+		/// <example>
+		/// <code language="c#" source="Examples\Pop3Examples.cs" region="SslConnectionInformation"/>
+		/// </example>
+		/// <value>The negotiated SSL or TLS cipher algorithm strength.</value>
+		public override int? SslCipherStrength {
+			get {
+				if (IsSecure && (engine.Stream.Stream is SslStream sslStream))
+					return sslStream.CipherStrength;
+
+				return null;
+			}
+		}
+
+		/// <summary>
+		/// Get the negotiated SSL or TLS hash algorithm.
+		/// </summary>
+		/// <remarks>
+		/// Gets the negotiated SSL or TLS hash algorithm once an SSL or TLS connection has been made.
+		/// </remarks>
+		/// <example>
+		/// <code language="c#" source="Examples\Pop3Examples.cs" region="SslConnectionInformation"/>
+		/// </example>
+		/// <value>The negotiated SSL or TLS hash algorithm.</value>
+		public override HashAlgorithmType? SslHashAlgorithm {
+			get {
+				if (IsSecure && (engine.Stream.Stream is SslStream sslStream))
+					return sslStream.HashAlgorithm;
+
+				return null;
+			}
+		}
+
+		/// <summary>
+		/// Get the negotiated SSL or TLS hash algorithm strength.
+		/// </summary>
+		/// <remarks>
+		/// Gets the negotiated SSL or TLS hash algorithm strength once an SSL or TLS connection has been made.
+		/// </remarks>
+		/// <example>
+		/// <code language="c#" source="Examples\Pop3Examples.cs" region="SslConnectionInformation"/>
+		/// </example>
+		/// <value>The negotiated SSL or TLS hash algorithm strength.</value>
+		public override int? SslHashStrength {
+			get {
+				if (IsSecure && (engine.Stream.Stream is SslStream sslStream))
+					return sslStream.HashStrength;
+
+				return null;
+			}
+		}
+
+		/// <summary>
+		/// Get the negotiated SSL or TLS key exchange algorithm.
+		/// </summary>
+		/// <remarks>
+		/// Gets the negotiated SSL or TLS key exchange algorithm once an SSL or TLS connection has been made.
+		/// </remarks>
+		/// <example>
+		/// <code language="c#" source="Examples\Pop3Examples.cs" region="SslConnectionInformation"/>
+		/// </example>
+		/// <value>The negotiated SSL or TLS key exchange algorithm.</value>
+		public override ExchangeAlgorithmType? SslKeyExchangeAlgorithm {
+			get {
+				if (IsSecure && (engine.Stream.Stream is SslStream sslStream))
+					return sslStream.KeyExchangeAlgorithm;
+
+				return null;
+			}
+		}
+
+		/// <summary>
+		/// Get the negotiated SSL or TLS key exchange algorithm strength.
+		/// </summary>
+		/// <remarks>
+		/// Gets the negotiated SSL or TLS key exchange algorithm strength once an SSL or TLS connection has been made.
+		/// </remarks>
+		/// <example>
+		/// <code language="c#" source="Examples\Pop3Examples.cs" region="SslConnectionInformation"/>
+		/// </example>
+		/// <value>The negotiated SSL or TLS key exchange algorithm strength.</value>
+		public override int? SslKeyExchangeStrength {
+			get {
+				if (IsSecure && (engine.Stream.Stream is SslStream sslStream))
+					return sslStream.KeyExchangeStrength;
+
+				return null;
+			}
+		}
+
+		/// <summary>
 		/// Get whether or not the client is currently authenticated with the POP3 server.
 		/// </summary>
 		/// <remarks>
@@ -539,12 +676,18 @@ namespace MailKit.Net.Pop3 {
 
 				AuthMessage = string.Empty;
 
-				do {
-					if (doAsync)
-						id = await Engine.IterateAsync ().ConfigureAwait (false);
-					else
-						id = Engine.Iterate ();
-				} while (id < pc.Id);
+				client.detector.IsAuthenticating = true;
+
+				try {
+					do {
+						if (doAsync)
+							id = await Engine.IterateAsync ().ConfigureAwait (false);
+						else
+							id = Engine.Iterate ();
+					} while (id < pc.Id);
+				} finally {
+					client.detector.IsAuthenticating = false;
+				}
 
 				return pc;
 			}
@@ -667,10 +810,14 @@ namespace MailKit.Net.Pop3 {
 				for (int i = 0; i < digest.Length; i++)
 					md5sum.Append (digest[i].ToString ("x2"));
 
+				detector.IsAuthenticating = true;
+
 				try {
 					message = await SendCommandAsync (doAsync, cancellationToken, encoding, "APOP {0} {1}", userName, md5sum).ConfigureAwait (false);
 					engine.State = Pop3EngineState.Transaction;
 				} catch (Pop3CommandException) {
+				} finally {
+					detector.IsAuthenticating = false;
 				}
 
 				if (engine.State == Pop3EngineState.Transaction) {
@@ -720,12 +867,15 @@ namespace MailKit.Net.Pop3 {
 			cred = credentials.GetCredential (saslUri, "DEFAULT");
 			userName = utf8 ? SaslMechanism.SaslPrep (cred.UserName) : cred.UserName;
 			password = utf8 ? SaslMechanism.SaslPrep (cred.Password) : cred.Password;
+			detector.IsAuthenticating = true;
 
 			try {
 				await SendCommandAsync (doAsync, cancellationToken, encoding, "USER {0}", userName).ConfigureAwait (false);
 				message = await SendCommandAsync (doAsync, cancellationToken, encoding, "PASS {0}", password).ConfigureAwait (false);
 			} catch (Pop3CommandException) {
 				throw new AuthenticationException ();
+			} finally {
+				detector.IsAuthenticating = false;
 			}
 
 			engine.State = Pop3EngineState.Transaction;
@@ -911,7 +1061,7 @@ namespace MailKit.Net.Pop3 {
 
 				try {
 					if (doAsync) {
-#if NET50
+#if NET5_0 || NETSTANDARD2_1
 						await ssl.AuthenticateAsClientAsync (GetSslClientAuthenticationOptions (host, ValidateRemoteCertificate), cancellationToken).ConfigureAwait (false);
 #else
 						await ssl.AuthenticateAsClientAsync (host, ClientCertificates, SslProtocols, CheckCertificateRevocation).ConfigureAwait (false);
@@ -919,7 +1069,7 @@ namespace MailKit.Net.Pop3 {
 					} else {
 #if NETSTANDARD1_3 || NETSTANDARD1_6
 						ssl.AuthenticateAsClientAsync (host, ClientCertificates, SslProtocols, CheckCertificateRevocation).GetAwaiter ().GetResult ();
-#elif NET50
+#elif NET5_0
 						ssl.AuthenticateAsClient (GetSslClientAuthenticationOptions (host, ValidateRemoteCertificate));
 #else
 						ssl.AuthenticateAsClient (host, ClientCertificates, SslProtocols, CheckCertificateRevocation);
@@ -968,7 +1118,7 @@ namespace MailKit.Net.Pop3 {
 						engine.Stream.Stream = tls;
 
 						if (doAsync) {
-#if NET50
+#if NET5_0 || NETSTANDARD2_1
 							await tls.AuthenticateAsClientAsync (GetSslClientAuthenticationOptions (host, ValidateRemoteCertificate), cancellationToken).ConfigureAwait (false);
 #else
 							await tls.AuthenticateAsClientAsync (host, ClientCertificates, SslProtocols, CheckCertificateRevocation).ConfigureAwait (false);
@@ -976,7 +1126,7 @@ namespace MailKit.Net.Pop3 {
 						} else {
 #if NETSTANDARD1_3 || NETSTANDARD1_6
 							tls.AuthenticateAsClientAsync (host, ClientCertificates, SslProtocols, CheckCertificateRevocation).GetAwaiter ().GetResult ();
-#elif NET50
+#elif NET5_0
 							tls.AuthenticateAsClient (GetSslClientAuthenticationOptions (host, ValidateRemoteCertificate));
 #else
 							tls.AuthenticateAsClient (host, ClientCertificates, SslProtocols, CheckCertificateRevocation);
@@ -1102,7 +1252,7 @@ namespace MailKit.Net.Pop3 {
 
 				try {
 					if (doAsync) {
-#if NET50
+#if NET5_0 || NETSTANDARD2_1
 						await ssl.AuthenticateAsClientAsync (GetSslClientAuthenticationOptions (host, ValidateRemoteCertificate), cancellationToken).ConfigureAwait (false);
 #else
 						await ssl.AuthenticateAsClientAsync (host, ClientCertificates, SslProtocols, CheckCertificateRevocation).ConfigureAwait (false);
@@ -1110,7 +1260,7 @@ namespace MailKit.Net.Pop3 {
 					} else {
 #if NETSTANDARD1_3 || NETSTANDARD1_6
 						ssl.AuthenticateAsClientAsync (host, ClientCertificates, SslProtocols, CheckCertificateRevocation).GetAwaiter ().GetResult ();
-#elif NET50
+#elif NET5_0
 						ssl.AuthenticateAsClient (GetSslClientAuthenticationOptions (host, ValidateRemoteCertificate));
 #else
 						ssl.AuthenticateAsClient (host, ClientCertificates, SslProtocols, CheckCertificateRevocation);
@@ -1164,7 +1314,7 @@ namespace MailKit.Net.Pop3 {
 
 					try {
 						if (doAsync) {
-#if NET50
+#if NET5_0 || NETSTANDARD2_1
 							await tls.AuthenticateAsClientAsync (GetSslClientAuthenticationOptions (host, ValidateRemoteCertificate), cancellationToken).ConfigureAwait (false);
 #else
 							await tls.AuthenticateAsClientAsync (host, ClientCertificates, SslProtocols, CheckCertificateRevocation).ConfigureAwait (false);
@@ -1172,7 +1322,7 @@ namespace MailKit.Net.Pop3 {
 						} else {
 #if NETSTANDARD1_3 || NETSTANDARD1_6
 							tls.AuthenticateAsClientAsync (host, ClientCertificates, SslProtocols, CheckCertificateRevocation).GetAwaiter ().GetResult ();
-#elif NET50
+#elif NET5_0
 							tls.AuthenticateAsClient (GetSslClientAuthenticationOptions (host, ValidateRemoteCertificate));
 #else
 							tls.AuthenticateAsClient (host, ClientCertificates, SslProtocols, CheckCertificateRevocation);

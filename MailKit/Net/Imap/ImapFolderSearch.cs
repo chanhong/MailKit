@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2021 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -731,7 +731,7 @@ namespace MailKit.Net.Imap
 			var command = "UID SEARCH ";
 
 			if ((Engine.Capabilities & ImapCapabilities.ESearch) != 0)
-				command += "RETURN () ";
+				command += "RETURN (ALL) ";
 
 			if (charset != null && args.Count > 0 && !Engine.UTF8Enabled)
 				command += "CHARSET " + charset + " ";
@@ -1171,7 +1171,7 @@ namespace MailKit.Net.Imap
 			var command = "UID SORT ";
 
 			if ((Engine.Capabilities & ImapCapabilities.ESort) != 0)
-				command += "RETURN () ";
+				command += "RETURN (ALL) ";
 
 			command += order + " " + (charset ?? "US-ASCII") + " " + expr + "\r\n";
 

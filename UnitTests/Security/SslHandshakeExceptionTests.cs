@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2021 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -33,6 +33,7 @@ using System.Net.Sockets;
 using System.Net.Security;
 using System.Threading.Tasks;
 using System.Collections.Generic;
+using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
 using System.Runtime.Serialization.Formatters.Binary;
 
@@ -40,8 +41,6 @@ using NUnit.Framework;
 
 using MailKit;
 using MailKit.Security;
-
-using AuthenticationException = System.Security.Authentication.AuthenticationException;
 
 namespace UnitTests.Security {
 	[TestFixture]
@@ -171,6 +170,20 @@ namespace UnitTests.Security {
 			public override bool IsEncrypted => throw new NotImplementedException ();
 
 			public override bool IsSigned => throw new NotImplementedException ();
+
+			public override SslProtocols SslProtocol => throw new NotImplementedException ();
+
+			public override CipherAlgorithmType? SslCipherAlgorithm => throw new NotImplementedException ();
+
+			public override int? SslCipherStrength => throw new NotImplementedException ();
+
+			public override HashAlgorithmType? SslHashAlgorithm => throw new NotImplementedException ();
+
+			public override int? SslHashStrength => throw new NotImplementedException ();
+
+			public override ExchangeAlgorithmType? SslKeyExchangeAlgorithm => throw new NotImplementedException ();
+
+			public override int? SslKeyExchangeStrength => throw new NotImplementedException ();
 
 			public override bool IsAuthenticated => throw new NotImplementedException ();
 

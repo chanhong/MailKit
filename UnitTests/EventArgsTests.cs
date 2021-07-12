@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2021 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -45,6 +45,18 @@ namespace UnitTests {
 			Assert.AreEqual ("Klingons on the starboard bow!", args.Message);
 
 			Assert.Throws<ArgumentNullException> (() => new AlertEventArgs (null));
+		}
+
+		[Test]
+		public void TestWebAlertEventArgs ()
+		{
+			var args = new WebAlertEventArgs (new Uri ("http://www.google.com/"), "Klingons on the starboard bow!");
+
+			Assert.AreEqual ("http://www.google.com/", args.WebUri.AbsoluteUri);
+			Assert.AreEqual ("Klingons on the starboard bow!", args.Message);
+
+			Assert.Throws<ArgumentNullException> (() => new WebAlertEventArgs (null, "message text."));
+			Assert.Throws<ArgumentNullException> (() => new WebAlertEventArgs (new Uri ("http://www.google.com/"), null));
 		}
 
 		[Test]

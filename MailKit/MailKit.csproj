@@ -3,9 +3,9 @@
   <PropertyGroup>
     <Description>An Open Source cross-platform .NET mail-client library that is based on MimeKit and optimized for mobile devices.</Description>
     <AssemblyTitle>MailKit</AssemblyTitle>
-    <VersionPrefix>2.11.0</VersionPrefix>
+    <VersionPrefix>2.13.0</VersionPrefix>
     <Authors>Jeffrey Stedfast</Authors>
-    <TargetFrameworks>netstandard2.0;net45;net46;net47;net48;net50</TargetFrameworks>
+    <TargetFrameworks>netstandard2.0;netstandard2.1;net45;net46;net47;net48;net50</TargetFrameworks>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
     <AssemblyName>MailKit</AssemblyName>
@@ -57,6 +57,7 @@
     <Compile Include="Net\Imap\AsyncImapClient.cs" />
     <Compile Include="Net\Imap\IImapClient.cs" />
     <Compile Include="Net\Imap\IImapFolder.cs" />
+    <Compile Include="Net\Imap\ImapAuthenticationSecretDetector.cs" />
     <Compile Include="Net\Imap\ImapCallbacks.cs" />
     <Compile Include="Net\Imap\ImapCapabilities.cs" />
     <Compile Include="Net\Imap\ImapClient.cs" />
@@ -81,6 +82,7 @@
     <Compile Include="Net\Imap\ImapUtils.cs" />
     <Compile Include="Net\Pop3\AsyncPop3Client.cs" />
     <Compile Include="Net\Pop3\IPop3Client.cs" />
+    <Compile Include="Net\Pop3\Pop3AuthenticationSecretDetector.cs" />
     <Compile Include="Net\Pop3\Pop3Capabilities.cs" />
     <Compile Include="Net\Pop3\Pop3Client.cs" />
     <Compile Include="Net\Pop3\Pop3Command.cs" />
@@ -99,6 +101,7 @@
     <Compile Include="Net\Proxy\SocksClient.cs" />
     <Compile Include="Net\Smtp\AsyncSmtpClient.cs" />
     <Compile Include="Net\Smtp\ISmtpClient.cs" />
+    <Compile Include="Net\Smtp\SmtpAuthenticationSecretDetector.cs" />
     <Compile Include="Net\Smtp\SmtpCapabilities.cs" />
     <Compile Include="Net\Smtp\SmtpClient.cs" />
     <Compile Include="Net\Smtp\SmtpCommandException.cs" />
@@ -194,6 +197,7 @@
     <Compile Include="FolderNotOpenException.cs" />
     <Compile Include="FolderQuota.cs" />
     <Compile Include="FolderRenamedEventArgs.cs" />
+    <Compile Include="IAuthenticationSecretDetector.cs" />
     <Compile Include="IMailFolder.cs" />
     <Compile Include="IMailService.cs" />
     <Compile Include="IMailSpool.cs" />
@@ -240,6 +244,7 @@
     <Compile Include="UniqueIdRange.cs" />
     <Compile Include="UniqueIdSet.cs" />
     <Compile Include="UriExtensions.cs" />
+    <Compile Include="WebAlertEventArgs.cs" />
   </ItemGroup>
 
 </Project>

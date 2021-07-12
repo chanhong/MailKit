@@ -23,6 +23,7 @@
 * [How can I decrypt PGP messages that are embedded in the main message text?](#DecryptInlinePGP)
 * [How can I reply to a message?](#Reply)
 * [How can I forward a message?](#Forward)
+* [Why does text show up garbled in my ASP.NET Core / .NET Core / .NET 5 app?](#GarbledText)
 
 ### ImapClient
 * [How can I get the number of unread messages in a folder?](#ImapUnreadCount)
@@ -128,8 +129,8 @@ bool MyServerCertificateValidationCallback (object sender, X509Certificate certi
         var issuer = certificate2.Issuer;
 
         return cn == "imap.gmail.com" && issuer == "CN=GTS CA 1O1, O=Google Trust Services, C=US" &&
-            serial == "00BABE95B167C9ECAF08000000006065B6" &&
-            fingerprint == "E79A011EF55EEC72D2B7E391D193761372796836";
+            serial == "00A15434C2695FB1880300000000CBF786" &&
+            fingerprint == "F351BCB631771F19AF41DFF22EB0A0839092DA51";
     }
 
     return false;
@@ -287,7 +288,7 @@ var codeReceiver = new LocalServerCodeReceiver ();
 var authCode = new AuthorizationCodeInstalledApp (codeFlow, codeReceiver);
 var credential = await authCode.AuthorizeAsync (GMailAccount, CancellationToken.None);
 
-if (authCode.ShouldRequestAuthorizationCode (credential.Token))
+if (credential.Token.IsExpired (SystemClock.Default))
     await credential.RefreshTokenAsync (CancellationToken.None);
 
 var oauth2 = new SaslMechanismOAuth2 (credential.UserId, credential.Token.AccessToken);
@@ -1091,6 +1092,7 @@ public class ReplyVisitor : MimeVisitor
     MimeMessage original, reply;
     MailboxAddress from;
     bool replyToAll;
+    int isRelated;
 
     /// <summary>
     /// Creates a new ReplyVisitor.
@@ -1215,10 +1217,12 @@ public class ReplyVisitor : MimeVisitor
 
         root.Accept (this);
 
+        isRelated++;
         for (int i = 0; i < related.Count; i++) {
             if (related[i] != root)
                 related[i].Accept (this);
         }
+        isRelated--;
 
         Pop ();
     }
@@ -1314,6 +1318,14 @@ public class ReplyVisitor : MimeVisitor
     {
         // don't descend into message/rfc822 parts
     }
+
+    protected override void VisitMimePart (MimePart entity)
+    {
+        if (isRelated > 0 || !entity.IsAttachment) {
+            var parent = stack.Peek ();
+            parent.Add (entity);
+        }
+    }
 }
 ```
 
@@ -1333,7 +1345,7 @@ public static MimeMessage Reply (MimeMessage message, MailboxAddress from, bool 
 There are 2 common ways of forwarding a message: attaching the original message as an attachment and inlining
 the message body much like replying typically does. Which method you choose is up to you.
 
-To forward a message by attaching it as an attachment, you would do do something like this:
+To forward a message by attaching it as an attachment, you would do something like this:
 
 ```csharp
 public static MimeMessage Forward (MimeMessage original, MailboxAddress from, IEnumerable<InternetAddress> to)
@@ -1403,6 +1415,21 @@ public static MimeMessage Forward (MimeMessage original, MailboxAddress from, IE
 ```
 
 Keep in mind that not all messages will have a `TextBody` available, so you'll have to find a way to handle those cases.
+
+### <a name="GarbledText">Q: Why does text show up garbled in my ASP.NET Core / .NET Core / .NET 5 app?</a>
+
+.NET Core (and ASP.NET Core by extension) and .NET 5 only provide the Unicode encodings, ASCII and ISO-8859-1 by default.
+Other text encodings are not available to your application unless your application
+[registers](https://docs.microsoft.com/en-us/dotnet/api/system.text.encoding.registerprovider?view=net-5.0) the encoding
+provider that provides all of the additional encodings.
+
+To register the additional text encodings, use the following code snippet:
+
+```csharp
+System.Text.Encoding.RegisterProvider (System.Text.Encoding.CodePagesEncodingProvider.Instance);
+```
+
+Note: The above code snippet should be safe to call in .NET Framework versions >= 4.6 as well.
 
 ## ImapClient
 
@@ -1541,7 +1568,7 @@ class CachedMessageInfo
 {
     public UniqueId UniqueId;
     public MessageFlags Flags;
-    public HashSet<string> UserFlags;
+    public HashSet<string> Keywords;
     public Envelope Envelope;
     public BodyPart Body;
 }
@@ -1594,7 +1621,7 @@ static void ResyncFolder (ImapFolder folder, List<CachedMessageInfo> cache, ref 
                 // hurt to add error checking to make sure. I'm not bothering to here
                 // for simplicity reasons.
                 cache[i].Flags = summaries[i].Flags.Value;
-                cache[i].UserFlags = summaries[i].UserFlags;
+                cache[i].Keywords = summaries[i].Keywords;
             }
         } else {
             // The UIDVALIDITY of the folder has changed. This means that our entire
@@ -1614,7 +1641,7 @@ static void ResyncFolder (ImapFolder folder, List<CachedMessageInfo> cache, ref 
         cache.Add (new CachedMessageInfo {
             UniqueId = summaries[i].UniqueId,
             Flags = summaries[i].Flags.Value,
-            UserFlags = summaries[i].UserFlags,
+            Keywords = summaries[i].Keywords,
             Envelope = summaries[i].Envelope,
             Body = summaries[i].Body
         });

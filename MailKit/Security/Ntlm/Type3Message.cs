@@ -6,7 +6,7 @@
 //
 // Copyright (c) 2003 Motus Technologies Inc. (http://www.motus.com)
 // Copyright (c) 2004 Novell, Inc (http://www.novell.com)
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2021 .NET Foundation and Contributors
 //
 // References
 // a.	NTLM Authentication Scheme for HTTP, Ronald Tschalär
@@ -199,7 +199,7 @@ namespace MailKit.Security.Ntlm {
 
 			ChallengeResponse2.Compute (type2, Level, Username, Password, Domain, out lm, out ntlm);
 
-			if (negotiateVersion = (type2.Flags & NtlmFlags.NegotiateVersion) != 0 && OSVersion != null)
+			if (negotiateVersion = ((type2.Flags & NtlmFlags.NegotiateVersion) != 0 && OSVersion != null))
 				payloadOffset += 8;
 
 			var lmResponseLength = lm != null ? lm.Length : 0;

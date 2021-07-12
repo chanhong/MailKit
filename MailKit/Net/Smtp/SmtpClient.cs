@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2021 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -35,6 +35,7 @@ using System.Net.Security;
 using System.Globalization;
 using System.Threading.Tasks;
 using System.Collections.Generic;
+using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
 
 using MimeKit;
@@ -45,6 +46,7 @@ using MailKit.Security;
 
 using SslStream = MailKit.Net.SslStream;
 using NetworkStream = MailKit.Net.NetworkStream;
+using AuthenticationException = MailKit.Security.AuthenticationException;
 
 namespace MailKit.Net.Smtp {
 	/// <summary>
@@ -75,6 +77,7 @@ namespace MailKit.Net.Smtp {
 		}
 
 		readonly HashSet<string> authenticationMechanisms = new HashSet<string> (StringComparer.Ordinal);
+		readonly SmtpAuthenticationSecretDetector detector = new SmtpAuthenticationSecretDetector ();
 		readonly List<SmtpCommand> queued = new List<SmtpCommand> ();
 		SmtpCapabilities capabilities;
 		int timeout = 2 * 60 * 1000;
@@ -120,6 +123,7 @@ namespace MailKit.Net.Smtp {
 		/// </example>
 		public SmtpClient (IProtocolLogger protocolLogger) : base (protocolLogger)
 		{
+			protocolLogger.AuthenticationSecretDetector = detector;
 		}
 
 		/// <summary>
@@ -326,6 +330,139 @@ namespace MailKit.Net.Smtp {
 		/// <value><c>true</c> if the connection is signed; otherwise, <c>false</c>.</value>
 		public override bool IsSigned {
 			get { return IsSecure && (Stream.Stream is SslStream sslStream) && sslStream.IsSigned; }
+		}
+
+		/// <summary>
+		/// Get the negotiated SSL or TLS protocol version.
+		/// </summary>
+		/// <remarks>
+		/// <para>Gets the negotiated SSL or TLS protocol version once an SSL or TLS connection has been made.</para>
+		/// </remarks>
+		/// <example>
+		/// <code language="c#" source="Examples\SmtpExamples.cs" region="SslConnectionInformation"/>
+		/// </example>
+		/// <value>The negotiated SSL or TLS protocol version.</value>
+		public override SslProtocols SslProtocol {
+			get {
+				if (IsSecure && (Stream.Stream is SslStream sslStream))
+					return sslStream.SslProtocol;
+
+				return SslProtocols.None;
+			}
+		}
+
+		/// <summary>
+		/// Get the negotiated SSL or TLS cipher algorithm.
+		/// </summary>
+		/// <remarks>
+		/// Gets the negotiated SSL or TLS cipher algorithm once an SSL or TLS connection has been made.
+		/// </remarks>
+		/// <example>
+		/// <code language="c#" source="Examples\SmtpExamples.cs" region="SslConnectionInformation"/>
+		/// </example>
+		/// <value>The negotiated SSL or TLS cipher algorithm.</value>
+		public override CipherAlgorithmType? SslCipherAlgorithm {
+			get {
+				if (IsSecure && (Stream.Stream is SslStream sslStream))
+					return sslStream.CipherAlgorithm;
+
+				return null;
+			}
+		}
+
+		/// <summary>
+		/// Get the negotiated SSL or TLS cipher algorithm strength.
+		/// </summary>
+		/// <remarks>
+		/// Gets the negotiated SSL or TLS cipher algorithm strength once an SSL or TLS connection has been made.
+		/// </remarks>
+		/// <example>
+		/// <code language="c#" source="Examples\SmtpExamples.cs" region="SslConnectionInformation"/>
+		/// </example>
+		/// <value>The negotiated SSL or TLS cipher algorithm strength.</value>
+		public override int? SslCipherStrength {
+			get {
+				if (IsSecure && (Stream.Stream is SslStream sslStream))
+					return sslStream.CipherStrength;
+
+				return null;
+			}
+		}
+
+		/// <summary>
+		/// Get the negotiated SSL or TLS hash algorithm.
+		/// </summary>
+		/// <remarks>
+		/// Gets the negotiated SSL or TLS hash algorithm once an SSL or TLS connection has been made.
+		/// </remarks>
+		/// <example>
+		/// <code language="c#" source="Examples\SmtpExamples.cs" region="SslConnectionInformation"/>
+		/// </example>
+		/// <value>The negotiated SSL or TLS hash algorithm.</value>
+		public override HashAlgorithmType? SslHashAlgorithm {
+			get {
+				if (IsSecure && (Stream.Stream is SslStream sslStream))
+					return sslStream.HashAlgorithm;
+
+				return null;
+			}
+		}
+
+		/// <summary>
+		/// Get the negotiated SSL or TLS hash algorithm strength.
+		/// </summary>
+		/// <remarks>
+		/// Gets the negotiated SSL or TLS hash algorithm strength once an SSL or TLS connection has been made.
+		/// </remarks>
+		/// <example>
+		/// <code language="c#" source="Examples\SmtpExamples.cs" region="SslConnectionInformation"/>
+		/// </example>
+		/// <value>The negotiated SSL or TLS hash algorithm strength.</value>
+		public override int? SslHashStrength {
+			get {
+				if (IsSecure && (Stream.Stream is SslStream sslStream))
+					return sslStream.HashStrength;
+
+				return null;
+			}
+		}
+
+		/// <summary>
+		/// Get the negotiated SSL or TLS key exchange algorithm.
+		/// </summary>
+		/// <remarks>
+		/// Gets the negotiated SSL or TLS key exchange algorithm once an SSL or TLS connection has been made.
+		/// </remarks>
+		/// <example>
+		/// <code language="c#" source="Examples\SmtpExamples.cs" region="SslConnectionInformation"/>
+		/// </example>
+		/// <value>The negotiated SSL or TLS key exchange algorithm.</value>
+		public override ExchangeAlgorithmType? SslKeyExchangeAlgorithm {
+			get {
+				if (IsSecure && (Stream.Stream is SslStream sslStream))
+					return sslStream.KeyExchangeAlgorithm;
+
+				return null;
+			}
+		}
+
+		/// <summary>
+		/// Get the negotiated SSL or TLS key exchange algorithm strength.
+		/// </summary>
+		/// <remarks>
+		/// Gets the negotiated SSL or TLS key exchange algorithm strength once an SSL or TLS connection has been made.
+		/// </remarks>
+		/// <example>
+		/// <code language="c#" source="Examples\SmtpExamples.cs" region="SslConnectionInformation"/>
+		/// </example>
+		/// <value>The negotiated SSL or TLS key exchange algorithm strength.</value>
+		public override int? SslKeyExchangeStrength {
+			get {
+				if (IsSecure && (Stream.Stream is SslStream sslStream))
+					return sslStream.KeyExchangeStrength;
+
+				return null;
+			}
 		}
 
 		/// <summary>
@@ -631,6 +768,7 @@ namespace MailKit.Net.Smtp {
 
 			cancellationToken.ThrowIfCancellationRequested ();
 
+			SaslException saslException = null;
 			SmtpResponse response;
 			string challenge;
 			string command;
@@ -645,24 +783,28 @@ namespace MailKit.Net.Smtp {
 				command = string.Format ("AUTH {0}", mechanism.MechanismName);
 			}
 
-			response = await SendCommandAsync (command, doAsync, cancellationToken).ConfigureAwait (false);
-
-			if (response.StatusCode == SmtpStatusCode.AuthenticationMechanismTooWeak)
-				throw new AuthenticationException (response.Response);
-
-			SaslException saslException = null;
+			detector.IsAuthenticating = true;
 
 			try {
-				while (response.StatusCode == SmtpStatusCode.AuthenticationChallenge) {
-					challenge = mechanism.Challenge (response.Response);
-					response = await SendCommandAsync (challenge, doAsync, cancellationToken).ConfigureAwait (false);
-				}
+				response = await SendCommandAsync (command, doAsync, cancellationToken).ConfigureAwait (false);
 
-				saslException = null;
-			} catch (SaslException ex) {
-				// reset the authentication state
-				response = await SendCommandAsync (string.Empty, doAsync, cancellationToken).ConfigureAwait (false);
-				saslException = ex;
+				if (response.StatusCode == SmtpStatusCode.AuthenticationMechanismTooWeak)
+					throw new AuthenticationException (response.Response);
+
+				try {
+					while (response.StatusCode == SmtpStatusCode.AuthenticationChallenge) {
+						challenge = mechanism.Challenge (response.Response);
+						response = await SendCommandAsync (challenge, doAsync, cancellationToken).ConfigureAwait (false);
+					}
+
+					saslException = null;
+				} catch (SaslException ex) {
+					// reset the authentication state
+					response = await SendCommandAsync (string.Empty, doAsync, cancellationToken).ConfigureAwait (false);
+					saslException = ex;
+				}
+			} finally {
+				detector.IsAuthenticating = false;
 			}
 
 			if (response.StatusCode == SmtpStatusCode.AuthenticationSuccessful) {
@@ -748,6 +890,7 @@ namespace MailKit.Net.Smtp {
 
 			var saslUri = new Uri ($"smtp://{uri.Host}");
 			AuthenticationException authException = null;
+			SaslException saslException;
 			SmtpResponse response;
 			SaslMechanism sasl;
 			bool tried = false;
@@ -773,27 +916,32 @@ namespace MailKit.Net.Smtp {
 					command = string.Format ("AUTH {0}", authmech);
 				}
 
-				response = await SendCommandAsync (command, doAsync, cancellationToken).ConfigureAwait (false);
-
-				if (response.StatusCode == SmtpStatusCode.AuthenticationMechanismTooWeak)
-					continue;
-
-				SaslException saslException = null;
+				detector.IsAuthenticating = true;
+				saslException = null;
 
 				try {
-					while (!sasl.IsAuthenticated) {
-						if (response.StatusCode != SmtpStatusCode.AuthenticationChallenge)
-							break;
+					response = await SendCommandAsync (command, doAsync, cancellationToken).ConfigureAwait (false);
 
-						challenge = sasl.Challenge (response.Response);
-						response = await SendCommandAsync (challenge, doAsync, cancellationToken).ConfigureAwait (false);
+					if (response.StatusCode == SmtpStatusCode.AuthenticationMechanismTooWeak)
+						continue;
+
+					try {
+						while (!sasl.IsAuthenticated) {
+							if (response.StatusCode != SmtpStatusCode.AuthenticationChallenge)
+								break;
+
+							challenge = sasl.Challenge (response.Response);
+							response = await SendCommandAsync (challenge, doAsync, cancellationToken).ConfigureAwait (false);
+						}
+
+						saslException = null;
+					} catch (SaslException ex) {
+						// reset the authentication state
+						response = await SendCommandAsync (string.Empty, doAsync, cancellationToken).ConfigureAwait (false);
+						saslException = ex;
 					}
-
-					saslException = null;
-				} catch (SaslException ex) {
-					// reset the authentication state
-					response = await SendCommandAsync (string.Empty, doAsync, cancellationToken).ConfigureAwait (false);
-					saslException = ex;
+				} finally {
+					detector.IsAuthenticating = false;
 				}
 
 				if (response.StatusCode == SmtpStatusCode.AuthenticationSuccessful) {
@@ -1029,7 +1177,7 @@ namespace MailKit.Net.Smtp {
 
 				try {
 					if (doAsync) {
-#if NET50
+#if NET5_0 || NETSTANDARD2_1
 						await ssl.AuthenticateAsClientAsync (GetSslClientAuthenticationOptions (host, ValidateRemoteCertificate), cancellationToken).ConfigureAwait (false);
 #else
 						await ssl.AuthenticateAsClientAsync (host, ClientCertificates, SslProtocols, CheckCertificateRevocation).ConfigureAwait (false);
@@ -1037,7 +1185,7 @@ namespace MailKit.Net.Smtp {
 					} else {
 #if NETSTANDARD1_3 || NETSTANDARD1_6
 						ssl.AuthenticateAsClientAsync (host, ClientCertificates, SslProtocols, CheckCertificateRevocation).GetAwaiter ().GetResult ();
-#elif NET50
+#elif NET5_0
 						ssl.AuthenticateAsClient (GetSslClientAuthenticationOptions (host, ValidateRemoteCertificate));
 #else
 						ssl.AuthenticateAsClient (host, ClientCertificates, SslProtocols, CheckCertificateRevocation);
@@ -1087,7 +1235,7 @@ namespace MailKit.Net.Smtp {
 						Stream.Stream = tls;
 
 						if (doAsync) {
-#if NET50
+#if NET5_0 || NETSTANDARD2_1
 							await tls.AuthenticateAsClientAsync (GetSslClientAuthenticationOptions (host, ValidateRemoteCertificate), cancellationToken).ConfigureAwait (false);
 #else
 							await tls.AuthenticateAsClientAsync (host, ClientCertificates, SslProtocols, CheckCertificateRevocation).ConfigureAwait (false);
@@ -1095,7 +1243,7 @@ namespace MailKit.Net.Smtp {
 						} else {
 #if NETSTANDARD1_3 || NETSTANDARD1_6
 							tls.AuthenticateAsClientAsync (host, ClientCertificates, SslProtocols, CheckCertificateRevocation).GetAwaiter ().GetResult ();
-#elif NET50
+#elif NET5_0
 							tls.AuthenticateAsClient (GetSslClientAuthenticationOptions (host, ValidateRemoteCertificate));
 #else
 							tls.AuthenticateAsClient (host, ClientCertificates, SslProtocols, CheckCertificateRevocation);
@@ -1232,7 +1380,7 @@ namespace MailKit.Net.Smtp {
 
 				try {
 					if (doAsync) {
-#if NET50
+#if NET5_0 || NETSTANDARD2_1
 						await ssl.AuthenticateAsClientAsync (GetSslClientAuthenticationOptions (host, ValidateRemoteCertificate), cancellationToken).ConfigureAwait (false);
 #else
 						await ssl.AuthenticateAsClientAsync (host, ClientCertificates, SslProtocols, CheckCertificateRevocation).ConfigureAwait (false);
@@ -1240,7 +1388,7 @@ namespace MailKit.Net.Smtp {
 					} else {
 #if NETSTANDARD1_3 || NETSTANDARD1_6
 						ssl.AuthenticateAsClientAsync (host, ClientCertificates, SslProtocols, CheckCertificateRevocation).GetAwaiter ().GetResult ();
-#elif NET50
+#elif NET5_0
 						ssl.AuthenticateAsClient (GetSslClientAuthenticationOptions (host, ValidateRemoteCertificate));
 #else
 						ssl.AuthenticateAsClient (host, ClientCertificates, SslProtocols, CheckCertificateRevocation);
@@ -1294,7 +1442,7 @@ namespace MailKit.Net.Smtp {
 
 					try {
 						if (doAsync) {
-#if NET50
+#if NET5_0 || NETSTANDARD2_1
 							await tls.AuthenticateAsClientAsync (GetSslClientAuthenticationOptions (host, ValidateRemoteCertificate), cancellationToken).ConfigureAwait (false);
 #else
 							await tls.AuthenticateAsClientAsync (host, ClientCertificates, SslProtocols, CheckCertificateRevocation).ConfigureAwait (false);
@@ -1302,7 +1450,7 @@ namespace MailKit.Net.Smtp {
 						} else {
 #if NETSTANDARD1_3 || NETSTANDARD1_6
 							tls.AuthenticateAsClientAsync (host, ClientCertificates, SslProtocols, CheckCertificateRevocation).GetAwaiter ().GetResult ();
-#elif NET50
+#elif NET5_0
 							tls.AuthenticateAsClient (GetSslClientAuthenticationOptions (host, ValidateRemoteCertificate));
 #else
 							tls.AuthenticateAsClient (host, ClientCertificates, SslProtocols, CheckCertificateRevocation);

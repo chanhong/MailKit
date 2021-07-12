@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2021 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -33,6 +33,7 @@ using System.Threading;
 using System.Net.Sockets;
 using System.Threading.Tasks;
 using System.Collections.Generic;
+using System.Security.Authentication;
 
 using NUnit.Framework;
 
@@ -45,6 +46,8 @@ using MailKit.Net.Imap;
 using MailKit.Net.Proxy;
 
 using UnitTests.Net.Proxy;
+
+using AuthenticationException = MailKit.Security.AuthenticationException;
 
 namespace UnitTests.Net.Imap {
 	[TestFixture]
@@ -78,6 +81,14 @@ namespace UnitTests.Net.Imap {
 		static readonly ImapCapabilities AclAuthenticatedCapabilities = GMailAuthenticatedCapabilities | ImapCapabilities.Acl;
 		static readonly ImapCapabilities MetadataInitialCapabilities = GMailInitialCapabilities | ImapCapabilities.Metadata;
 		static readonly ImapCapabilities MetadataAuthenticatedCapabilities = GMailAuthenticatedCapabilities | ImapCapabilities.Metadata;
+		const CipherAlgorithmType GMailCipherAlgorithm = CipherAlgorithmType.Aes128;
+		const int GMailCipherStrength = 128;
+		const HashAlgorithmType GMailHashAlgorithm = HashAlgorithmType.Sha256;
+		const ExchangeAlgorithmType GMailKeyExchangeAlgorithm = (ExchangeAlgorithmType) 44550;
+		const CipherAlgorithmType GmxDeCipherAlgorithm = CipherAlgorithmType.Aes256;
+		const int GmxDeCipherStrength = 256;
+		const HashAlgorithmType GmxDeHashAlgorithm = HashAlgorithmType.Sha384;
+		const ExchangeAlgorithmType GmxDeKeyExchangeAlgorithm = (ExchangeAlgorithmType) 44550;
 
 		static FolderAttributes GetSpecialFolderAttribute (SpecialFolder special)
 		{
@@ -370,6 +381,13 @@ namespace UnitTests.Net.Imap {
 				Assert.IsTrue (client.IsSecure, "Expected a secure connection");
 				Assert.IsTrue (client.IsEncrypted, "Expected an encrypted connection");
 				Assert.IsTrue (client.IsSigned, "Expected a signed connection");
+				Assert.AreEqual (client.SslProtocol, SslProtocols.Tls12, "Expected a TLS v1.2 connection");
+				Assert.AreEqual (GMailCipherAlgorithm, client.SslCipherAlgorithm);
+				Assert.AreEqual (GMailCipherStrength, client.SslCipherStrength);
+				Assert.AreEqual (GMailHashAlgorithm, client.SslHashAlgorithm);
+				Assert.AreEqual (0, client.SslHashStrength);
+				Assert.AreEqual (GMailKeyExchangeAlgorithm, client.SslKeyExchangeAlgorithm);
+				Assert.AreEqual (255, client.SslKeyExchangeStrength);
 				Assert.IsFalse (client.IsAuthenticated, "Expected the client to not be authenticated");
 				Assert.AreEqual (1, connected, "ConnectedEvent");
 
@@ -380,6 +398,13 @@ namespace UnitTests.Net.Imap {
 				Assert.IsFalse (client.IsSecure, "Expected IsSecure to be false after disconnecting");
 				Assert.IsFalse (client.IsEncrypted, "Expected IsEncrypted to be false after disconnecting");
 				Assert.IsFalse (client.IsSigned, "Expected IsSigned to be false after disconnecting");
+				Assert.AreEqual (SslProtocols.None, client.SslProtocol, "Expected SslProtocol to be None after disconnecting");
+				Assert.IsNull (client.SslCipherAlgorithm, "Expected SslCipherAlgorithm to be null after disconnecting");
+				Assert.IsNull (client.SslCipherStrength, "Expected SslCipherStrength to be null after disconnecting");
+				Assert.IsNull (client.SslHashAlgorithm, "Expected SslHashAlgorithm to be null after disconnecting");
+				Assert.IsNull (client.SslHashStrength, "Expected SslHashStrength to be null after disconnecting");
+				Assert.IsNull (client.SslKeyExchangeAlgorithm, "Expected SslKeyExchangeAlgorithm to be null after disconnecting");
+				Assert.IsNull (client.SslKeyExchangeStrength, "Expected SslKeyExchangeStrength to be null after disconnecting");
 				Assert.AreEqual (1, disconnected, "DisconnectedEvent");
 			}
 		}
@@ -414,6 +439,13 @@ namespace UnitTests.Net.Imap {
 				Assert.IsTrue (client.IsSecure, "Expected a secure connection");
 				Assert.IsTrue (client.IsEncrypted, "Expected an encrypted connection");
 				Assert.IsTrue (client.IsSigned, "Expected a signed connection");
+				Assert.AreEqual (client.SslProtocol, SslProtocols.Tls12, "Expected a TLS v1.2 connection");
+				Assert.AreEqual (GMailCipherAlgorithm, client.SslCipherAlgorithm);
+				Assert.AreEqual (GMailCipherStrength, client.SslCipherStrength);
+				Assert.AreEqual (GMailHashAlgorithm, client.SslHashAlgorithm);
+				Assert.AreEqual (0, client.SslHashStrength);
+				Assert.AreEqual (GMailKeyExchangeAlgorithm, client.SslKeyExchangeAlgorithm);
+				Assert.AreEqual (255, client.SslKeyExchangeStrength);
 				Assert.IsFalse (client.IsAuthenticated, "Expected the client to not be authenticated");
 				Assert.AreEqual (1, connected, "ConnectedEvent");
 
@@ -424,6 +456,13 @@ namespace UnitTests.Net.Imap {
 				Assert.IsFalse (client.IsSecure, "Expected IsSecure to be false after disconnecting");
 				Assert.IsFalse (client.IsEncrypted, "Expected IsEncrypted to be false after disconnecting");
 				Assert.IsFalse (client.IsSigned, "Expected IsSigned to be false after disconnecting");
+				Assert.AreEqual (SslProtocols.None, client.SslProtocol, "Expected SslProtocol to be None after disconnecting");
+				Assert.IsNull (client.SslCipherAlgorithm, "Expected SslCipherAlgorithm to be null after disconnecting");
+				Assert.IsNull (client.SslCipherStrength, "Expected SslCipherStrength to be null after disconnecting");
+				Assert.IsNull (client.SslHashAlgorithm, "Expected SslHashAlgorithm to be null after disconnecting");
+				Assert.IsNull (client.SslHashStrength, "Expected SslHashStrength to be null after disconnecting");
+				Assert.IsNull (client.SslKeyExchangeAlgorithm, "Expected SslKeyExchangeAlgorithm to be null after disconnecting");
+				Assert.IsNull (client.SslKeyExchangeStrength, "Expected SslKeyExchangeStrength to be null after disconnecting");
 				Assert.AreEqual (1, disconnected, "DisconnectedEvent");
 			}
 		}
@@ -474,6 +513,13 @@ namespace UnitTests.Net.Imap {
 					Assert.IsTrue (client.IsSecure, "Expected a secure connection");
 					Assert.IsTrue (client.IsEncrypted, "Expected an encrypted connection");
 					Assert.IsTrue (client.IsSigned, "Expected a signed connection");
+					Assert.AreEqual (client.SslProtocol, SslProtocols.Tls12, "Expected a TLS v1.2 connection");
+					Assert.AreEqual (GMailCipherAlgorithm, client.SslCipherAlgorithm);
+					Assert.AreEqual (GMailCipherStrength, client.SslCipherStrength);
+					Assert.AreEqual (GMailHashAlgorithm, client.SslHashAlgorithm);
+					Assert.AreEqual (0, client.SslHashStrength);
+					Assert.AreEqual (GMailKeyExchangeAlgorithm, client.SslKeyExchangeAlgorithm);
+					Assert.AreEqual (255, client.SslKeyExchangeStrength);
 					Assert.IsFalse (client.IsAuthenticated, "Expected the client to not be authenticated");
 					Assert.AreEqual (1, connected, "ConnectedEvent");
 
@@ -484,6 +530,13 @@ namespace UnitTests.Net.Imap {
 					Assert.IsFalse (client.IsSecure, "Expected IsSecure to be false after disconnecting");
 					Assert.IsFalse (client.IsEncrypted, "Expected IsEncrypted to be false after disconnecting");
 					Assert.IsFalse (client.IsSigned, "Expected IsSigned to be false after disconnecting");
+					Assert.AreEqual (SslProtocols.None, client.SslProtocol, "Expected SslProtocol to be None after disconnecting");
+					Assert.IsNull (client.SslCipherAlgorithm, "Expected SslCipherAlgorithm to be null after disconnecting");
+					Assert.IsNull (client.SslCipherStrength, "Expected SslCipherStrength to be null after disconnecting");
+					Assert.IsNull (client.SslHashAlgorithm, "Expected SslHashAlgorithm to be null after disconnecting");
+					Assert.IsNull (client.SslHashStrength, "Expected SslHashStrength to be null after disconnecting");
+					Assert.IsNull (client.SslKeyExchangeAlgorithm, "Expected SslKeyExchangeAlgorithm to be null after disconnecting");
+					Assert.IsNull (client.SslKeyExchangeStrength, "Expected SslKeyExchangeStrength to be null after disconnecting");
 					Assert.AreEqual (1, disconnected, "DisconnectedEvent");
 				}
 			}
@@ -536,6 +589,13 @@ namespace UnitTests.Net.Imap {
 					Assert.IsTrue (client.IsSecure, "Expected a secure connection");
 					Assert.IsTrue (client.IsEncrypted, "Expected an encrypted connection");
 					Assert.IsTrue (client.IsSigned, "Expected a signed connection");
+					Assert.AreEqual (client.SslProtocol, SslProtocols.Tls12, "Expected a TLS v1.2 connection");
+					Assert.AreEqual (GMailCipherAlgorithm, client.SslCipherAlgorithm);
+					Assert.AreEqual (GMailCipherStrength, client.SslCipherStrength);
+					Assert.AreEqual (GMailHashAlgorithm, client.SslHashAlgorithm);
+					Assert.AreEqual (0, client.SslHashStrength);
+					Assert.AreEqual (GMailKeyExchangeAlgorithm, client.SslKeyExchangeAlgorithm);
+					Assert.AreEqual (255, client.SslKeyExchangeStrength);
 					Assert.IsFalse (client.IsAuthenticated, "Expected the client to not be authenticated");
 					Assert.AreEqual (1, connected, "ConnectedEvent");
 
@@ -546,6 +606,13 @@ namespace UnitTests.Net.Imap {
 					Assert.IsFalse (client.IsSecure, "Expected IsSecure to be false after disconnecting");
 					Assert.IsFalse (client.IsEncrypted, "Expected IsEncrypted to be false after disconnecting");
 					Assert.IsFalse (client.IsSigned, "Expected IsSigned to be false after disconnecting");
+					Assert.AreEqual (SslProtocols.None, client.SslProtocol, "Expected SslProtocol to be None after disconnecting");
+					Assert.IsNull (client.SslCipherAlgorithm, "Expected SslCipherAlgorithm to be null after disconnecting");
+					Assert.IsNull (client.SslCipherStrength, "Expected SslCipherStrength to be null after disconnecting");
+					Assert.IsNull (client.SslHashAlgorithm, "Expected SslHashAlgorithm to be null after disconnecting");
+					Assert.IsNull (client.SslHashStrength, "Expected SslHashStrength to be null after disconnecting");
+					Assert.IsNull (client.SslKeyExchangeAlgorithm, "Expected SslKeyExchangeAlgorithm to be null after disconnecting");
+					Assert.IsNull (client.SslKeyExchangeStrength, "Expected SslKeyExchangeStrength to be null after disconnecting");
 					Assert.AreEqual (1, disconnected, "DisconnectedEvent");
 				}
 			}
@@ -587,6 +654,13 @@ namespace UnitTests.Net.Imap {
 				Assert.IsTrue (client.IsSecure, "Expected a secure connection");
 				Assert.IsTrue (client.IsEncrypted, "Expected an encrypted connection");
 				Assert.IsTrue (client.IsSigned, "Expected a signed connection");
+				Assert.AreEqual (client.SslProtocol, SslProtocols.Tls12, "Expected a TLS v1.2 connection");
+				Assert.AreEqual (GMailCipherAlgorithm, client.SslCipherAlgorithm);
+				Assert.AreEqual (GMailCipherStrength, client.SslCipherStrength);
+				Assert.AreEqual (GMailHashAlgorithm, client.SslHashAlgorithm);
+				Assert.AreEqual (0, client.SslHashStrength);
+				Assert.AreEqual (GMailKeyExchangeAlgorithm, client.SslKeyExchangeAlgorithm);
+				Assert.AreEqual (255, client.SslKeyExchangeStrength);
 				Assert.IsFalse (client.IsAuthenticated, "Expected the client to not be authenticated");
 				Assert.AreEqual (1, connected, "ConnectedEvent");
 
@@ -597,6 +671,13 @@ namespace UnitTests.Net.Imap {
 				Assert.IsFalse (client.IsSecure, "Expected IsSecure to be false after disconnecting");
 				Assert.IsFalse (client.IsEncrypted, "Expected IsEncrypted to be false after disconnecting");
 				Assert.IsFalse (client.IsSigned, "Expected IsSigned to be false after disconnecting");
+				Assert.AreEqual (SslProtocols.None, client.SslProtocol, "Expected SslProtocol to be None after disconnecting");
+				Assert.IsNull (client.SslCipherAlgorithm, "Expected SslCipherAlgorithm to be null after disconnecting");
+				Assert.IsNull (client.SslCipherStrength, "Expected SslCipherStrength to be null after disconnecting");
+				Assert.IsNull (client.SslHashAlgorithm, "Expected SslHashAlgorithm to be null after disconnecting");
+				Assert.IsNull (client.SslHashStrength, "Expected SslHashStrength to be null after disconnecting");
+				Assert.IsNull (client.SslKeyExchangeAlgorithm, "Expected SslKeyExchangeAlgorithm to be null after disconnecting");
+				Assert.IsNull (client.SslKeyExchangeStrength, "Expected SslKeyExchangeStrength to be null after disconnecting");
 				Assert.AreEqual (1, disconnected, "DisconnectedEvent");
 			}
 		}
@@ -637,6 +718,13 @@ namespace UnitTests.Net.Imap {
 				Assert.IsTrue (client.IsSecure, "Expected a secure connection");
 				Assert.IsTrue (client.IsEncrypted, "Expected an encrypted connection");
 				Assert.IsTrue (client.IsSigned, "Expected a signed connection");
+				Assert.AreEqual (client.SslProtocol, SslProtocols.Tls12, "Expected a TLS v1.2 connection");
+				Assert.AreEqual (GMailCipherAlgorithm, client.SslCipherAlgorithm);
+				Assert.AreEqual (GMailCipherStrength, client.SslCipherStrength);
+				Assert.AreEqual (GMailHashAlgorithm, client.SslHashAlgorithm);
+				Assert.AreEqual (0, client.SslHashStrength);
+				Assert.AreEqual (GMailKeyExchangeAlgorithm, client.SslKeyExchangeAlgorithm);
+				Assert.AreEqual (255, client.SslKeyExchangeStrength);
 				Assert.IsFalse (client.IsAuthenticated, "Expected the client to not be authenticated");
 				Assert.AreEqual (1, connected, "ConnectedEvent");
 
@@ -647,6 +735,13 @@ namespace UnitTests.Net.Imap {
 				Assert.IsFalse (client.IsSecure, "Expected IsSecure to be false after disconnecting");
 				Assert.IsFalse (client.IsEncrypted, "Expected IsEncrypted to be false after disconnecting");
 				Assert.IsFalse (client.IsSigned, "Expected IsSigned to be false after disconnecting");
+				Assert.AreEqual (SslProtocols.None, client.SslProtocol, "Expected SslProtocol to be None after disconnecting");
+				Assert.IsNull (client.SslCipherAlgorithm, "Expected SslCipherAlgorithm to be null after disconnecting");
+				Assert.IsNull (client.SslCipherStrength, "Expected SslCipherStrength to be null after disconnecting");
+				Assert.IsNull (client.SslHashAlgorithm, "Expected SslHashAlgorithm to be null after disconnecting");
+				Assert.IsNull (client.SslHashStrength, "Expected SslHashStrength to be null after disconnecting");
+				Assert.IsNull (client.SslKeyExchangeAlgorithm, "Expected SslKeyExchangeAlgorithm to be null after disconnecting");
+				Assert.IsNull (client.SslKeyExchangeStrength, "Expected SslKeyExchangeStrength to be null after disconnecting");
 				Assert.AreEqual (1, disconnected, "DisconnectedEvent");
 			}
 		}
@@ -683,6 +778,13 @@ namespace UnitTests.Net.Imap {
 					Assert.IsTrue (client.IsSecure, "Expected a secure connection");
 					Assert.IsTrue (client.IsEncrypted, "Expected an encrypted connection");
 					Assert.IsTrue (client.IsSigned, "Expected a signed connection");
+					Assert.AreEqual (client.SslProtocol, SslProtocols.Tls12, "Expected a TLS v1.2 connection");
+					Assert.AreEqual (GmxDeCipherAlgorithm, client.SslCipherAlgorithm);
+					Assert.AreEqual (GmxDeCipherStrength, client.SslCipherStrength);
+					Assert.AreEqual (GmxDeHashAlgorithm, client.SslHashAlgorithm);
+					Assert.AreEqual (0, client.SslHashStrength);
+					Assert.AreEqual (GmxDeKeyExchangeAlgorithm, client.SslKeyExchangeAlgorithm);
+					Assert.AreEqual (255, client.SslKeyExchangeStrength);
 					Assert.IsFalse (client.IsAuthenticated, "Expected the client to not be authenticated");
 					Assert.AreEqual (1, connected, "ConnectedEvent");
 
@@ -691,6 +793,13 @@ namespace UnitTests.Net.Imap {
 					Assert.IsFalse (client.IsSecure, "Expected IsSecure to be false after disconnecting");
 					Assert.IsFalse (client.IsEncrypted, "Expected IsEncrypted to be false after disconnecting");
 					Assert.IsFalse (client.IsSigned, "Expected IsSigned to be false after disconnecting");
+					Assert.AreEqual (SslProtocols.None, client.SslProtocol, "Expected SslProtocol to be None after disconnecting");
+					Assert.IsNull (client.SslCipherAlgorithm, "Expected SslCipherAlgorithm to be null after disconnecting");
+					Assert.IsNull (client.SslCipherStrength, "Expected SslCipherStrength to be null after disconnecting");
+					Assert.IsNull (client.SslHashAlgorithm, "Expected SslHashAlgorithm to be null after disconnecting");
+					Assert.IsNull (client.SslHashStrength, "Expected SslHashStrength to be null after disconnecting");
+					Assert.IsNull (client.SslKeyExchangeAlgorithm, "Expected SslKeyExchangeAlgorithm to be null after disconnecting");
+					Assert.IsNull (client.SslKeyExchangeStrength, "Expected SslKeyExchangeStrength to be null after disconnecting");
 					Assert.AreEqual (1, disconnected, "DisconnectedEvent");
 				}
 			}
@@ -726,6 +835,15 @@ namespace UnitTests.Net.Imap {
 					await client.ConnectAsync (uri, cancel.Token);
 					Assert.IsTrue (client.IsConnected, "Expected the client to be connected");
 					Assert.IsTrue (client.IsSecure, "Expected a secure connection");
+					Assert.IsTrue (client.IsEncrypted, "Expected an encrypted connection");
+					Assert.IsTrue (client.IsSigned, "Expected a signed connection");
+					Assert.AreEqual (client.SslProtocol, SslProtocols.Tls12, "Expected a TLS v1.2 connection");
+					Assert.AreEqual (GmxDeCipherAlgorithm, client.SslCipherAlgorithm);
+					Assert.AreEqual (GmxDeCipherStrength, client.SslCipherStrength);
+					Assert.AreEqual (GmxDeHashAlgorithm, client.SslHashAlgorithm);
+					Assert.AreEqual (0, client.SslHashStrength);
+					Assert.AreEqual (GmxDeKeyExchangeAlgorithm, client.SslKeyExchangeAlgorithm);
+					Assert.AreEqual (255, client.SslKeyExchangeStrength);
 					Assert.IsFalse (client.IsAuthenticated, "Expected the client to not be authenticated");
 					Assert.AreEqual (1, connected, "ConnectedEvent");
 
@@ -734,6 +852,13 @@ namespace UnitTests.Net.Imap {
 					Assert.IsFalse (client.IsSecure, "Expected IsSecure to be false after disconnecting");
 					Assert.IsFalse (client.IsEncrypted, "Expected IsEncrypted to be false after disconnecting");
 					Assert.IsFalse (client.IsSigned, "Expected IsSigned to be false after disconnecting");
+					Assert.AreEqual (SslProtocols.None, client.SslProtocol, "Expected SslProtocol to be None after disconnecting");
+					Assert.IsNull (client.SslCipherAlgorithm, "Expected SslCipherAlgorithm to be null after disconnecting");
+					Assert.IsNull (client.SslCipherStrength, "Expected SslCipherStrength to be null after disconnecting");
+					Assert.IsNull (client.SslHashAlgorithm, "Expected SslHashAlgorithm to be null after disconnecting");
+					Assert.IsNull (client.SslHashStrength, "Expected SslHashStrength to be null after disconnecting");
+					Assert.IsNull (client.SslKeyExchangeAlgorithm, "Expected SslKeyExchangeAlgorithm to be null after disconnecting");
+					Assert.IsNull (client.SslKeyExchangeStrength, "Expected SslKeyExchangeStrength to be null after disconnecting");
 					Assert.AreEqual (1, disconnected, "DisconnectedEvent");
 				}
 			}
@@ -771,6 +896,13 @@ namespace UnitTests.Net.Imap {
 					Assert.IsTrue (client.IsSecure, "Expected a secure connection");
 					Assert.IsTrue (client.IsEncrypted, "Expected an encrypted connection");
 					Assert.IsTrue (client.IsSigned, "Expected a signed connection");
+					Assert.AreEqual (client.SslProtocol, SslProtocols.Tls12, "Expected a TLS v1.2 connection");
+					Assert.AreEqual (GmxDeCipherAlgorithm, client.SslCipherAlgorithm);
+					Assert.AreEqual (GmxDeCipherStrength, client.SslCipherStrength);
+					Assert.AreEqual (GmxDeHashAlgorithm, client.SslHashAlgorithm);
+					Assert.AreEqual (0, client.SslHashStrength);
+					Assert.AreEqual (GmxDeKeyExchangeAlgorithm, client.SslKeyExchangeAlgorithm);
+					Assert.AreEqual (255, client.SslKeyExchangeStrength);
 					Assert.IsFalse (client.IsAuthenticated, "Expected the client to not be authenticated");
 					Assert.AreEqual (1, connected, "ConnectedEvent");
 
@@ -779,6 +911,13 @@ namespace UnitTests.Net.Imap {
 					Assert.IsFalse (client.IsSecure, "Expected IsSecure to be false after disconnecting");
 					Assert.IsFalse (client.IsEncrypted, "Expected IsEncrypted to be false after disconnecting");
 					Assert.IsFalse (client.IsSigned, "Expected IsSigned to be false after disconnecting");
+					Assert.AreEqual (SslProtocols.None, client.SslProtocol, "Expected SslProtocol to be None after disconnecting");
+					Assert.IsNull (client.SslCipherAlgorithm, "Expected SslCipherAlgorithm to be null after disconnecting");
+					Assert.IsNull (client.SslCipherStrength, "Expected SslCipherStrength to be null after disconnecting");
+					Assert.IsNull (client.SslHashAlgorithm, "Expected SslHashAlgorithm to be null after disconnecting");
+					Assert.IsNull (client.SslHashStrength, "Expected SslHashStrength to be null after disconnecting");
+					Assert.IsNull (client.SslKeyExchangeAlgorithm, "Expected SslKeyExchangeAlgorithm to be null after disconnecting");
+					Assert.IsNull (client.SslKeyExchangeStrength, "Expected SslKeyExchangeStrength to be null after disconnecting");
 					Assert.AreEqual (1, disconnected, "DisconnectedEvent");
 				}
 			}
@@ -816,6 +955,13 @@ namespace UnitTests.Net.Imap {
 					Assert.IsTrue (client.IsSecure, "Expected a secure connection");
 					Assert.IsTrue (client.IsEncrypted, "Expected an encrypted connection");
 					Assert.IsTrue (client.IsSigned, "Expected a signed connection");
+					Assert.AreEqual (client.SslProtocol, SslProtocols.Tls12, "Expected a TLS v1.2 connection");
+					Assert.AreEqual (GmxDeCipherAlgorithm, client.SslCipherAlgorithm);
+					Assert.AreEqual (GmxDeCipherStrength, client.SslCipherStrength);
+					Assert.AreEqual (GmxDeHashAlgorithm, client.SslHashAlgorithm);
+					Assert.AreEqual (0, client.SslHashStrength);
+					Assert.AreEqual (GmxDeKeyExchangeAlgorithm, client.SslKeyExchangeAlgorithm);
+					Assert.AreEqual (255, client.SslKeyExchangeStrength);
 					Assert.IsFalse (client.IsAuthenticated, "Expected the client to not be authenticated");
 					Assert.AreEqual (1, connected, "ConnectedEvent");
 
@@ -824,6 +970,13 @@ namespace UnitTests.Net.Imap {
 					Assert.IsFalse (client.IsSecure, "Expected IsSecure to be false after disconnecting");
 					Assert.IsFalse (client.IsEncrypted, "Expected IsEncrypted to be false after disconnecting");
 					Assert.IsFalse (client.IsSigned, "Expected IsSigned to be false after disconnecting");
+					Assert.AreEqual (SslProtocols.None, client.SslProtocol, "Expected SslProtocol to be None after disconnecting");
+					Assert.IsNull (client.SslCipherAlgorithm, "Expected SslCipherAlgorithm to be null after disconnecting");
+					Assert.IsNull (client.SslCipherStrength, "Expected SslCipherStrength to be null after disconnecting");
+					Assert.IsNull (client.SslHashAlgorithm, "Expected SslHashAlgorithm to be null after disconnecting");
+					Assert.IsNull (client.SslHashStrength, "Expected SslHashStrength to be null after disconnecting");
+					Assert.IsNull (client.SslKeyExchangeAlgorithm, "Expected SslKeyExchangeAlgorithm to be null after disconnecting");
+					Assert.IsNull (client.SslKeyExchangeStrength, "Expected SslKeyExchangeStrength to be null after disconnecting");
 					Assert.AreEqual (1, disconnected, "DisconnectedEvent");
 				}
 			}
@@ -1426,6 +1579,106 @@ namespace UnitTests.Net.Imap {
 
 				Assert.IsNotNull (inbox, "Expected non-null Inbox folder.");
 				Assert.AreEqual (FolderAttributes.Inbox, inbox.Attributes, "Expected Inbox attributes to be empty.");
+
+				await client.DisconnectAsync (false);
+			}
+		}
+
+		[Test]
+		public void TestGMailWebAlert ()
+		{
+			const string webUri = "https://accounts.google.com/signin/continue?sarp=1&scc=1&plt=AKgnsbsNd6RU3LIlgDfhmL9Y7ywYhtagFig_xfuSJCUHD9Eg3XqN8DKlDk3G8jmj2w5viIm5PDC3BS4SVy7iFMB6g1244cnQt1E60EdOTSEpnqDzL6FH2L-ReOAyZ3qkSXZQZs2pIfL2";
+			const string alert = "Please log in via your web browser: https://support.google.com/mail/accounts/answer/78754 (Failure)";
+
+			var commands = new List<ImapReplayCommand> ();
+			commands.Add (new ImapReplayCommand ("", "gmail.greeting.txt"));
+			commands.Add (new ImapReplayCommand ("A00000000 CAPABILITY\r\n", "gmail.capability.txt"));
+			commands.Add (new ImapReplayCommand ("A00000001 LOGIN username password\r\n", "gmail.authenticate+webalert.txt"));
+
+			using (var client = new ImapClient ()) {
+				int webalerts = 0;
+				int alerts = 0;
+
+				client.Alert += (sender, e) => {
+					Assert.AreEqual (alert, e.Message);
+					alerts++;
+				};
+
+				client.WebAlert += (sender, e) => {
+					Assert.AreEqual (webUri, e.WebUri.AbsoluteUri);
+					Assert.AreEqual ("Web login required.", e.Message);
+					webalerts++;
+				};
+
+				try {
+					client.ReplayConnect ("localhost", new ImapReplayStream (commands, false));
+				} catch (Exception ex) {
+					Assert.Fail ("Did not expect an exception in Connect: {0}", ex);
+				}
+
+				client.AuthenticationMechanisms.Clear ();
+
+				try {
+					client.Authenticate ("username", "password");
+					Assert.Fail ("Did not expect Authenticate to work.");
+				} catch (AuthenticationException ax) {
+					Assert.AreEqual (alert, ax.Message);
+				} catch (Exception ex) {
+					Assert.Fail ("Did not expect an exception in Authenticate: {0}", ex);
+				}
+
+				Assert.AreEqual (1, alerts, "Expected 1 alert");
+				Assert.AreEqual (1, webalerts, "Expected 1 web alert");
+
+				client.Disconnect (false);
+			}
+		}
+
+		[Test]
+		public async Task TestGMailWebAlertAsync ()
+		{
+			const string webUri = "https://accounts.google.com/signin/continue?sarp=1&scc=1&plt=AKgnsbsNd6RU3LIlgDfhmL9Y7ywYhtagFig_xfuSJCUHD9Eg3XqN8DKlDk3G8jmj2w5viIm5PDC3BS4SVy7iFMB6g1244cnQt1E60EdOTSEpnqDzL6FH2L-ReOAyZ3qkSXZQZs2pIfL2";
+			const string alert = "Please log in via your web browser: https://support.google.com/mail/accounts/answer/78754 (Failure)";
+
+			var commands = new List<ImapReplayCommand> ();
+			commands.Add (new ImapReplayCommand ("", "gmail.greeting.txt"));
+			commands.Add (new ImapReplayCommand ("A00000000 CAPABILITY\r\n", "gmail.capability.txt"));
+			commands.Add (new ImapReplayCommand ("A00000001 LOGIN username password\r\n", "gmail.authenticate+webalert.txt"));
+
+			using (var client = new ImapClient ()) {
+				int webalerts = 0;
+				int alerts = 0;
+
+				client.Alert += (sender, e) => {
+					Assert.AreEqual (alert, e.Message);
+					alerts++;
+				};
+
+				client.WebAlert += (sender, e) => {
+					Assert.AreEqual (webUri, e.WebUri.AbsoluteUri);
+					Assert.AreEqual ("Web login required.", e.Message);
+					webalerts++;
+				};
+
+				try {
+					await client.ReplayConnectAsync ("localhost", new ImapReplayStream (commands, true));
+				} catch (Exception ex) {
+					Assert.Fail ("Did not expect an exception in Connect: {0}", ex);
+				}
+
+				client.AuthenticationMechanisms.Clear ();
+
+				try {
+					await client.AuthenticateAsync ("username", "password");
+					Assert.Fail ("Did not expect Authenticate to work.");
+				} catch (AuthenticationException ax) {
+					Assert.AreEqual (alert, ax.Message);
+				} catch (Exception ex) {
+					Assert.Fail ("Did not expect an exception in Authenticate: {0}", ex);
+				}
+
+				Assert.AreEqual (1, alerts, "Expected 1 alert");
+				Assert.AreEqual (1, webalerts, "Expected 1 web alert");
 
 				await client.DisconnectAsync (false);
 			}
@@ -2376,6 +2629,386 @@ namespace UnitTests.Net.Imap {
 			}
 		}
 
+		static void AssertRedacted (MemoryStream stream, string commandPrefix, string nextCommandPrefix)
+		{
+			stream.Position = 0;
+
+			using (var reader = new StreamReader (stream, Encoding.ASCII, false, 1024, true)) {
+				string secrets;
+				string line;
+
+				while ((line = reader.ReadLine ()) != null) {
+					if (line.StartsWith (commandPrefix, StringComparison.Ordinal))
+						break;
+				}
+
+				Assert.NotNull (line, "Authentication command not found: {0}", commandPrefix);
+
+				if (line.Length > commandPrefix.Length) {
+					secrets = line.Substring (commandPrefix.Length);
+
+					var tokens = secrets.Split (' ');
+					var expectedTokens = new string[tokens.Length];
+					for (int i = 0; i < tokens.Length; i++) {
+						if (tokens[i][0] == '"')
+							expectedTokens[i] = "\"********\"";
+						else
+							expectedTokens[i] = "********";
+					}
+
+					var expected = string.Join (" ", expectedTokens);
+
+					Assert.AreEqual (expected, secrets, commandPrefix);
+				}
+
+				while ((line = reader.ReadLine ()) != null) {
+					if (line.StartsWith (nextCommandPrefix, StringComparison.Ordinal))
+						return;
+
+					if (!line.StartsWith ("C: ", StringComparison.Ordinal))
+						continue;
+
+					secrets = line.Substring (3);
+
+					Assert.AreEqual ("********", secrets, "SASL challenge");
+				}
+
+				Assert.Fail ("Did not find response.");
+			}
+		}
+
+		[Test]
+		public void TestRedactLogin ()
+		{
+			var commands = new List<ImapReplayCommand> ();
+			commands.Add (new ImapReplayCommand ("", "gmail.greeting.txt"));
+			commands.Add (new ImapReplayCommand ("A00000000 CAPABILITY\r\n", "gmail.capability.txt"));
+			commands.Add (new ImapReplayCommand ("A00000001 LOGIN username \"pass%word\"\r\n", "gmail.authenticate.txt"));
+			commands.Add (new ImapReplayCommand ("A00000002 NAMESPACE\r\n", "gmail.namespace.txt"));
+			commands.Add (new ImapReplayCommand ("A00000003 LIST \"\" \"INBOX\" RETURN (SUBSCRIBED CHILDREN)\r\n", "gmail.list-inbox.txt"));
+			commands.Add (new ImapReplayCommand ("A00000004 XLIST \"\" \"*\"\r\n", "gmail.xlist.txt"));
+
+			using (var stream = new MemoryStream ()) {
+				using (var client = new ImapClient (new ProtocolLogger (stream, true) { RedactSecrets = true })) {
+					try {
+						client.ReplayConnect ("localhost", new ImapReplayStream (commands, false));
+					} catch (Exception ex) {
+						Assert.Fail ("Did not expect an exception in Connect: {0}", ex);
+					}
+
+					Assert.IsTrue (client.IsConnected, "Client failed to connect.");
+					Assert.IsFalse (client.IsSecure, "IsSecure should be false.");
+
+					Assert.AreEqual (GMailInitialCapabilities, client.Capabilities);
+					Assert.AreEqual (5, client.AuthenticationMechanisms.Count);
+					Assert.IsTrue (client.AuthenticationMechanisms.Contains ("XOAUTH"), "Expected SASL XOAUTH auth mechanism");
+					Assert.IsTrue (client.AuthenticationMechanisms.Contains ("XOAUTH2"), "Expected SASL XOAUTH2 auth mechanism");
+					Assert.IsTrue (client.AuthenticationMechanisms.Contains ("OAUTHBEARER"), "Expected SASL OAUTHBEARER auth mechanism");
+					Assert.IsTrue (client.AuthenticationMechanisms.Contains ("PLAIN"), "Expected SASL PLAIN auth mechanism");
+					Assert.IsTrue (client.AuthenticationMechanisms.Contains ("PLAIN-CLIENTTOKEN"), "Expected SASL PLAIN-CLIENTTOKEN auth mechanism");
+
+					Assert.AreEqual (120000, client.Timeout, "Timeout");
+					client.Timeout *= 2;
+
+					// Note: Do not try to use any SASL mechanisms
+					client.AuthenticationMechanisms.Clear ();
+
+					int authenticated = 0;
+					client.Authenticated += (sender, e) => {
+						authenticated++;
+					};
+
+					try {
+						client.Authenticate ("username", "pass%word");
+					} catch (Exception ex) {
+						Assert.Fail ("Did not expect an exception in Authenticate: {0}", ex);
+					}
+
+					Assert.AreEqual (1, authenticated, "Authenticated event was not emitted the expected number of times");
+					Assert.AreEqual (GMailAuthenticatedCapabilities, client.Capabilities);
+					Assert.IsTrue (client.SupportsQuotas, "SupportsQuotas");
+
+					client.Disconnect (false);
+				}
+
+				AssertRedacted (stream, "C: A00000001 LOGIN ", "C: A00000002 NAMESPACE");
+			}
+		}
+
+		[Test]
+		public async Task TestRedactLoginAsync ()
+		{
+			var commands = new List<ImapReplayCommand> ();
+			commands.Add (new ImapReplayCommand ("", "gmail.greeting.txt"));
+			commands.Add (new ImapReplayCommand ("A00000000 CAPABILITY\r\n", "gmail.capability.txt"));
+			commands.Add (new ImapReplayCommand ("A00000001 LOGIN username \"pass%word\"\r\n", "gmail.authenticate.txt"));
+			commands.Add (new ImapReplayCommand ("A00000002 NAMESPACE\r\n", "gmail.namespace.txt"));
+			commands.Add (new ImapReplayCommand ("A00000003 LIST \"\" \"INBOX\" RETURN (SUBSCRIBED CHILDREN)\r\n", "gmail.list-inbox.txt"));
+			commands.Add (new ImapReplayCommand ("A00000004 XLIST \"\" \"*\"\r\n", "gmail.xlist.txt"));
+
+			using (var stream = new MemoryStream ()) {
+				using (var client = new ImapClient (new ProtocolLogger (stream, true) { RedactSecrets = true })) {
+					try {
+						await client.ReplayConnectAsync ("localhost", new ImapReplayStream (commands, true));
+					} catch (Exception ex) {
+						Assert.Fail ("Did not expect an exception in Connect: {0}", ex);
+					}
+
+					Assert.IsTrue (client.IsConnected, "Client failed to connect.");
+					Assert.IsFalse (client.IsSecure, "IsSecure should be false.");
+
+					Assert.AreEqual (GMailInitialCapabilities, client.Capabilities);
+					Assert.AreEqual (5, client.AuthenticationMechanisms.Count);
+					Assert.IsTrue (client.AuthenticationMechanisms.Contains ("XOAUTH"), "Expected SASL XOAUTH auth mechanism");
+					Assert.IsTrue (client.AuthenticationMechanisms.Contains ("XOAUTH2"), "Expected SASL XOAUTH2 auth mechanism");
+					Assert.IsTrue (client.AuthenticationMechanisms.Contains ("OAUTHBEARER"), "Expected SASL OAUTHBEARER auth mechanism");
+					Assert.IsTrue (client.AuthenticationMechanisms.Contains ("PLAIN"), "Expected SASL PLAIN auth mechanism");
+					Assert.IsTrue (client.AuthenticationMechanisms.Contains ("PLAIN-CLIENTTOKEN"), "Expected SASL PLAIN-CLIENTTOKEN auth mechanism");
+
+					Assert.AreEqual (120000, client.Timeout, "Timeout");
+					client.Timeout *= 2;
+
+					// Note: Do not try to use any SASL mechanisms
+					client.AuthenticationMechanisms.Clear ();
+
+					int authenticated = 0;
+					client.Authenticated += (sender, e) => {
+						authenticated++;
+					};
+
+					try {
+						await client.AuthenticateAsync ("username", "pass%word");
+					} catch (Exception ex) {
+						Assert.Fail ("Did not expect an exception in Authenticate: {0}", ex);
+					}
+
+					Assert.AreEqual (1, authenticated, "Authenticated event was not emitted the expected number of times");
+					Assert.AreEqual (GMailAuthenticatedCapabilities, client.Capabilities);
+					Assert.IsTrue (client.SupportsQuotas, "SupportsQuotas");
+
+					await client.DisconnectAsync (false);
+				}
+
+				AssertRedacted (stream, "C: A00000001 LOGIN ", "C: A00000002 NAMESPACE");
+			}
+		}
+
+		[Test]
+		public void TestRedactAuthentication ()
+		{
+			var commands = new List<ImapReplayCommand> ();
+			commands.Add (new ImapReplayCommand ("", "gmail.greeting.txt"));
+			commands.Add (new ImapReplayCommand ("A00000000 CAPABILITY\r\n", "gmail.capability.txt"));
+			commands.Add (new ImapReplayCommand ("A00000001 AUTHENTICATE PLAIN AHVzZXJuYW1lAHBhc3N3b3Jk\r\n", "gmail.authenticate.txt"));
+			commands.Add (new ImapReplayCommand ("A00000002 NAMESPACE\r\n", "gmail.namespace.txt"));
+			commands.Add (new ImapReplayCommand ("A00000003 LIST \"\" \"INBOX\" RETURN (SUBSCRIBED CHILDREN)\r\n", "gmail.list-inbox.txt"));
+			commands.Add (new ImapReplayCommand ("A00000004 XLIST \"\" \"*\"\r\n", "gmail.xlist.txt"));
+
+			using (var stream = new MemoryStream ()) {
+				using (var client = new ImapClient (new ProtocolLogger (stream, true) { RedactSecrets = true })) {
+					try {
+						client.ReplayConnect ("localhost", new ImapReplayStream (commands, false));
+					} catch (Exception ex) {
+						Assert.Fail ("Did not expect an exception in Connect: {0}", ex);
+					}
+
+					Assert.IsTrue (client.IsConnected, "Client failed to connect.");
+
+					Assert.AreEqual (GMailInitialCapabilities, client.Capabilities);
+					Assert.AreEqual (5, client.AuthenticationMechanisms.Count);
+					Assert.IsTrue (client.AuthenticationMechanisms.Contains ("XOAUTH"), "Expected SASL XOAUTH auth mechanism");
+					Assert.IsTrue (client.AuthenticationMechanisms.Contains ("XOAUTH2"), "Expected SASL XOAUTH2 auth mechanism");
+					Assert.IsTrue (client.AuthenticationMechanisms.Contains ("OAUTHBEARER"), "Expected SASL OAUTHBEARER auth mechanism");
+					Assert.IsTrue (client.AuthenticationMechanisms.Contains ("PLAIN"), "Expected SASL PLAIN auth mechanism");
+					Assert.IsTrue (client.AuthenticationMechanisms.Contains ("PLAIN-CLIENTTOKEN"), "Expected SASL PLAIN-CLIENTTOKEN auth mechanism");
+
+					// Note: Do not try XOAUTH2
+					client.AuthenticationMechanisms.Remove ("XOAUTH2");
+
+					try {
+						client.Authenticate ("username", "password");
+					} catch (Exception ex) {
+						Assert.Fail ("Did not expect an exception in Authenticate: {0}", ex);
+					}
+
+					Assert.AreEqual (GMailAuthenticatedCapabilities, client.Capabilities);
+
+					client.Disconnect (false);
+				}
+
+				AssertRedacted (stream, "C: A00000001 AUTHENTICATE PLAIN ", "C: A00000002 NAMESPACE");
+			}
+		}
+
+		[Test]
+		public async Task TestRedactAuthenticationAsync ()
+		{
+			var commands = new List<ImapReplayCommand> ();
+			commands.Add (new ImapReplayCommand ("", "gmail.greeting.txt"));
+			commands.Add (new ImapReplayCommand ("A00000000 CAPABILITY\r\n", "gmail.capability.txt"));
+			commands.Add (new ImapReplayCommand ("A00000001 AUTHENTICATE PLAIN AHVzZXJuYW1lAHBhc3N3b3Jk\r\n", "gmail.authenticate.txt"));
+			commands.Add (new ImapReplayCommand ("A00000002 NAMESPACE\r\n", "gmail.namespace.txt"));
+			commands.Add (new ImapReplayCommand ("A00000003 LIST \"\" \"INBOX\" RETURN (SUBSCRIBED CHILDREN)\r\n", "gmail.list-inbox.txt"));
+			commands.Add (new ImapReplayCommand ("A00000004 XLIST \"\" \"*\"\r\n", "gmail.xlist.txt"));
+
+			using (var stream = new MemoryStream ()) {
+				using (var client = new ImapClient (new ProtocolLogger (stream, true) { RedactSecrets = true })) {
+					try {
+						await client.ReplayConnectAsync ("localhost", new ImapReplayStream (commands, true));
+					} catch (Exception ex) {
+						Assert.Fail ("Did not expect an exception in Connect: {0}", ex);
+					}
+
+					Assert.IsTrue (client.IsConnected, "Client failed to connect.");
+
+					Assert.AreEqual (GMailInitialCapabilities, client.Capabilities);
+					Assert.AreEqual (5, client.AuthenticationMechanisms.Count);
+					Assert.IsTrue (client.AuthenticationMechanisms.Contains ("XOAUTH"), "Expected SASL XOAUTH auth mechanism");
+					Assert.IsTrue (client.AuthenticationMechanisms.Contains ("XOAUTH2"), "Expected SASL XOAUTH2 auth mechanism");
+					Assert.IsTrue (client.AuthenticationMechanisms.Contains ("OAUTHBEARER"), "Expected SASL OAUTHBEARER auth mechanism");
+					Assert.IsTrue (client.AuthenticationMechanisms.Contains ("PLAIN"), "Expected SASL PLAIN auth mechanism");
+					Assert.IsTrue (client.AuthenticationMechanisms.Contains ("PLAIN-CLIENTTOKEN"), "Expected SASL PLAIN-CLIENTTOKEN auth mechanism");
+
+					// Note: Do not try XOAUTH2
+					client.AuthenticationMechanisms.Remove ("XOAUTH2");
+
+					try {
+						await client.AuthenticateAsync ("username", "password");
+					} catch (Exception ex) {
+						Assert.Fail ("Did not expect an exception in Authenticate: {0}", ex);
+					}
+
+					Assert.AreEqual (GMailAuthenticatedCapabilities, client.Capabilities);
+
+					await client.DisconnectAsync (false);
+				}
+
+				AssertRedacted (stream, "C: A00000001 AUTHENTICATE PLAIN ", "C: A00000002 NAMESPACE");
+			}
+		}
+
+		[Test]
+		public void TestRedactSaslAuthentication ()
+		{
+			var commands = new List<ImapReplayCommand> ();
+			commands.Add (new ImapReplayCommand ("", "gmail.greeting.txt"));
+			commands.Add (new ImapReplayCommand ("A00000000 CAPABILITY\r\n", "gmail.capability+login.txt"));
+			commands.Add (new ImapReplayCommand ("A00000001 AUTHENTICATE LOGIN\r\n", ImapReplayCommandResponse.Plus));
+			commands.Add (new ImapReplayCommand ("dXNlcm5hbWU=\r\n", ImapReplayCommandResponse.Plus));
+			commands.Add (new ImapReplayCommand ("A00000001", "cGFzc3dvcmQ=\r\n", "gmail.authenticate.txt"));
+			commands.Add (new ImapReplayCommand ("A00000002 NAMESPACE\r\n", "gmail.namespace.txt"));
+			commands.Add (new ImapReplayCommand ("A00000003 LIST \"\" \"INBOX\" RETURN (SUBSCRIBED CHILDREN)\r\n", "gmail.list-inbox.txt"));
+			commands.Add (new ImapReplayCommand ("A00000004 XLIST \"\" \"*\"\r\n", "gmail.xlist.txt"));
+
+			using (var stream = new MemoryStream ()) {
+				using (var client = new ImapClient (new ProtocolLogger (stream, true) { RedactSecrets = true })) {
+					try {
+						client.ReplayConnect ("localhost", new ImapReplayStream (commands, false));
+					} catch (Exception ex) {
+						Assert.Fail ("Did not expect an exception in Connect: {0}", ex);
+					}
+
+					Assert.IsTrue (client.IsConnected, "Client failed to connect.");
+					Assert.IsFalse (client.IsSecure, "IsSecure should be false.");
+
+					Assert.AreEqual (GMailInitialCapabilities, client.Capabilities);
+					Assert.AreEqual (6, client.AuthenticationMechanisms.Count);
+					Assert.IsTrue (client.AuthenticationMechanisms.Contains ("XOAUTH"), "Expected SASL XOAUTH auth mechanism");
+					Assert.IsTrue (client.AuthenticationMechanisms.Contains ("XOAUTH2"), "Expected SASL XOAUTH2 auth mechanism");
+					Assert.IsTrue (client.AuthenticationMechanisms.Contains ("OAUTHBEARER"), "Expected SASL OAUTHBEARER auth mechanism");
+					Assert.IsTrue (client.AuthenticationMechanisms.Contains ("PLAIN"), "Expected SASL PLAIN auth mechanism");
+					Assert.IsTrue (client.AuthenticationMechanisms.Contains ("PLAIN-CLIENTTOKEN"), "Expected SASL PLAIN-CLIENTTOKEN auth mechanism");
+					Assert.IsTrue (client.AuthenticationMechanisms.Contains ("LOGIN"), "Expected SASL LOGIN auth mechanism");
+
+					Assert.AreEqual (120000, client.Timeout, "Timeout");
+					client.Timeout *= 2;
+
+					int authenticated = 0;
+					client.Authenticated += (sender, e) => {
+						authenticated++;
+					};
+
+					try {
+						var credentials = new NetworkCredential ("username", "password");
+						var sasl = new SaslMechanismLogin (credentials);
+
+						client.Authenticate (sasl);
+					} catch (Exception ex) {
+						Assert.Fail ("Did not expect an exception in Authenticate: {0}", ex);
+					}
+
+					Assert.AreEqual (1, authenticated, "Authenticated event was not emitted the expected number of times");
+					Assert.AreEqual (GMailAuthenticatedCapabilities, client.Capabilities);
+					Assert.IsTrue (client.SupportsQuotas, "SupportsQuotas");
+
+					client.Disconnect (false);
+				}
+
+				AssertRedacted (stream, "C: A00000001 AUTHENTICATE LOGIN", "C: A00000002 NAMESPACE");
+			}
+		}
+
+		[Test]
+		public async Task TestRedactSaslAuthenticationAsync ()
+		{
+			var commands = new List<ImapReplayCommand> ();
+			commands.Add (new ImapReplayCommand ("", "gmail.greeting.txt"));
+			commands.Add (new ImapReplayCommand ("A00000000 CAPABILITY\r\n", "gmail.capability+login.txt"));
+			commands.Add (new ImapReplayCommand ("A00000001 AUTHENTICATE LOGIN\r\n", ImapReplayCommandResponse.Plus));
+			commands.Add (new ImapReplayCommand ("dXNlcm5hbWU=\r\n", ImapReplayCommandResponse.Plus));
+			commands.Add (new ImapReplayCommand ("A00000001", "cGFzc3dvcmQ=\r\n", "gmail.authenticate.txt"));
+			commands.Add (new ImapReplayCommand ("A00000002 NAMESPACE\r\n", "gmail.namespace.txt"));
+			commands.Add (new ImapReplayCommand ("A00000003 LIST \"\" \"INBOX\" RETURN (SUBSCRIBED CHILDREN)\r\n", "gmail.list-inbox.txt"));
+			commands.Add (new ImapReplayCommand ("A00000004 XLIST \"\" \"*\"\r\n", "gmail.xlist.txt"));
+
+			using (var stream = new MemoryStream ()) {
+				using (var client = new ImapClient (new ProtocolLogger (stream, true) { RedactSecrets = true })) {
+					try {
+						await client.ReplayConnectAsync ("localhost", new ImapReplayStream (commands, true));
+					} catch (Exception ex) {
+						Assert.Fail ("Did not expect an exception in Connect: {0}", ex);
+					}
+
+					Assert.IsTrue (client.IsConnected, "Client failed to connect.");
+					Assert.IsFalse (client.IsSecure, "IsSecure should be false.");
+
+					Assert.AreEqual (GMailInitialCapabilities, client.Capabilities);
+					Assert.AreEqual (6, client.AuthenticationMechanisms.Count);
+					Assert.IsTrue (client.AuthenticationMechanisms.Contains ("XOAUTH"), "Expected SASL XOAUTH auth mechanism");
+					Assert.IsTrue (client.AuthenticationMechanisms.Contains ("XOAUTH2"), "Expected SASL XOAUTH2 auth mechanism");
+					Assert.IsTrue (client.AuthenticationMechanisms.Contains ("OAUTHBEARER"), "Expected SASL OAUTHBEARER auth mechanism");
+					Assert.IsTrue (client.AuthenticationMechanisms.Contains ("PLAIN"), "Expected SASL PLAIN auth mechanism");
+					Assert.IsTrue (client.AuthenticationMechanisms.Contains ("PLAIN-CLIENTTOKEN"), "Expected SASL PLAIN-CLIENTTOKEN auth mechanism");
+					Assert.IsTrue (client.AuthenticationMechanisms.Contains ("LOGIN"), "Expected SASL LOGIN auth mechanism");
+
+					Assert.AreEqual (120000, client.Timeout, "Timeout");
+					client.Timeout *= 2;
+
+					int authenticated = 0;
+					client.Authenticated += (sender, e) => {
+						authenticated++;
+					};
+
+					try {
+						var credentials = new NetworkCredential ("username", "password");
+						var sasl = new SaslMechanismLogin (credentials);
+
+						await client.AuthenticateAsync (sasl);
+					} catch (Exception ex) {
+						Assert.Fail ("Did not expect an exception in Authenticate: {0}", ex);
+					}
+
+					Assert.AreEqual (1, authenticated, "Authenticated event was not emitted the expected number of times");
+					Assert.AreEqual (GMailAuthenticatedCapabilities, client.Capabilities);
+					Assert.IsTrue (client.SupportsQuotas, "SupportsQuotas");
+
+					await client.DisconnectAsync (false);
+				}
+
+				AssertRedacted (stream, "C: A00000001 AUTHENTICATE LOGIN", "C: A00000002 NAMESPACE");
+			}
+		}
+
 		static void AssertFolder (IMailFolder folder, string fullName, string id, FolderAttributes attributes, bool subscribed, ulong highestmodseq, int count, int recent, uint uidnext, uint validity, int unread, ulong size)
 		{
 			if (subscribed)
@@ -2852,7 +3485,7 @@ namespace UnitTests.Net.Imap {
 			commands.Add (new ImapReplayCommand ("A00000021 UID FETCH 1:7 (UID FLAGS MODSEQ)\r\n", "dovecot.fetch1.txt"));
 			commands.Add (new ImapReplayCommand ("A00000022 UID FETCH 1:* (UID FLAGS MODSEQ) (CHANGEDSINCE 2 VANISHED)\r\n", "dovecot.fetch2.txt"));
 			commands.Add (new ImapReplayCommand ("A00000023 UID SORT RETURN (ALL RELEVANCY COUNT MIN MAX) (REVERSE ARRIVAL) US-ASCII ALL\r\n", "dovecot.sort-reverse-arrival.txt"));
-			commands.Add (new ImapReplayCommand ("A00000024 UID SEARCH RETURN () UNDELETED SEEN\r\n", "dovecot.optimized-search.txt"));
+			commands.Add (new ImapReplayCommand ("A00000024 UID SEARCH RETURN (ALL) UNDELETED SEEN\r\n", "dovecot.optimized-search.txt"));
 			commands.Add (new ImapReplayCommand ("A00000025 CREATE UnitTests.Destination\r\n", ImapReplayCommandResponse.OK));
 			commands.Add (new ImapReplayCommand ("A00000026 LIST \"\" UnitTests.Destination\r\n", "dovecot.list-unittests-destination.txt"));
 			commands.Add (new ImapReplayCommand ("A00000027 UID COPY 1:7 UnitTests.Destination\r\n", "dovecot.copy.txt"));
@@ -2883,10 +3516,10 @@ namespace UnitTests.Net.Imap {
 			commands.Add (new ImapReplayCommand ("A00000052 FETCH 1 (BODY.PEEK[HEADER.FIELDS (MIME-VERSION CONTENT-TYPE)])\r\n", "dovecot.getstream-section2.txt"));
 			commands.Add (new ImapReplayCommand ("A00000053 UID STORE 1:14 (UNCHANGEDSINCE 3) +FLAGS.SILENT (\\Deleted $MailKit)\r\n", "dovecot.store-deleted-custom.txt"));
 			commands.Add (new ImapReplayCommand ("A00000054 STORE 1:7 (UNCHANGEDSINCE 5) FLAGS.SILENT (\\Deleted \\Seen $MailKit)\r\n", "dovecot.setflags-unchangedsince.txt"));
-			commands.Add (new ImapReplayCommand ("A00000055 UID SEARCH RETURN () UID 1:14 OR NEW OR OLD OR ANSWERED OR DELETED OR DRAFT OR FLAGGED OR RECENT OR UNANSWERED OR UNDELETED OR UNDRAFT OR UNFLAGGED OR UNSEEN OR KEYWORD $MailKit UNKEYWORD $MailKit\r\n", "dovecot.search-uids.txt"));
+			commands.Add (new ImapReplayCommand ("A00000055 UID SEARCH RETURN (ALL) UID 1:14 OR NEW OR OLD OR ANSWERED OR DELETED OR DRAFT OR FLAGGED OR RECENT OR UNANSWERED OR UNDELETED OR UNDRAFT OR UNFLAGGED OR UNSEEN OR KEYWORD $MailKit UNKEYWORD $MailKit\r\n", "dovecot.search-uids.txt"));
 			commands.Add (new ImapReplayCommand ("A00000056 UID SEARCH RETURN (ALL RELEVANCY COUNT MIN MAX) UID 1:14 LARGER 256 SMALLER 512\r\n", "dovecot.search-uids-options.txt"));
-			commands.Add (new ImapReplayCommand ("A00000057 UID SORT RETURN () (REVERSE DATE SUBJECT DISPLAYFROM SIZE) US-ASCII OR OR (SENTBEFORE 12-Oct-2016 SENTSINCE 10-Oct-2016) NOT SENTON 11-Oct-2016 OR (BEFORE 12-Oct-2016 SINCE 10-Oct-2016) NOT ON 11-Oct-2016\r\n", "dovecot.sort-by-date.txt"));
-			commands.Add (new ImapReplayCommand ("A00000058 UID SORT RETURN () (FROM TO CC) US-ASCII UID 1:14 OR BCC xyz OR CC xyz OR FROM xyz OR TO xyz OR SUBJECT xyz OR HEADER Message-Id mimekit.net OR BODY \"This is the message body.\" TEXT message\r\n", "dovecot.sort-by-strings.txt"));
+			commands.Add (new ImapReplayCommand ("A00000057 UID SORT RETURN (ALL) (REVERSE DATE SUBJECT DISPLAYFROM SIZE) US-ASCII OR OR (SENTBEFORE 12-Oct-2016 SENTSINCE 10-Oct-2016) NOT SENTON 11-Oct-2016 OR (BEFORE 12-Oct-2016 SINCE 10-Oct-2016) NOT ON 11-Oct-2016\r\n", "dovecot.sort-by-date.txt"));
+			commands.Add (new ImapReplayCommand ("A00000058 UID SORT RETURN (ALL) (FROM TO CC) US-ASCII UID 1:14 OR BCC xyz OR CC xyz OR FROM xyz OR TO xyz OR SUBJECT xyz OR HEADER Message-Id mimekit.net OR BODY \"This is the message body.\" TEXT message\r\n", "dovecot.sort-by-strings.txt"));
 			commands.Add (new ImapReplayCommand ("A00000059 UID SORT RETURN (ALL RELEVANCY COUNT MIN MAX) (DISPLAYTO) US-ASCII UID 1:14 OLDER 1 YOUNGER 3600\r\n", "dovecot.sort-uids-options.txt"));
 			commands.Add (new ImapReplayCommand ("A00000060 UID SEARCH ALL\r\n", "dovecot.search-raw.txt"));
 			commands.Add (new ImapReplayCommand ("A00000061 UID SORT (REVERSE ARRIVAL) US-ASCII ALL\r\n", "dovecot.sort-raw.txt"));
@@ -4223,7 +4856,7 @@ namespace UnitTests.Net.Imap {
 					commands.Add (new ImapReplayCommand (command, string.Format ("gmail.append.{0}.txt", i + 1)));
 				}
 			}
-			commands.Add (new ImapReplayCommand ("A00000059 UID SEARCH RETURN () OR X-GM-MSGID 1 OR X-GM-THRID 5 OR X-GM-LABELS \"Custom Label\" X-GM-RAW \"has:attachment in:unread\"\r\n", "gmail.search.txt"));
+			commands.Add (new ImapReplayCommand ("A00000059 UID SEARCH RETURN (ALL) OR X-GM-MSGID 1 OR X-GM-THRID 5 OR X-GM-LABELS \"Custom Label\" X-GM-RAW \"has:attachment in:unread\"\r\n", "gmail.search.txt"));
 			commands.Add (new ImapReplayCommand ("A00000060 UID FETCH 1:3,5,7:9,11:14,26:29,31,34,41:43,50 (UID FLAGS INTERNALDATE RFC822.SIZE ENVELOPE BODY X-GM-MSGID X-GM-THRID X-GM-LABELS)\r\n", "gmail.search-summary.txt"));
 			commands.Add (new ImapReplayCommand ("A00000061 UID FETCH 1 (BODY.PEEK[])\r\n", "gmail.fetch.1.txt"));
 			commands.Add (new ImapReplayCommand ("A00000062 UID FETCH 2 (BODY.PEEK[])\r\n", "gmail.fetch.2.txt"));
@@ -5273,7 +5906,7 @@ namespace UnitTests.Net.Imap {
 			commands.Add (new ImapReplayCommand ("A00000005 COMPRESS DEFLATE\r\n", ImapReplayCommandResponse.OK));
 			commands.Add (new ImapReplayCommand ("A00000006 COMPRESS DEFLATE\r\n", ImapReplayCommandResponse.NO, true));
 			commands.Add (new ImapReplayCommand ("A00000007 SELECT INBOX (CONDSTORE)\r\n", "gmail.select-inbox.txt", true));
-			commands.Add (new ImapReplayCommand ("A00000008 UID SEARCH RETURN () ALL\r\n", "gmail.search.txt", true));
+			commands.Add (new ImapReplayCommand ("A00000008 UID SEARCH RETURN (ALL) ALL\r\n", "gmail.search.txt", true));
 			commands.Add (new ImapReplayCommand ("A00000009 UID STORE 1:3,5,7:9,11:14,26:29,31,34,41:43,50 +FLAGS.SILENT (\\Deleted)\r\n", ImapReplayCommandResponse.OK, true));
 			commands.Add (new ImapReplayCommand ("A00000010 UID EXPUNGE 1:3\r\n", "gmail.expunge.txt", true));
 			commands.Add (new ImapReplayCommand ("A00000011 LOGOUT\r\n", "gmail.logout.txt", true));

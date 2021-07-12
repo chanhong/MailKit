@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2021 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -105,7 +105,7 @@ namespace MailKit {
 		internal static void Encode (StringBuilder builder, string value)
 		{
 			if (value != null)
-				builder.Append (MimeUtils.Quote (value));
+				MimeUtils.AppendQuoted (builder, value);
 			else
 				builder.Append ("NIL");
 		}
@@ -113,7 +113,7 @@ namespace MailKit {
 		internal static void Encode (StringBuilder builder, Uri location)
 		{
 			if (location != null)
-				builder.Append (MimeUtils.Quote (location.ToString ()));
+				MimeUtils.AppendQuoted (builder, location.ToString ());
 			else
 				builder.Append ("NIL");
 		}

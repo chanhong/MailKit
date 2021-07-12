@@ -1,5 +1,30 @@
 # Release Notes
 
+### MailKit 2.13.0 (2021-06-12)
+
+* Added new properties to all clients to get SSL cipher/hash/protocol/key-exchange info.
+  (issue [#1175](https://github.com/jstedfast/MailKit/issues/1175))
+* Added support for GMail's WEBALERT resp-code.
+  (issue [#1214](https://github.com/jstedfast/MailKit/issues/1175))
+* Updated GMail SSL certificate serial numbers and fingerprints.
+
+### MailKit 2.12.0 (2021-05-12)
+
+* Fixed the .NET 5.0 build to include .NET 5.0-specific features. Previous releases incorrectly used
+  #if NET50 instead of #if NET5_0. (issue [#1140](https://github.com/jstedfast/MailKit/issues/1140))
+* Added support for NETStandard 2.1. (issue [#1181](https://github.com/jstedfast/MailKit/issues/1181))
+* .NETStandard 2.1 and .NET 5.0 versions of MailKit now use the newer SslStream.AuthenticateAsClientAsync()
+  methods that take SslClientAuthenticationOptions and CancellationToken arguments. In theory, this should
+  make upgrading a TCP/IP connection to SSL/TLS cancellable. Older .NET frameworks remain uncancellable for
+  this operation.
+* Fixed a NullReferenceException bug in the NTLM SASL mechanism logic.
+* Updated hard-coded SSL certificate serial numbers and fingerprints for common mail servers.
+
+### MailKit 2.11.1 (2021-03-16)
+
+* Added work-around for IMAP servers that do not correctly handle the ESEARCH `RETURN ()` syntax
+  the same as `RETURN (ALL)`. (issue [#1177](https://github.com/jstedfast/MailKit/issues/1177))
+
 ### MailKit 2.11.0 (2021-03-12)
 
 * Handle BAD responses to the NAMESPACE command for Exchange.

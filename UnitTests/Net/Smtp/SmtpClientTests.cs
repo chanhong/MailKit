@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2021 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -33,6 +33,7 @@ using System.Threading;
 using System.Net.Sockets;
 using System.Threading.Tasks;
 using System.Collections.Generic;
+using System.Security.Authentication;
 
 using NUnit.Framework;
 
@@ -47,10 +48,21 @@ using MailKit.Net.Proxy;
 
 using UnitTests.Net.Proxy;
 
+using AuthenticationException = MailKit.Security.AuthenticationException;
+
 namespace UnitTests.Net.Smtp {
 	[TestFixture]
 	public class SmtpClientTests
 	{
+		const CipherAlgorithmType GMailCipherAlgorithm = CipherAlgorithmType.Aes128;
+		const int GMailCipherStrength = 128;
+		const HashAlgorithmType GMailHashAlgorithm = HashAlgorithmType.Sha256;
+		const ExchangeAlgorithmType GMailKeyExchangeAlgorithm = (ExchangeAlgorithmType) 44550;
+		const CipherAlgorithmType YahooCipherAlgorithm = CipherAlgorithmType.Aes128;
+		const int YahooCipherStrength = 128;
+		const HashAlgorithmType YahooHashAlgorithm = HashAlgorithmType.Sha256;
+		const ExchangeAlgorithmType YahooKeyExchangeAlgorithm = (ExchangeAlgorithmType) 44550;
+
 		class MyProgress : ITransferProgress
 		{
 			public long BytesTransferred;
@@ -544,6 +556,13 @@ namespace UnitTests.Net.Smtp {
 				Assert.IsTrue (client.IsSecure, "Expected a secure connection");
 				Assert.IsTrue (client.IsEncrypted, "Expected an encrypted connection");
 				Assert.IsTrue (client.IsSigned, "Expected a signed connection");
+				Assert.AreEqual (client.SslProtocol, SslProtocols.Tls12, "Expected a TLS v1.2 connection");
+				Assert.AreEqual (GMailCipherAlgorithm, client.SslCipherAlgorithm);
+				Assert.AreEqual (GMailCipherStrength, client.SslCipherStrength);
+				Assert.AreEqual (GMailHashAlgorithm, client.SslHashAlgorithm);
+				Assert.AreEqual (0, client.SslHashStrength);
+				Assert.AreEqual (GMailKeyExchangeAlgorithm, client.SslKeyExchangeAlgorithm);
+				Assert.AreEqual (255, client.SslKeyExchangeStrength);
 				Assert.IsFalse (client.IsAuthenticated, "Expected the client to not be authenticated");
 				Assert.AreEqual (1, connected, "ConnectedEvent");
 
@@ -554,6 +573,13 @@ namespace UnitTests.Net.Smtp {
 				Assert.IsFalse (client.IsSecure, "Expected IsSecure to be false after disconnecting");
 				Assert.IsFalse (client.IsEncrypted, "Expected IsEncrypted to be false after disconnecting");
 				Assert.IsFalse (client.IsSigned, "Expected IsSigned to be false after disconnecting");
+				Assert.AreEqual (SslProtocols.None, client.SslProtocol, "Expected SslProtocol to be None after disconnecting");
+				Assert.IsNull (client.SslCipherAlgorithm, "Expected SslCipherAlgorithm to be null after disconnecting");
+				Assert.IsNull (client.SslCipherStrength, "Expected SslCipherStrength to be null after disconnecting");
+				Assert.IsNull (client.SslHashAlgorithm, "Expected SslHashAlgorithm to be null after disconnecting");
+				Assert.IsNull (client.SslHashStrength, "Expected SslHashStrength to be null after disconnecting");
+				Assert.IsNull (client.SslKeyExchangeAlgorithm, "Expected SslKeyExchangeAlgorithm to be null after disconnecting");
+				Assert.IsNull (client.SslKeyExchangeStrength, "Expected SslKeyExchangeStrength to be null after disconnecting");
 				Assert.AreEqual (1, disconnected, "DisconnectedEvent");
 			}
 		}
@@ -588,6 +614,13 @@ namespace UnitTests.Net.Smtp {
 				Assert.IsTrue (client.IsSecure, "Expected a secure connection");
 				Assert.IsTrue (client.IsEncrypted, "Expected an encrypted connection");
 				Assert.IsTrue (client.IsSigned, "Expected a signed connection");
+				Assert.AreEqual (client.SslProtocol, SslProtocols.Tls12, "Expected a TLS v1.2 connection");
+				Assert.AreEqual (GMailCipherAlgorithm, client.SslCipherAlgorithm);
+				Assert.AreEqual (GMailCipherStrength, client.SslCipherStrength);
+				Assert.AreEqual (GMailHashAlgorithm, client.SslHashAlgorithm);
+				Assert.AreEqual (0, client.SslHashStrength);
+				Assert.AreEqual (GMailKeyExchangeAlgorithm, client.SslKeyExchangeAlgorithm);
+				Assert.AreEqual (255, client.SslKeyExchangeStrength);
 				Assert.IsFalse (client.IsAuthenticated, "Expected the client to not be authenticated");
 				Assert.AreEqual (1, connected, "ConnectedEvent");
 
@@ -598,6 +631,13 @@ namespace UnitTests.Net.Smtp {
 				Assert.IsFalse (client.IsSecure, "Expected IsSecure to be false after disconnecting");
 				Assert.IsFalse (client.IsEncrypted, "Expected IsEncrypted to be false after disconnecting");
 				Assert.IsFalse (client.IsSigned, "Expected IsSigned to be false after disconnecting");
+				Assert.AreEqual (SslProtocols.None, client.SslProtocol, "Expected SslProtocol to be None after disconnecting");
+				Assert.IsNull (client.SslCipherAlgorithm, "Expected SslCipherAlgorithm to be null after disconnecting");
+				Assert.IsNull (client.SslCipherStrength, "Expected SslCipherStrength to be null after disconnecting");
+				Assert.IsNull (client.SslHashAlgorithm, "Expected SslHashAlgorithm to be null after disconnecting");
+				Assert.IsNull (client.SslHashStrength, "Expected SslHashStrength to be null after disconnecting");
+				Assert.IsNull (client.SslKeyExchangeAlgorithm, "Expected SslKeyExchangeAlgorithm to be null after disconnecting");
+				Assert.IsNull (client.SslKeyExchangeStrength, "Expected SslKeyExchangeStrength to be null after disconnecting");
 				Assert.AreEqual (1, disconnected, "DisconnectedEvent");
 			}
 		}
@@ -648,6 +688,13 @@ namespace UnitTests.Net.Smtp {
 					Assert.IsTrue (client.IsSecure, "Expected a secure connection");
 					Assert.IsTrue (client.IsEncrypted, "Expected an encrypted connection");
 					Assert.IsTrue (client.IsSigned, "Expected a signed connection");
+					Assert.AreEqual (client.SslProtocol, SslProtocols.Tls12, "Expected a TLS v1.2 connection");
+					Assert.AreEqual (GMailCipherAlgorithm, client.SslCipherAlgorithm);
+					Assert.AreEqual (GMailCipherStrength, client.SslCipherStrength);
+					Assert.AreEqual (GMailHashAlgorithm, client.SslHashAlgorithm);
+					Assert.AreEqual (0, client.SslHashStrength);
+					Assert.AreEqual (GMailKeyExchangeAlgorithm, client.SslKeyExchangeAlgorithm);
+					Assert.AreEqual (255, client.SslKeyExchangeStrength);
 					Assert.IsFalse (client.IsAuthenticated, "Expected the client to not be authenticated");
 					Assert.AreEqual (1, connected, "ConnectedEvent");
 
@@ -658,6 +705,13 @@ namespace UnitTests.Net.Smtp {
 					Assert.IsFalse (client.IsSecure, "Expected IsSecure to be false after disconnecting");
 					Assert.IsFalse (client.IsEncrypted, "Expected IsEncrypted to be false after disconnecting");
 					Assert.IsFalse (client.IsSigned, "Expected IsSigned to be false after disconnecting");
+					Assert.AreEqual (SslProtocols.None, client.SslProtocol, "Expected SslProtocol to be None after disconnecting");
+					Assert.IsNull (client.SslCipherAlgorithm, "Expected SslCipherAlgorithm to be null after disconnecting");
+					Assert.IsNull (client.SslCipherStrength, "Expected SslCipherStrength to be null after disconnecting");
+					Assert.IsNull (client.SslHashAlgorithm, "Expected SslHashAlgorithm to be null after disconnecting");
+					Assert.IsNull (client.SslHashStrength, "Expected SslHashStrength to be null after disconnecting");
+					Assert.IsNull (client.SslKeyExchangeAlgorithm, "Expected SslKeyExchangeAlgorithm to be null after disconnecting");
+					Assert.IsNull (client.SslKeyExchangeStrength, "Expected SslKeyExchangeStrength to be null after disconnecting");
 					Assert.AreEqual (1, disconnected, "DisconnectedEvent");
 				}
 			}
@@ -709,6 +763,13 @@ namespace UnitTests.Net.Smtp {
 					Assert.IsTrue (client.IsSecure, "Expected a secure connection");
 					Assert.IsTrue (client.IsEncrypted, "Expected an encrypted connection");
 					Assert.IsTrue (client.IsSigned, "Expected a signed connection");
+					Assert.AreEqual (client.SslProtocol, SslProtocols.Tls12, "Expected a TLS v1.2 connection");
+					Assert.AreEqual (GMailCipherAlgorithm, client.SslCipherAlgorithm);
+					Assert.AreEqual (GMailCipherStrength, client.SslCipherStrength);
+					Assert.AreEqual (GMailHashAlgorithm, client.SslHashAlgorithm);
+					Assert.AreEqual (0, client.SslHashStrength);
+					Assert.AreEqual (GMailKeyExchangeAlgorithm, client.SslKeyExchangeAlgorithm);
+					Assert.AreEqual (255, client.SslKeyExchangeStrength);
 					Assert.IsFalse (client.IsAuthenticated, "Expected the client to not be authenticated");
 					Assert.AreEqual (1, connected, "ConnectedEvent");
 
@@ -719,6 +780,13 @@ namespace UnitTests.Net.Smtp {
 					Assert.IsFalse (client.IsSecure, "Expected IsSecure to be false after disconnecting");
 					Assert.IsFalse (client.IsEncrypted, "Expected IsEncrypted to be false after disconnecting");
 					Assert.IsFalse (client.IsSigned, "Expected IsSigned to be false after disconnecting");
+					Assert.AreEqual (SslProtocols.None, client.SslProtocol, "Expected SslProtocol to be None after disconnecting");
+					Assert.IsNull (client.SslCipherAlgorithm, "Expected SslCipherAlgorithm to be null after disconnecting");
+					Assert.IsNull (client.SslCipherStrength, "Expected SslCipherStrength to be null after disconnecting");
+					Assert.IsNull (client.SslHashAlgorithm, "Expected SslHashAlgorithm to be null after disconnecting");
+					Assert.IsNull (client.SslHashStrength, "Expected SslHashStrength to be null after disconnecting");
+					Assert.IsNull (client.SslKeyExchangeAlgorithm, "Expected SslKeyExchangeAlgorithm to be null after disconnecting");
+					Assert.IsNull (client.SslKeyExchangeStrength, "Expected SslKeyExchangeStrength to be null after disconnecting");
 					Assert.AreEqual (1, disconnected, "DisconnectedEvent");
 				}
 			}
@@ -760,6 +828,13 @@ namespace UnitTests.Net.Smtp {
 				Assert.IsTrue (client.IsSecure, "Expected a secure connection");
 				Assert.IsTrue (client.IsEncrypted, "Expected an encrypted connection");
 				Assert.IsTrue (client.IsSigned, "Expected a signed connection");
+				Assert.AreEqual (client.SslProtocol, SslProtocols.Tls12, "Expected a TLS v1.2 connection");
+				Assert.AreEqual (GMailCipherAlgorithm, client.SslCipherAlgorithm);
+				Assert.AreEqual (GMailCipherStrength, client.SslCipherStrength);
+				Assert.AreEqual (GMailHashAlgorithm, client.SslHashAlgorithm);
+				Assert.AreEqual (0, client.SslHashStrength);
+				Assert.AreEqual (GMailKeyExchangeAlgorithm, client.SslKeyExchangeAlgorithm);
+				Assert.AreEqual (255, client.SslKeyExchangeStrength);
 				Assert.IsFalse (client.IsAuthenticated, "Expected the client to not be authenticated");
 				Assert.AreEqual (1, connected, "ConnectedEvent");
 
@@ -770,6 +845,13 @@ namespace UnitTests.Net.Smtp {
 				Assert.IsFalse (client.IsSecure, "Expected IsSecure to be false after disconnecting");
 				Assert.IsFalse (client.IsEncrypted, "Expected IsEncrypted to be false after disconnecting");
 				Assert.IsFalse (client.IsSigned, "Expected IsSigned to be false after disconnecting");
+				Assert.AreEqual (SslProtocols.None, client.SslProtocol, "Expected SslProtocol to be None after disconnecting");
+				Assert.IsNull (client.SslCipherAlgorithm, "Expected SslCipherAlgorithm to be null after disconnecting");
+				Assert.IsNull (client.SslCipherStrength, "Expected SslCipherStrength to be null after disconnecting");
+				Assert.IsNull (client.SslHashAlgorithm, "Expected SslHashAlgorithm to be null after disconnecting");
+				Assert.IsNull (client.SslHashStrength, "Expected SslHashStrength to be null after disconnecting");
+				Assert.IsNull (client.SslKeyExchangeAlgorithm, "Expected SslKeyExchangeAlgorithm to be null after disconnecting");
+				Assert.IsNull (client.SslKeyExchangeStrength, "Expected SslKeyExchangeStrength to be null after disconnecting");
 				Assert.AreEqual (1, disconnected, "DisconnectedEvent");
 			}
 		}
@@ -810,6 +892,13 @@ namespace UnitTests.Net.Smtp {
 				Assert.IsTrue (client.IsSecure, "Expected a secure connection");
 				Assert.IsTrue (client.IsEncrypted, "Expected an encrypted connection");
 				Assert.IsTrue (client.IsSigned, "Expected a signed connection");
+				Assert.AreEqual (client.SslProtocol, SslProtocols.Tls12, "Expected a TLS v1.2 connection");
+				Assert.AreEqual (GMailCipherAlgorithm, client.SslCipherAlgorithm);
+				Assert.AreEqual (GMailCipherStrength, client.SslCipherStrength);
+				Assert.AreEqual (GMailHashAlgorithm, client.SslHashAlgorithm);
+				Assert.AreEqual (0, client.SslHashStrength);
+				Assert.AreEqual (GMailKeyExchangeAlgorithm, client.SslKeyExchangeAlgorithm);
+				Assert.AreEqual (255, client.SslKeyExchangeStrength);
 				Assert.IsFalse (client.IsAuthenticated, "Expected the client to not be authenticated");
 				Assert.AreEqual (1, connected, "ConnectedEvent");
 
@@ -820,6 +909,13 @@ namespace UnitTests.Net.Smtp {
 				Assert.IsFalse (client.IsSecure, "Expected IsSecure to be false after disconnecting");
 				Assert.IsFalse (client.IsEncrypted, "Expected IsEncrypted to be false after disconnecting");
 				Assert.IsFalse (client.IsSigned, "Expected IsSigned to be false after disconnecting");
+				Assert.AreEqual (SslProtocols.None, client.SslProtocol, "Expected SslProtocol to be None after disconnecting");
+				Assert.IsNull (client.SslCipherAlgorithm, "Expected SslCipherAlgorithm to be null after disconnecting");
+				Assert.IsNull (client.SslCipherStrength, "Expected SslCipherStrength to be null after disconnecting");
+				Assert.IsNull (client.SslHashAlgorithm, "Expected SslHashAlgorithm to be null after disconnecting");
+				Assert.IsNull (client.SslHashStrength, "Expected SslHashStrength to be null after disconnecting");
+				Assert.IsNull (client.SslKeyExchangeAlgorithm, "Expected SslKeyExchangeAlgorithm to be null after disconnecting");
+				Assert.IsNull (client.SslKeyExchangeStrength, "Expected SslKeyExchangeStrength to be null after disconnecting");
 				Assert.AreEqual (1, disconnected, "DisconnectedEvent");
 			}
 		}
@@ -856,6 +952,13 @@ namespace UnitTests.Net.Smtp {
 					Assert.IsTrue (client.IsSecure, "Expected a secure connection");
 					Assert.IsTrue (client.IsEncrypted, "Expected an encrypted connection");
 					Assert.IsTrue (client.IsSigned, "Expected a signed connection");
+					Assert.AreEqual (client.SslProtocol, SslProtocols.Tls12, "Expected a TLS v1.2 connection");
+					Assert.AreEqual (YahooCipherAlgorithm, client.SslCipherAlgorithm);
+					Assert.AreEqual (YahooCipherStrength, client.SslCipherStrength);
+					Assert.AreEqual (YahooHashAlgorithm, client.SslHashAlgorithm);
+					Assert.AreEqual (0, client.SslHashStrength);
+					Assert.AreEqual (YahooKeyExchangeAlgorithm, client.SslKeyExchangeAlgorithm);
+					Assert.AreEqual (255, client.SslKeyExchangeStrength);
 					Assert.IsFalse (client.IsAuthenticated, "Expected the client to not be authenticated");
 					Assert.AreEqual (1, connected, "ConnectedEvent");
 
@@ -864,6 +967,13 @@ namespace UnitTests.Net.Smtp {
 					Assert.IsFalse (client.IsSecure, "Expected IsSecure to be false after disconnecting");
 					Assert.IsFalse (client.IsEncrypted, "Expected IsEncrypted to be false after disconnecting");
 					Assert.IsFalse (client.IsSigned, "Expected IsSigned to be false after disconnecting");
+					Assert.AreEqual (SslProtocols.None, client.SslProtocol, "Expected SslProtocol to be None after disconnecting");
+					Assert.IsNull (client.SslCipherAlgorithm, "Expected SslCipherAlgorithm to be null after disconnecting");
+					Assert.IsNull (client.SslCipherStrength, "Expected SslCipherStrength to be null after disconnecting");
+					Assert.IsNull (client.SslHashAlgorithm, "Expected SslHashAlgorithm to be null after disconnecting");
+					Assert.IsNull (client.SslHashStrength, "Expected SslHashStrength to be null after disconnecting");
+					Assert.IsNull (client.SslKeyExchangeAlgorithm, "Expected SslKeyExchangeAlgorithm to be null after disconnecting");
+					Assert.IsNull (client.SslKeyExchangeStrength, "Expected SslKeyExchangeStrength to be null after disconnecting");
 					Assert.AreEqual (1, disconnected, "DisconnectedEvent");
 				}
 			}
@@ -901,6 +1011,13 @@ namespace UnitTests.Net.Smtp {
 					Assert.IsTrue (client.IsSecure, "Expected a secure connection");
 					Assert.IsTrue (client.IsEncrypted, "Expected an encrypted connection");
 					Assert.IsTrue (client.IsSigned, "Expected a signed connection");
+					Assert.AreEqual (client.SslProtocol, SslProtocols.Tls12, "Expected a TLS v1.2 connection");
+					Assert.AreEqual (YahooCipherAlgorithm, client.SslCipherAlgorithm);
+					Assert.AreEqual (YahooCipherStrength, client.SslCipherStrength);
+					Assert.AreEqual (YahooHashAlgorithm, client.SslHashAlgorithm);
+					Assert.AreEqual (0, client.SslHashStrength);
+					Assert.AreEqual (YahooKeyExchangeAlgorithm, client.SslKeyExchangeAlgorithm);
+					Assert.AreEqual (255, client.SslKeyExchangeStrength);
 					Assert.IsFalse (client.IsAuthenticated, "Expected the client to not be authenticated");
 					Assert.AreEqual (1, connected, "ConnectedEvent");
 
@@ -909,6 +1026,13 @@ namespace UnitTests.Net.Smtp {
 					Assert.IsFalse (client.IsSecure, "Expected IsSecure to be false after disconnecting");
 					Assert.IsFalse (client.IsEncrypted, "Expected IsEncrypted to be false after disconnecting");
 					Assert.IsFalse (client.IsSigned, "Expected IsSigned to be false after disconnecting");
+					Assert.AreEqual (SslProtocols.None, client.SslProtocol, "Expected SslProtocol to be None after disconnecting");
+					Assert.IsNull (client.SslCipherAlgorithm, "Expected SslCipherAlgorithm to be null after disconnecting");
+					Assert.IsNull (client.SslCipherStrength, "Expected SslCipherStrength to be null after disconnecting");
+					Assert.IsNull (client.SslHashAlgorithm, "Expected SslHashAlgorithm to be null after disconnecting");
+					Assert.IsNull (client.SslHashStrength, "Expected SslHashStrength to be null after disconnecting");
+					Assert.IsNull (client.SslKeyExchangeAlgorithm, "Expected SslKeyExchangeAlgorithm to be null after disconnecting");
+					Assert.IsNull (client.SslKeyExchangeStrength, "Expected SslKeyExchangeStrength to be null after disconnecting");
 					Assert.AreEqual (1, disconnected, "DisconnectedEvent");
 				}
 			}
@@ -946,6 +1070,13 @@ namespace UnitTests.Net.Smtp {
 					Assert.IsTrue (client.IsSecure, "Expected a secure connection");
 					Assert.IsTrue (client.IsEncrypted, "Expected an encrypted connection");
 					Assert.IsTrue (client.IsSigned, "Expected a signed connection");
+					Assert.AreEqual (client.SslProtocol, SslProtocols.Tls12, "Expected a TLS v1.2 connection");
+					Assert.AreEqual (YahooCipherAlgorithm, client.SslCipherAlgorithm);
+					Assert.AreEqual (YahooCipherStrength, client.SslCipherStrength);
+					Assert.AreEqual (YahooHashAlgorithm, client.SslHashAlgorithm);
+					Assert.AreEqual (0, client.SslHashStrength);
+					Assert.AreEqual (YahooKeyExchangeAlgorithm, client.SslKeyExchangeAlgorithm);
+					Assert.AreEqual (255, client.SslKeyExchangeStrength);
 					Assert.IsFalse (client.IsAuthenticated, "Expected the client to not be authenticated");
 					Assert.AreEqual (1, connected, "ConnectedEvent");
 
@@ -954,6 +1085,13 @@ namespace UnitTests.Net.Smtp {
 					Assert.IsFalse (client.IsSecure, "Expected IsSecure to be false after disconnecting");
 					Assert.IsFalse (client.IsEncrypted, "Expected IsEncrypted to be false after disconnecting");
 					Assert.IsFalse (client.IsSigned, "Expected IsSigned to be false after disconnecting");
+					Assert.AreEqual (SslProtocols.None, client.SslProtocol, "Expected SslProtocol to be None after disconnecting");
+					Assert.IsNull (client.SslCipherAlgorithm, "Expected SslCipherAlgorithm to be null after disconnecting");
+					Assert.IsNull (client.SslCipherStrength, "Expected SslCipherStrength to be null after disconnecting");
+					Assert.IsNull (client.SslHashAlgorithm, "Expected SslHashAlgorithm to be null after disconnecting");
+					Assert.IsNull (client.SslHashStrength, "Expected SslHashStrength to be null after disconnecting");
+					Assert.IsNull (client.SslKeyExchangeAlgorithm, "Expected SslKeyExchangeAlgorithm to be null after disconnecting");
+					Assert.IsNull (client.SslKeyExchangeStrength, "Expected SslKeyExchangeStrength to be null after disconnecting");
 					Assert.AreEqual (1, disconnected, "DisconnectedEvent");
 				}
 			}
@@ -991,6 +1129,13 @@ namespace UnitTests.Net.Smtp {
 					Assert.IsTrue (client.IsSecure, "Expected a secure connection");
 					Assert.IsTrue (client.IsEncrypted, "Expected an encrypted connection");
 					Assert.IsTrue (client.IsSigned, "Expected a signed connection");
+					Assert.AreEqual (client.SslProtocol, SslProtocols.Tls12, "Expected a TLS v1.2 connection");
+					Assert.AreEqual (YahooCipherAlgorithm, client.SslCipherAlgorithm);
+					Assert.AreEqual (YahooCipherStrength, client.SslCipherStrength);
+					Assert.AreEqual (YahooHashAlgorithm, client.SslHashAlgorithm);
+					Assert.AreEqual (0, client.SslHashStrength);
+					Assert.AreEqual (YahooKeyExchangeAlgorithm, client.SslKeyExchangeAlgorithm);
+					Assert.AreEqual (255, client.SslKeyExchangeStrength);
 					Assert.IsFalse (client.IsAuthenticated, "Expected the client to not be authenticated");
 					Assert.AreEqual (1, connected, "ConnectedEvent");
 
@@ -999,6 +1144,13 @@ namespace UnitTests.Net.Smtp {
 					Assert.IsFalse (client.IsSecure, "Expected IsSecure to be false after disconnecting");
 					Assert.IsFalse (client.IsEncrypted, "Expected IsEncrypted to be false after disconnecting");
 					Assert.IsFalse (client.IsSigned, "Expected IsSigned to be false after disconnecting");
+					Assert.AreEqual (SslProtocols.None, client.SslProtocol, "Expected SslProtocol to be None after disconnecting");
+					Assert.IsNull (client.SslCipherAlgorithm, "Expected SslCipherAlgorithm to be null after disconnecting");
+					Assert.IsNull (client.SslCipherStrength, "Expected SslCipherStrength to be null after disconnecting");
+					Assert.IsNull (client.SslHashAlgorithm, "Expected SslHashAlgorithm to be null after disconnecting");
+					Assert.IsNull (client.SslHashStrength, "Expected SslHashStrength to be null after disconnecting");
+					Assert.IsNull (client.SslKeyExchangeAlgorithm, "Expected SslKeyExchangeAlgorithm to be null after disconnecting");
+					Assert.IsNull (client.SslKeyExchangeStrength, "Expected SslKeyExchangeStrength to be null after disconnecting");
 					Assert.AreEqual (1, disconnected, "DisconnectedEvent");
 				}
 			}
@@ -1197,6 +1349,325 @@ namespace UnitTests.Net.Smtp {
 				}
 
 				Assert.IsFalse (client.IsConnected, "Failed to disconnect");
+			}
+		}
+
+		static void AssertRedacted (MemoryStream stream, string commandPrefix, string nextCommandPrefix)
+		{
+			stream.Position = 0;
+
+			using (var reader = new StreamReader (stream, Encoding.ASCII, false, 1024, true)) {
+				string line, secret;
+
+				while ((line = reader.ReadLine ()) != null) {
+					if (line.StartsWith (commandPrefix, StringComparison.Ordinal))
+						break;
+				}
+
+				Assert.NotNull (line, "Authentication command not found: {0}", commandPrefix);
+
+				if (line.Length > commandPrefix.Length) {
+					// SASL IR; check next token is redacted.
+					secret = line.Substring (commandPrefix.Length);
+
+					Assert.AreEqual ("********", secret, "SASLIR token");
+				}
+
+				while ((line = reader.ReadLine ()) != null) {
+					if (line.StartsWith (nextCommandPrefix, StringComparison.Ordinal))
+						return;
+
+					if (!line.StartsWith ("C: ", StringComparison.Ordinal))
+						continue;
+
+					secret = line.Substring (3);
+
+					Assert.AreEqual ("********", secret, "SASL challenge");
+				}
+
+				Assert.Fail ("Did not find response.");
+			}
+		}
+
+		[Test]
+		public void TestRedactAuthentication ()
+		{
+			var commands = new List<SmtpReplayCommand> ();
+			commands.Add (new SmtpReplayCommand ("", "comcast-greeting.txt"));
+			commands.Add (new SmtpReplayCommand ("EHLO unit-tests.mimekit.org\r\n", "comcast-ehlo.txt"));
+			commands.Add (new SmtpReplayCommand ("AUTH LOGIN\r\n", "comcast-auth-login-username.txt"));
+			commands.Add (new SmtpReplayCommand ("dXNlcm5hbWU=\r\n", "comcast-auth-login-password.txt"));
+			commands.Add (new SmtpReplayCommand ("cGFzc3dvcmQ=\r\n", "comcast-auth-login.txt"));
+			commands.Add (new SmtpReplayCommand ("QUIT\r\n", "comcast-quit.txt"));
+
+			using (var stream = new MemoryStream ()) {
+				using (var client = new SmtpClient (new ProtocolLogger (stream, true) { RedactSecrets = true })) {
+					client.LocalDomain = "unit-tests.mimekit.org";
+
+					try {
+						client.ReplayConnect ("localhost", new SmtpReplayStream (commands, false));
+					} catch (Exception ex) {
+						Assert.Fail ("Did not expect an exception in Connect: {0}", ex);
+					}
+
+					Assert.IsTrue (client.IsConnected, "Client failed to connect.");
+					Assert.IsFalse (client.IsSecure, "IsSecure should be false.");
+
+					Assert.IsTrue (client.Capabilities.HasFlag (SmtpCapabilities.Authentication), "Failed to detect AUTH extension");
+					Assert.IsTrue (client.AuthenticationMechanisms.Contains ("LOGIN"), "Failed to detect the LOGIN auth mechanism");
+					Assert.IsTrue (client.AuthenticationMechanisms.Contains ("PLAIN"), "Failed to detect the PLAIN auth mechanism");
+
+					client.AuthenticationMechanisms.Remove ("PLAIN");
+
+					try {
+						client.Authenticate ("username", "password");
+					} catch (Exception ex) {
+						Assert.Fail ("Did not expect an exception in Authenticate: {0}", ex);
+					}
+
+					try {
+						client.Disconnect (true);
+					} catch (Exception ex) {
+						Assert.Fail ("Did not expect an exception in Disconnect: {0}", ex);
+					}
+
+					Assert.IsFalse (client.IsConnected, "Failed to disconnect");
+				}
+
+				AssertRedacted (stream, "C: AUTH LOGIN", "C: QUIT");
+			}
+		}
+
+		[Test]
+		public async Task TestRedactAuthenticationAsync ()
+		{
+			var commands = new List<SmtpReplayCommand> ();
+			commands.Add (new SmtpReplayCommand ("", "comcast-greeting.txt"));
+			commands.Add (new SmtpReplayCommand ("EHLO unit-tests.mimekit.org\r\n", "comcast-ehlo.txt"));
+			commands.Add (new SmtpReplayCommand ("AUTH LOGIN\r\n", "comcast-auth-login-username.txt"));
+			commands.Add (new SmtpReplayCommand ("dXNlcm5hbWU=\r\n", "comcast-auth-login-password.txt"));
+			commands.Add (new SmtpReplayCommand ("cGFzc3dvcmQ=\r\n", "comcast-auth-login.txt"));
+			commands.Add (new SmtpReplayCommand ("QUIT\r\n", "comcast-quit.txt"));
+
+			using (var stream = new MemoryStream ()) {
+				using (var client = new SmtpClient (new ProtocolLogger (stream, true) { RedactSecrets = true })) {
+					client.LocalDomain = "unit-tests.mimekit.org";
+
+					try {
+						await client.ReplayConnectAsync ("localhost", new SmtpReplayStream (commands, true));
+					} catch (Exception ex) {
+						Assert.Fail ("Did not expect an exception in Connect: {0}", ex);
+					}
+
+					Assert.IsTrue (client.IsConnected, "Client failed to connect.");
+					Assert.IsFalse (client.IsSecure, "IsSecure should be false.");
+
+					Assert.IsTrue (client.Capabilities.HasFlag (SmtpCapabilities.Authentication), "Failed to detect AUTH extension");
+					Assert.IsTrue (client.AuthenticationMechanisms.Contains ("LOGIN"), "Failed to detect the LOGIN auth mechanism");
+					Assert.IsTrue (client.AuthenticationMechanisms.Contains ("PLAIN"), "Failed to detect the PLAIN auth mechanism");
+
+					client.AuthenticationMechanisms.Remove ("PLAIN");
+
+					try {
+						await client.AuthenticateAsync ("username", "password");
+					} catch (Exception ex) {
+						Assert.Fail ("Did not expect an exception in Authenticate: {0}", ex);
+					}
+
+					try {
+						await client.DisconnectAsync (true);
+					} catch (Exception ex) {
+						Assert.Fail ("Did not expect an exception in Disconnect: {0}", ex);
+					}
+
+					Assert.IsFalse (client.IsConnected, "Failed to disconnect");
+				}
+
+				AssertRedacted (stream, "C: AUTH LOGIN", "C: QUIT");
+			}
+		}
+
+		[Test]
+		public void TestRedactSaslInitialResponse ()
+		{
+			var commands = new List<SmtpReplayCommand> ();
+			commands.Add (new SmtpReplayCommand ("", "comcast-greeting.txt"));
+			commands.Add (new SmtpReplayCommand ("EHLO unit-tests.mimekit.org\r\n", "comcast-ehlo.txt"));
+			commands.Add (new SmtpReplayCommand ("AUTH PLAIN AHVzZXJuYW1lAHBhc3N3b3Jk\r\n", "comcast-auth-plain.txt"));
+			commands.Add (new SmtpReplayCommand ("QUIT\r\n", "comcast-quit.txt"));
+
+			using (var stream = new MemoryStream ()) {
+				using (var client = new SmtpClient (new ProtocolLogger (stream, true) { RedactSecrets = true })) {
+					client.LocalDomain = "unit-tests.mimekit.org";
+
+					try {
+						client.ReplayConnect ("localhost", new SmtpReplayStream (commands, false));
+					} catch (Exception ex) {
+						Assert.Fail ("Did not expect an exception in Connect: {0}", ex);
+					}
+
+					Assert.IsTrue (client.IsConnected, "Client failed to connect.");
+					Assert.IsFalse (client.IsSecure, "IsSecure should be false.");
+
+					Assert.IsTrue (client.Capabilities.HasFlag (SmtpCapabilities.Authentication), "Failed to detect AUTH extension");
+					Assert.IsTrue (client.AuthenticationMechanisms.Contains ("LOGIN"), "Failed to detect the LOGIN auth mechanism");
+					Assert.IsTrue (client.AuthenticationMechanisms.Contains ("PLAIN"), "Failed to detect the PLAIN auth mechanism");
+
+					try {
+						client.Authenticate (new SaslMechanismPlain ("username", "password"));
+					} catch (Exception ex) {
+						Assert.Fail ("Did not expect an exception in Authenticate: {0}", ex);
+					}
+
+					try {
+						client.Disconnect (true);
+					} catch (Exception ex) {
+						Assert.Fail ("Did not expect an exception in Disconnect: {0}", ex);
+					}
+
+					Assert.IsFalse (client.IsConnected, "Failed to disconnect");
+				}
+
+				AssertRedacted (stream, "C: AUTH PLAIN ", "C: QUIT");
+			}
+		}
+
+		[Test]
+		public async Task TestRedactSaslInitialResponseAsync ()
+		{
+			var commands = new List<SmtpReplayCommand> ();
+			commands.Add (new SmtpReplayCommand ("", "comcast-greeting.txt"));
+			commands.Add (new SmtpReplayCommand ("EHLO unit-tests.mimekit.org\r\n", "comcast-ehlo.txt"));
+			commands.Add (new SmtpReplayCommand ("AUTH PLAIN AHVzZXJuYW1lAHBhc3N3b3Jk\r\n", "comcast-auth-plain.txt"));
+			commands.Add (new SmtpReplayCommand ("QUIT\r\n", "comcast-quit.txt"));
+
+			using (var stream = new MemoryStream ()) {
+				using (var client = new SmtpClient (new ProtocolLogger (stream, true) { RedactSecrets = true })) {
+					client.LocalDomain = "unit-tests.mimekit.org";
+
+					try {
+						await client.ReplayConnectAsync ("localhost", new SmtpReplayStream (commands, true));
+					} catch (Exception ex) {
+						Assert.Fail ("Did not expect an exception in Connect: {0}", ex);
+					}
+
+					Assert.IsTrue (client.IsConnected, "Client failed to connect.");
+					Assert.IsFalse (client.IsSecure, "IsSecure should be false.");
+
+					Assert.IsTrue (client.Capabilities.HasFlag (SmtpCapabilities.Authentication), "Failed to detect AUTH extension");
+					Assert.IsTrue (client.AuthenticationMechanisms.Contains ("LOGIN"), "Failed to detect the LOGIN auth mechanism");
+					Assert.IsTrue (client.AuthenticationMechanisms.Contains ("PLAIN"), "Failed to detect the PLAIN auth mechanism");
+
+					try {
+						await client.AuthenticateAsync (new SaslMechanismPlain ("username", "password"));
+					} catch (Exception ex) {
+						Assert.Fail ("Did not expect an exception in Authenticate: {0}", ex);
+					}
+
+					try {
+						await client.DisconnectAsync (true);
+					} catch (Exception ex) {
+						Assert.Fail ("Did not expect an exception in Disconnect: {0}", ex);
+					}
+
+					Assert.IsFalse (client.IsConnected, "Failed to disconnect");
+				}
+
+				AssertRedacted (stream, "C: AUTH PLAIN ", "C: QUIT");
+			}
+		}
+
+		[Test]
+		public void TestRedactSaslAuthentication ()
+		{
+			var commands = new List<SmtpReplayCommand> ();
+			commands.Add (new SmtpReplayCommand ("", "comcast-greeting.txt"));
+			commands.Add (new SmtpReplayCommand ("EHLO unit-tests.mimekit.org\r\n", "comcast-ehlo.txt"));
+			commands.Add (new SmtpReplayCommand ("AUTH LOGIN\r\n", "comcast-auth-login-username.txt"));
+			commands.Add (new SmtpReplayCommand ("dXNlcm5hbWU=\r\n", "comcast-auth-login-password.txt"));
+			commands.Add (new SmtpReplayCommand ("cGFzc3dvcmQ=\r\n", "comcast-auth-login.txt"));
+			commands.Add (new SmtpReplayCommand ("QUIT\r\n", "comcast-quit.txt"));
+
+			using (var stream = new MemoryStream ()) {
+				using (var client = new SmtpClient (new ProtocolLogger (stream, true) { RedactSecrets = true })) {
+					client.LocalDomain = "unit-tests.mimekit.org";
+
+					try {
+						client.ReplayConnect ("localhost", new SmtpReplayStream (commands, false));
+					} catch (Exception ex) {
+						Assert.Fail ("Did not expect an exception in Connect: {0}", ex);
+					}
+
+					Assert.IsTrue (client.IsConnected, "Client failed to connect.");
+					Assert.IsFalse (client.IsSecure, "IsSecure should be false.");
+
+					Assert.IsTrue (client.Capabilities.HasFlag (SmtpCapabilities.Authentication), "Failed to detect AUTH extension");
+					Assert.IsTrue (client.AuthenticationMechanisms.Contains ("LOGIN"), "Failed to detect the LOGIN auth mechanism");
+					Assert.IsTrue (client.AuthenticationMechanisms.Contains ("PLAIN"), "Failed to detect the PLAIN auth mechanism");
+
+					try {
+						client.Authenticate (new SaslMechanismLogin ("username", "password"));
+					} catch (Exception ex) {
+						Assert.Fail ("Did not expect an exception in Authenticate: {0}", ex);
+					}
+
+					try {
+						client.Disconnect (true);
+					} catch (Exception ex) {
+						Assert.Fail ("Did not expect an exception in Disconnect: {0}", ex);
+					}
+
+					Assert.IsFalse (client.IsConnected, "Failed to disconnect");
+				}
+
+				AssertRedacted (stream, "C: AUTH LOGIN", "C: QUIT");
+			}
+		}
+
+		[Test]
+		public async Task TestRedactSaslAuthenticationAsync ()
+		{
+			var commands = new List<SmtpReplayCommand> ();
+			commands.Add (new SmtpReplayCommand ("", "comcast-greeting.txt"));
+			commands.Add (new SmtpReplayCommand ("EHLO unit-tests.mimekit.org\r\n", "comcast-ehlo.txt"));
+			commands.Add (new SmtpReplayCommand ("AUTH LOGIN\r\n", "comcast-auth-login-username.txt"));
+			commands.Add (new SmtpReplayCommand ("dXNlcm5hbWU=\r\n", "comcast-auth-login-password.txt"));
+			commands.Add (new SmtpReplayCommand ("cGFzc3dvcmQ=\r\n", "comcast-auth-login.txt"));
+			commands.Add (new SmtpReplayCommand ("QUIT\r\n", "comcast-quit.txt"));
+
+			using (var stream = new MemoryStream ()) {
+				using (var client = new SmtpClient (new ProtocolLogger (stream, true) { RedactSecrets = true })) {
+					client.LocalDomain = "unit-tests.mimekit.org";
+
+					try {
+						await client.ReplayConnectAsync ("localhost", new SmtpReplayStream (commands, true));
+					} catch (Exception ex) {
+						Assert.Fail ("Did not expect an exception in Connect: {0}", ex);
+					}
+
+					Assert.IsTrue (client.IsConnected, "Client failed to connect.");
+					Assert.IsFalse (client.IsSecure, "IsSecure should be false.");
+
+					Assert.IsTrue (client.Capabilities.HasFlag (SmtpCapabilities.Authentication), "Failed to detect AUTH extension");
+					Assert.IsTrue (client.AuthenticationMechanisms.Contains ("LOGIN"), "Failed to detect the LOGIN auth mechanism");
+					Assert.IsTrue (client.AuthenticationMechanisms.Contains ("PLAIN"), "Failed to detect the PLAIN auth mechanism");
+
+					try {
+						await client.AuthenticateAsync (new SaslMechanismLogin ("username", "password"));
+					} catch (Exception ex) {
+						Assert.Fail ("Did not expect an exception in Authenticate: {0}", ex);
+					}
+
+					try {
+						await client.DisconnectAsync (true);
+					} catch (Exception ex) {
+						Assert.Fail ("Did not expect an exception in Disconnect: {0}", ex);
+					}
+
+					Assert.IsFalse (client.IsConnected, "Failed to disconnect");
+				}
+
+				AssertRedacted (stream, "C: AUTH LOGIN", "C: QUIT");
 			}
 		}
 

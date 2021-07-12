@@ -17,16 +17,16 @@
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
-    <PackageReference Include="Newtonsoft.Json" Version="12.0.3" />
-    <PackageReference Include="nunit" Version="3.13.1" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.1" />
+    <PackageReference Include="nunit" Version="3.13.2" />
     <PackageReference Include="NUnit.ConsoleRunner" Version="3.12.0" />
     <PackageReference Include="NUnit3TestAdapter" Version="3.17.0">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>
-    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="16.9.1" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="16.10.0" />
     <PackageReference Include="OpenCover" Version="4.6.519" />
-    <PackageReference Include="System.Data.SQLite.Core" Version="1.0.113.7" />
+    <PackageReference Include="System.Data.SQLite.Core" Version="1.0.114.3" />
   </ItemGroup>
 
   <ItemGroup>
@@ -36,6 +36,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Include="Net\Imap\ImapAuthenticationSecretDetectorTests.cs" />
     <Compile Include="Net\Imap\ImapClientTests.cs" />
     <Compile Include="Net\Imap\ImapCommandExceptionTests.cs" />
     <Compile Include="Net\Imap\ImapEncodingTests.cs" />
@@ -50,6 +51,7 @@
     <Compile Include="Net\Imap\ImapSearchQueryOptimizerTests.cs" />
     <Compile Include="Net\Imap\ImapStreamTests.cs" />
     <Compile Include="Net\Imap\ImapUtilsTests.cs" />
+    <Compile Include="Net\Pop3\Pop3AuthenticationSecretDetectorTests.cs" />
     <Compile Include="Net\Pop3\Pop3ClientTests.cs" />
     <Compile Include="Net\Pop3\Pop3CommandExceptionTests.cs" />
     <Compile Include="Net\Pop3\Pop3ReplayStream.cs" />
@@ -63,6 +65,7 @@
     <Compile Include="Net\Proxy\Socks4ProxyListener.cs" />
     <Compile Include="Net\Proxy\Socks5ClientTests.cs" />
     <Compile Include="Net\Proxy\Socks5ProxyListener.cs" />
+    <Compile Include="Net\Smtp\SmtpAuthenticationSecretDetectorTests.cs" />
     <Compile Include="Net\Smtp\SmtpClientTests.cs" />
     <Compile Include="Net\Smtp\SmtpCommandExceptionTests.cs" />
     <Compile Include="Net\Smtp\SmtpDataFilterTests.cs" />
@@ -99,6 +102,7 @@
     <Compile Include="EventArgsTests.cs" />
     <Compile Include="ExceptionTests.cs" />
     <Compile Include="FolderNamespaceTests.cs" />
+    <Compile Include="MailServiceTests.cs" />
     <Compile Include="MessageSortingTests.cs" />
     <Compile Include="MessageSummaryTests.cs" />
     <Compile Include="MessageThreadingTests.cs" />
@@ -336,6 +340,7 @@
     <EmbeddedResource Include="Net\Imap\Resources\gmail\authenticate.txt" />
     <EmbeddedResource Include="Net\Imap\Resources\gmail\authenticate+create-special-use.txt" />
     <EmbeddedResource Include="Net\Imap\Resources\gmail\authenticate+statussize+objectid.txt" />
+    <EmbeddedResource Include="Net\Imap\Resources\gmail\authenticate+webalert.txt" />
     <EmbeddedResource Include="Net\Imap\Resources\gmail\capability.txt" />
     <EmbeddedResource Include="Net\Imap\Resources\gmail\capability+login.txt" />
     <EmbeddedResource Include="Net\Imap\Resources\gmail\capability+logindisabled.txt" />

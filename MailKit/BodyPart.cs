@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -26,7 +26,9 @@
 
 using System;
 using System.Text;
+using System.Globalization;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 
 using MimeKit;
 using MimeKit.Utils;
@@ -41,7 +43,7 @@ namespace MailKit {
 	/// <see cref="BodyPartMultipart"/>.
 	/// </remarks>
 	/// <example>
-	/// <code language="c#" source="Examples\ImapExamples.cs" region="DownloadBodyParts"/>
+	/// <code language="c#" source="Examples\ImapBodyPartExamples.cs" region="GetBodyPartsByUniqueId"/>
 	/// </example>
 	public abstract class BodyPart
 	{
@@ -51,8 +53,23 @@ namespace MailKit {
 		/// <remarks>
 		/// Creates a new <see cref="MailKit.BodyPart"/>.
 		/// </remarks>
-		protected BodyPart ()
+		/// <param name="contentType">The content type.</param>
+		/// <param name="partSpecifier">The part specifier.</param>
+		/// <exception cref="ArgumentNullException">
+		/// <para><paramref name="contentType"/> is <see langword="null" />.</para>
+		/// <para>-or-</para>
+		/// <para><paramref name="partSpecifier"/> is <see langword="null" />.</para>
+		/// </exception>
+		protected BodyPart (ContentType contentType, string partSpecifier)
 		{
+			if (contentType == null)
+				throw new ArgumentNullException (nameof (contentType));
+
+			if (partSpecifier == null)
+				throw new ArgumentNullException (nameof (partSpecifier));
+
+			ContentType = contentType;
+			PartSpecifier = partSpecifier;
 		}
 
 		/// <summary>
@@ -73,7 +90,7 @@ namespace MailKit {
 		/// Gets the part specifier.
 		/// </remarks>
 		/// <example>
-		/// <code language="c#" source="Examples\ImapExamples.cs" region="DownloadBodyParts"/>
+		/// <code language="c#" source="Examples\ImapBodyPartExamples.cs" region="GetBodyPartsByUniqueIdAndSpecifier"/>
 		/// </example>
 		/// <value>The part specifier.</value>
 		public string PartSpecifier {
@@ -93,34 +110,40 @@ namespace MailKit {
 		/// </remarks>
 		/// <param name="visitor">The visitor.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="visitor"/> is <c>null</c>.
+		/// <paramref name="visitor"/> is <see langword="null" />.
 		/// </exception>
 		public abstract void Accept (BodyPartVisitor visitor);
 
 		internal static void Encode (StringBuilder builder, uint value)
 		{
-			builder.Append (value.ToString ());
+			builder.Append (value.ToString (CultureInfo.InvariantCulture));
 		}
 
-		internal static void Encode (StringBuilder builder, string value)
+		internal static void Encode (StringBuilder builder, long value)
+		{
+			builder.Append (value.ToString (CultureInfo.InvariantCulture));
+		}
+
+		internal static void Encode (StringBuilder builder, string? value)
 		{
 			if (value != null)
-				builder.Append (MimeUtils.Quote (value));
+				MimeUtils.AppendQuoted (builder, value);
 			else
 				builder.Append ("NIL");
 		}
 
-		internal static void Encode (StringBuilder builder, Uri location)
+		internal static void Encode (StringBuilder builder, Uri? location)
 		{
+			// Note: Uri.ToString() returns an unescaped string which may no longer be well-formed.
 			if (location != null)
-				builder.Append (MimeUtils.Quote (location.ToString ()));
+				MimeUtils.AppendQuoted (builder, location.OriginalString);
 			else
 				builder.Append ("NIL");
 		}
 
-		internal static void Encode (StringBuilder builder, string[] values)
+		internal static void Encode (StringBuilder builder, string[]? values)
 		{
-			if (values == null || values.Length == 0) {
+			if (values == null) {
 				builder.Append ("NIL");
 				return;
 			}
@@ -158,7 +181,7 @@ namespace MailKit {
 			builder.Append (')');
 		}
 
-		internal static void Encode (StringBuilder builder, ContentDisposition disposition)
+		internal static void Encode (StringBuilder builder, ContentDisposition? disposition)
 		{
 			if (disposition == null) {
 				builder.Append ("NIL");
@@ -196,7 +219,7 @@ namespace MailKit {
 			}
 		}
 
-		internal static void Encode (StringBuilder builder, Envelope envelope)
+		internal static void Encode (StringBuilder builder, Envelope? envelope)
 		{
 			if (envelope == null) {
 				builder.Append ("NIL");
@@ -206,16 +229,64 @@ namespace MailKit {
 			envelope.Encode (builder);
 		}
 
-		internal static void Encode (StringBuilder builder, BodyPart body)
+		internal static void Encode (StringBuilder builder, BodyPart? body)
 		{
-			if (body == null) {
-				builder.Append ("NIL");
-				return;
-			}
+			var parents = new Stack<(BodyPart Part, int Index)> ();
 
-			builder.Append ('(');
-			body.Encode (builder);
-			builder.Append (')');
+			while (true) {
+				if (body == null) {
+					builder.Append ("NIL");
+				} else {
+					builder.Append ('(');
+
+					// Only bypass Encode for built-in types; subclasses may override it.
+					if (body.GetType () == typeof (BodyPartMultipart)) {
+						var multipart = (BodyPartMultipart) body;
+
+						if (multipart.BodyParts.Count > 0) {
+							parents.Push ((multipart, 1));
+							body = multipart.BodyParts[0];
+							continue;
+						}
+
+						builder.Append ("NIL");
+						multipart.EncodeFields (builder);
+					} else if (body.GetType () == typeof (BodyPartMessage)) {
+						var message = (BodyPartMessage) body;
+
+						message.EncodePrefix (builder);
+						parents.Push ((message, 0));
+						body = message.Body;
+						continue;
+					} else {
+						body.Encode (builder);
+					}
+
+					builder.Append (')');
+				}
+
+				while (true) {
+					if (parents.Count == 0)
+						return;
+
+					var parent = parents.Pop ();
+
+					if (parent.Part is BodyPartMultipart multipart) {
+						if (parent.Index < multipart.BodyParts.Count) {
+							builder.Append (' ');
+							parents.Push ((multipart, parent.Index + 1));
+							body = multipart.BodyParts[parent.Index];
+							break;
+						}
+
+						multipart.EncodeFields (builder);
+					} else {
+						((BodyPartMessage) parent.Part).EncodeSuffix (builder);
+					}
+
+					builder.Append (')');
+				}
+			}
 		}
 
 		/// <summary>
@@ -240,11 +311,14 @@ namespace MailKit {
 		{
 			var builder = new StringBuilder ();
 
-			builder.Append ('(');
-			Encode (builder);
-			builder.Append (')');
+			Encode (builder, this);
 
 			return builder.ToString ();
+		}
+
+		static bool IsNIL (string text, int index)
+		{
+			return string.Compare (text, index, "NIL", 0, 3, StringComparison.Ordinal) == 0;
 		}
 
 		static bool TryParse (string text, ref int index, out uint value)
@@ -256,13 +330,40 @@ namespace MailKit {
 
 			value = 0;
 
-			while (index < text.Length && char.IsDigit (text[index]))
-				value = (value * 10) + (uint) (text[index++] - '0');
+			while (index < text.Length && text[index] >= '0' && text[index] <= '9') {
+				uint digit = (uint) (text[index++] - '0');
+
+				if (value > (uint.MaxValue - digit) / 10)
+					return false;
+
+				value = (value * 10) + digit;
+			}
 
 			return index > startIndex;
 		}
 
-		static bool TryParse (string text, ref int index, out string nstring)
+		static bool TryParse (string text, ref int index, out long value)
+		{
+			while (index < text.Length && text[index] == ' ')
+				index++;
+
+			int startIndex = index;
+
+			value = 0;
+
+			while (index < text.Length && text[index] >= '0' && text[index] <= '9') {
+				long digit = text[index++] - '0';
+
+				if (value > (long.MaxValue - digit) / 10)
+					return false;
+
+				value = (value * 10) + digit;
+			}
+
+			return index > startIndex;
+		}
+
+		static bool TryParse (string text, ref int index, out string? nstring)
 		{
 			nstring = null;
 
@@ -273,7 +374,7 @@ namespace MailKit {
 				return false;
 
 			if (text[index] != '"') {
-				if (index + 3 <= text.Length && text.Substring (index, 3) == "NIL") {
+				if (index + 3 <= text.Length && IsNIL (text, index)) {
 					index += 3;
 					return true;
 				}
@@ -310,7 +411,7 @@ namespace MailKit {
 			return true;
 		}
 
-		static bool TryParse (string text, ref int index, out string[] values)
+		static bool TryParse (string text, ref int index, out string[]? values)
 		{
 			values = null;
 
@@ -321,7 +422,7 @@ namespace MailKit {
 				return false;
 
 			if (text[index] != '(') {
-				if (index + 3 <= text.Length && text.Substring (index, 3) == "NIL") {
+				if (index + 3 <= text.Length && IsNIL (text, index)) {
 					index += 3;
 					return true;
 				}
@@ -335,16 +436,16 @@ namespace MailKit {
 				return false;
 
 			var list = new List<string> ();
-			string value;
 
 			do {
 				if (text[index] == ')')
 					break;
 
-				if (!TryParse (text, ref index, out value))
+				if (!TryParse (text, ref index, out string? value))
 					return false;
 
-				list.Add (value);
+				if (value != null)
+					list.Add (value);
 			} while (index < text.Length);
 
 			if (index >= text.Length || text[index] != ')')
@@ -356,13 +457,11 @@ namespace MailKit {
 			return true;
 		}
 
-		static bool TryParse (string text, ref int index, out Uri uri)
+		static bool TryParse (string text, ref int index, out Uri? uri)
 		{
-			string nstring;
-
 			uri = null;
 
-			if (!TryParse (text, ref index, out nstring))
+			if (!TryParse (text, ref index, out string? nstring))
 				return false;
 
 			if (!string.IsNullOrEmpty (nstring)) {
@@ -370,15 +469,15 @@ namespace MailKit {
 					uri = new Uri (nstring, UriKind.Absolute);
 				else if (Uri.IsWellFormedUriString (nstring, UriKind.Relative))
 					uri = new Uri (nstring, UriKind.Relative);
+				else
+					Uri.TryCreate (nstring, UriKind.RelativeOrAbsolute, out uri);
 			}
 
 			return true;
 		}
 
-		static bool TryParse (string text, ref int index, out IList<Parameter> parameters)
+		static bool TryParse (string text, ref int index, [NotNullWhen (true)] out IList<Parameter>? parameters)
 		{
-			string name, value;
-
 			parameters = null;
 
 			while (index < text.Length && text[index] == ' ')
@@ -388,7 +487,7 @@ namespace MailKit {
 				return false;
 
 			if (text[index] != '(') {
-				if (index + 3 <= text.Length && text.Substring (index, 3) == "NIL") {
+				if (index + 3 <= text.Length && IsNIL (text, index)) {
 					parameters = new List<Parameter> ();
 					index += 3;
 					return true;
@@ -408,13 +507,18 @@ namespace MailKit {
 				if (text[index] == ')')
 					break;
 
-				if (!TryParse (text, ref index, out name))
+				if (!TryParse (text, ref index, out string? name) || name == null)
 					return false;
 
-				if (!TryParse (text, ref index, out value))
+				if (!TryParse (text, ref index, out string? value) || value == null)
 					return false;
 
-				parameters.Add (new Parameter (name, value));
+				try {
+					parameters.Add (new Parameter (name, value));
+				} catch (ArgumentException) {
+					// invalid parameter name
+					return false;
+				}
 			} while (index < text.Length);
 
 			if (index >= text.Length || text[index] != ')')
@@ -425,11 +529,21 @@ namespace MailKit {
 			return true;
 		}
 
-		static bool TryParse (string text, ref int index, out ContentDisposition disposition)
+		static bool TryAddParameters (ParameterList list, IList<Parameter> parameters)
 		{
-			IList<Parameter> parameters;
-			string value;
+			try {
+				foreach (var param in parameters)
+					list.Add (param);
+			} catch (ArgumentException) {
+				// duplicate parameter name
+				return false;
+			}
 
+			return true;
+		}
+
+		static bool TryParse (string text, ref int index, out ContentDisposition? disposition)
+		{
 			disposition = null;
 
 			while (index < text.Length && text[index] == ' ')
@@ -439,7 +553,7 @@ namespace MailKit {
 				return false;
 
 			if (text[index] != '(') {
-				if (index + 3 <= text.Length && text.Substring (index, 3) == "NIL") {
+				if (index + 3 <= text.Length && IsNIL (text, index)) {
 					index += 3;
 					return true;
 				}
@@ -449,10 +563,10 @@ namespace MailKit {
 
 			index++;
 
-			if (!TryParse (text, ref index, out value))
+			if (!TryParse (text, ref index, out string? value) || value == null)
 				return false;
 
-			if (!TryParse (text, ref index, out parameters))
+			if (!TryParse (text, ref index, out IList<Parameter>? parameters))
 				return false;
 
 			if (index >= text.Length || text[index] != ')')
@@ -460,18 +574,19 @@ namespace MailKit {
 
 			index++;
 
-			disposition = new ContentDisposition (value);
+			try {
+				disposition = new ContentDisposition (value);
+			} catch (ArgumentException) {
+				// invalid disposition value
+				return false;
+			}
 
-			foreach (var param in parameters)
-				disposition.Parameters.Add (param);
-
-			return true;
+			return TryAddParameters (disposition.Parameters, parameters);
 		}
 
-		static bool TryParse (string text, ref int index, bool multipart, out ContentType contentType)
+		static bool TryParse (string text, ref int index, bool multipart, [NotNullWhen (true)] out ContentType? contentType)
 		{
-			IList<Parameter> parameters;
-			string type, subtype;
+			string? type, subtype;
 
 			contentType = null;
 
@@ -491,65 +606,63 @@ namespace MailKit {
 			if (!TryParse (text, ref index, out subtype))
 				return false;
 
-			if (!TryParse (text, ref index, out parameters))
+			if (!TryParse (text, ref index, out IList<Parameter>? parameters))
 				return false;
 
-			contentType = new ContentType (type ?? "application", subtype ?? "octet-stream");
+			try {
+				contentType = new ContentType (type ?? "application", subtype ?? "octet-stream");
+			} catch (ArgumentException) {
+				return false;
+			}
 
-			foreach (var param in parameters)
-				contentType.Parameters.Add (param);
+			return TryAddParameters (contentType.Parameters, parameters);
+		}
+
+		static bool TryParseMultipart (string text, ref int index, BodyPartMultipart multipart)
+		{
+			if (!TryParse (text, ref index, true, out var contentType))
+				return false;
+
+			multipart.ContentType = contentType;
+
+			if (!TryParse (text, ref index, out ContentDisposition? disposition))
+				return false;
+
+			multipart.ContentDisposition = disposition;
+
+			if (!TryParse (text, ref index, out string[]? languages))
+				return false;
+
+			multipart.ContentLanguage = languages;
+
+			if (!TryParse (text, ref index, out Uri? location))
+				return false;
+
+			multipart.ContentLocation = location;
+
+			if (index >= text.Length || text[index] != ')')
+				return false;
+
+			index++;
 
 			return true;
 		}
 
-		static bool TryParse (string text, ref int index, string prefix, out IList<BodyPart> children)
+		static bool TryParseBodyPart (string text, ref int index, string path, out BodyPart? part, out bool hasChildren)
 		{
-			BodyPart part;
-			string path;
-			int id = 1;
-
-			children = null;
-
-			if (index >= text.Length)
-				return false;
-
-			children = new List<BodyPart> ();
-
-			do {
-				if (text[index] != '(')
-					break;
-
-				path = prefix + id;
-
-				if (!TryParse (text, ref index, path, out part))
-					return false;
-
-				while (index < text.Length && text[index] == ' ')
-					index++;
-
-				children.Add (part);
-				id++;
-			} while (index < text.Length);
-
-			return index < text.Length;
-		}
-
-		static bool TryParse (string text, ref int index, string path, out BodyPart part)
-		{
-			ContentDisposition disposition;
-			ContentType contentType;
-			string[] array;
-			string nstring;
-			Uri location;
-			uint number;
+			ContentDisposition? disposition;
+			ContentType? contentType;
+			string[]? array;
+			Uri? location;
 
 			part = null;
+			hasChildren = false;
 
 			while (index < text.Length && text[index] == ' ')
 				index++;
 
 			if (index >= text.Length || text[index] != '(') {
-				if (index + 3 <= text.Length && text.Substring (index, 3) == "NIL") {
+				if (index + 3 <= text.Length && IsNIL (text, index)) {
 					index += 3;
 					return true;
 				}
@@ -562,124 +675,92 @@ namespace MailKit {
 			if (index >= text.Length)
 				return false;
 
-			if (text[index] == '(') {
-				var prefix = path.Length > 0 ? path + "." : string.Empty;
-				var multipart = new BodyPartMultipart ();
-				IList<BodyPart> children;
-
-				if (!TryParse (text, ref index, prefix, out children))
-					return false;
-
-				foreach (var child in children)
-					multipart.BodyParts.Add (child);
-
-				if (!TryParse (text, ref index, true, out contentType))
-					return false;
-
-				multipart.ContentType = contentType;
-
-				if (!TryParse (text, ref index, out disposition))
-					return false;
-
-				multipart.ContentDisposition = disposition;
-
-				if (!TryParse (text, ref index, out array))
-					return false;
-
-				multipart.ContentLanguage = array;
-
-				if (!TryParse (text, ref index, out location))
-					return false;
-
-				multipart.ContentLocation = location;
+			if (text[index] == '(' || IsNIL (text, index)) {
+				// The subtype is stored after the children and is set by TryParseMultipart.
+				var multipart = new BodyPartMultipart (new ContentType ("multipart", "mixed"), path);
 
 				part = multipart;
+
+				if (text[index] == '(') {
+					hasChildren = true;
+					return true;
+				}
+
+				index += "NIL".Length;
+
+				return TryParseMultipart (text, ref index, multipart);
 			} else {
-				BodyPartMessage message = null;
-				BodyPartText txt = null;
-				BodyPartBasic basic;
+				string? id, description, encoding, md5;
 
 				if (!TryParse (text, ref index, false, out contentType))
 					return false;
 
-				if (contentType.IsMimeType ("message", "rfc822"))
-					basic = message = new BodyPartMessage ();
-				else if (contentType.IsMimeType ("text", "*"))
-					basic = txt = new BodyPartText ();
-				else
-					basic = new BodyPartBasic ();
-
-				basic.ContentType = contentType;
-
-				if (!TryParse (text, ref index, out nstring))
+				if (!TryParse (text, ref index, out id))
 					return false;
 
-				basic.ContentId = nstring;
-
-				if (!TryParse (text, ref index, out nstring))
+				if (!TryParse (text, ref index, out description))
 					return false;
 
-				basic.ContentDescription = nstring;
-
-				if (!TryParse (text, ref index, out nstring))
+				if (!TryParse (text, ref index, out encoding))
 					return false;
 
-				basic.ContentTransferEncoding = nstring;
-
-				if (!TryParse (text, ref index, out number))
+				if (!TryParse (text, ref index, out uint octets))
 					return false;
 
-				basic.Octets = number;
-
-				if (!TryParse (text, ref index, out nstring))
+				if (!TryParse (text, ref index, out md5))
 					return false;
-
-				basic.ContentMd5 = nstring;
 
 				if (!TryParse (text, ref index, out disposition))
 					return false;
 
-				basic.ContentDisposition = disposition;
-
 				if (!TryParse (text, ref index, out array))
 					return false;
-
-				basic.ContentLanguage = array;
 
 				if (!TryParse (text, ref index, out location))
 					return false;
 
-				basic.ContentLocation = location;
+				while (index < text.Length && text[index] == ' ')
+					index++;
 
-				if (message != null) {
-					Envelope envelope;
-					BodyPart body;
+				if (index >= text.Length)
+					return false;
 
-					if (!Envelope.TryParse (text, ref index, out envelope))
+				// Note: Determine the type of body part based on the extension data that follows rather than
+				// on the Content-Type so that parts round-trip even when the type does not match the class.
+				BodyPartBasic basic;
+
+				if (text[index] == ')') {
+					basic = new BodyPartBasic (contentType, path);
+				} else if (text[index] >= '0' && text[index] <= '9') {
+					if (!TryParse (text, ref index, out long lines))
 						return false;
 
-					message.Envelope = envelope;
-
-					if (!TryParse (text, ref index, path, out body))
+					basic = new BodyPartText (contentType, path) { Lines = lines };
+				} else {
+					if (!Envelope.TryParse (text, ref index, out Envelope? envelope))
 						return false;
 
-					message.Body = body;
+					basic = new BodyPartMessage (contentType, path) {
+						Envelope = envelope
+					};
 
-					if (!TryParse (text, ref index, out number))
-						return false;
-
-					message.Lines = number;
-				} else if (txt != null) {
-					if (!TryParse (text, ref index, out number))
-						return false;
-
-					txt.Lines = number;
+					hasChildren = true;
 				}
+
+				basic.ContentId = id;
+				basic.ContentDescription = description;
+				basic.ContentTransferEncoding = encoding;
+				basic.Octets = octets;
+				basic.ContentMd5 = md5;
+				basic.ContentDisposition = disposition;
+				basic.ContentLanguage = array;
+				basic.ContentLocation = location;
 
 				part = basic;
 			}
 
-			part.PartSpecifier = path;
+			if (hasChildren)
+				return true;
 
 			if (index >= text.Length || text[index] != ')')
 				return false;
@@ -687,6 +768,80 @@ namespace MailKit {
 			index++;
 
 			return true;
+		}
+
+		internal string GetChildPartSpecifier (int index)
+		{
+			// Embedded message bodies keep the message's path; only multipart children add a level.
+			if (this is BodyPartMessage)
+				return PartSpecifier;
+
+			var prefix = PartSpecifier.Length > 0 ? PartSpecifier + "." : string.Empty;
+
+			return prefix + index.ToString (CultureInfo.InvariantCulture);
+		}
+
+		static bool TryParse (string text, ref int index, string path, out BodyPart? part)
+		{
+			var parents = new Stack<(BodyPart Part, int Index)> ();
+
+			part = null;
+
+			do {
+				if (!TryParseBodyPart (text, ref index, path, out var body, out bool hasChildren))
+					return false;
+
+				if (hasChildren && body != null) {
+					parents.Push ((body, 1));
+					path = body.GetChildPartSpecifier (1);
+					continue;
+				}
+
+				do {
+					if (parents.Count == 0) {
+						part = body;
+						return true;
+					}
+
+					var (parent, childIndex) = parents.Pop ();
+
+					if (parent is BodyPartMultipart multipart) {
+						if (body != null)
+							multipart.BodyParts.Add (body);
+
+						while (index < text.Length && text[index] == ' ')
+							index++;
+
+						if (index >= text.Length)
+							return false;
+
+						if (text[index] == '(') {
+							parents.Push ((parent, childIndex + 1));
+							path = parent.GetChildPartSpecifier (childIndex + 1);
+							break;
+						}
+
+						if (!TryParseMultipart (text, ref index, multipart))
+							return false;
+					} else {
+						var message = (BodyPartMessage) parent;
+
+						message.Body = body;
+
+						if (!TryParse (text, ref index, out long lines))
+							return false;
+
+						message.Lines = lines;
+
+						if (index >= text.Length || text[index] != ')')
+							return false;
+
+						index++;
+					}
+
+					body = parent;
+				} while (true);
+			} while (true);
 		}
 
 		/// <summary>
@@ -697,13 +852,13 @@ namespace MailKit {
 		/// <note type="note">This syntax, while similar to IMAP's BODYSTRUCTURE syntax, is not completely
 		/// compatible.</note>
 		/// </remarks>
-		/// <returns><c>true</c>, if the body part was successfully parsed, <c>false</c> otherwise.</returns>
+		/// <returns><see langword="true" /> if the body part was successfully parsed; otherwise, <see langword="false" />.</returns>
 		/// <param name="text">The text to parse.</param>
 		/// <param name="part">The parsed body part.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="text"/> is <c>null</c>.
+		/// <paramref name="text"/> is <see langword="null" />.
 		/// </exception>
-		public static bool TryParse (string text, out BodyPart part)
+		public static bool TryParse (string text, out BodyPart? part)
 		{
 			if (text == null)
 				throw new ArgumentNullException (nameof (text));

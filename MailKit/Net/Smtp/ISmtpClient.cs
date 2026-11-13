@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -42,16 +42,15 @@ namespace MailKit.Net.Smtp {
 		/// Get the capabilities supported by the SMTP server.
 		/// </summary>
 		/// <remarks>
-		/// The capabilities will not be known until a successful connection has been made 
-		/// and may change once the client is authenticated.
+		/// <para>The capabilities will not be known until a successful connection has been made
+		/// and may change once the client is authenticated.</para>
+		/// <para>To prevent MailKit from using a particular extension, use
+		/// <see cref="SmtpCapabilities.Disable(SmtpCapability)"/>.</para>
 		/// </remarks>
 		/// <example>
 		/// <code language="c#" source="Examples\SmtpExamples.cs" region="Capabilities"/>
 		/// </example>
 		/// <value>The capabilities.</value>
-		/// <exception cref="System.ArgumentException">
-		/// Capabilities cannot be enabled, they may only be disabled.
-		/// </exception>
 		SmtpCapabilities Capabilities { get; }
 
 		/// <summary>
@@ -63,7 +62,7 @@ namespace MailKit.Net.Smtp {
 		/// used instead.
 		/// </remarks>
 		/// <value>The local domain.</value>
-		string LocalDomain { get; set; }
+		string? LocalDomain { get; set; }
 
 		/// <summary>
 		/// Get the maximum message size supported by the server.
@@ -72,22 +71,27 @@ namespace MailKit.Net.Smtp {
 		/// <para>The maximum message size will not be known until a successful connection has
 		/// been made and may change once the client is authenticated.</para>
 		/// <note type="note">This value is only relevant if the <see cref="Capabilities"/> includes
-		/// the <see cref="SmtpCapabilities.Size"/> flag.</note>
+		/// the <see cref="SmtpCapability.Size"/> flag. The value will never be negative.</note>
 		/// </remarks>
 		/// <example>
 		/// <code language="c#" source="Examples\SmtpExamples.cs" region="Capabilities"/>
 		/// </example>
 		/// <value>The maximum message size supported by the server.</value>
-		uint MaxSize { get; }
+		long MaxSize { get; }
 
 		/// <summary>
-		/// Get or set how much of the message to include in any failed delivery status notifications.
+		/// Get or set whether the client should use the REQUIRETLS extension if it is available.
 		/// </summary>
 		/// <remarks>
-		/// Gets or sets how much of the message to include in any failed delivery status notifications.
+		/// <para>Gets or sets whether the client should use the REQUIRETLS extension if it is available.</para>
+		/// <para>The REQUIRETLS extension (as defined in rfc8689) is a way to ensure that every SMTP server
+		/// that a message passes through on its way to the recipient is required to use a TLS connection in
+		/// order to transfer the message to the next SMTP server.</para>
+		/// <note type="note">This feature is only available if <see cref="Capabilities"/> contains the
+		/// <see cref="SmtpCapability.RequireTLS"/> flag when sending the message.</note>
 		/// </remarks>
-		/// <value>A value indicating how much of the message to include in a failure delivery status notification.</value>
-		DeliveryStatusNotificationType DeliveryStatusNotificationType { get; set; }
+		/// <value><see langword="true" /> if the REQUIRETLS extension should be used; otherwise, <see langword="false" />.</value>
+		bool RequireTLS { get; set; }
 
 		/// <summary>
 		/// Expand a mailing address alias.
@@ -99,7 +103,7 @@ namespace MailKit.Net.Smtp {
 		/// <param name="alias">The mailing address alias.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="alias"/> is <c>null</c>.
+		/// <paramref name="alias"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ArgumentException">
 		/// <paramref name="alias"/> is an empty string.
@@ -125,7 +129,7 @@ namespace MailKit.Net.Smtp {
 		/// <exception cref="SmtpProtocolException">
 		/// An SMTP protocol exception occurred.
 		/// </exception>
-		InternetAddressList Expand (string alias, CancellationToken cancellationToken = default (CancellationToken));
+		InternetAddressList Expand (string alias, CancellationToken cancellationToken = default);
 
 		/// <summary>
 		/// Asynchronously expand a mailing address alias.
@@ -137,7 +141,7 @@ namespace MailKit.Net.Smtp {
 		/// <param name="alias">The mailing address alias.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="alias"/> is <c>null</c>.
+		/// <paramref name="alias"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ArgumentException">
 		/// <paramref name="alias"/> is an empty string.
@@ -163,7 +167,7 @@ namespace MailKit.Net.Smtp {
 		/// <exception cref="SmtpProtocolException">
 		/// An SMTP protocol exception occurred.
 		/// </exception>
-		Task<InternetAddressList> ExpandAsync (string alias, CancellationToken cancellationToken = default (CancellationToken));
+		Task<InternetAddressList> ExpandAsync (string alias, CancellationToken cancellationToken = default);
 
 		/// <summary>
 		/// Verify the existence of a mailbox address.
@@ -176,7 +180,7 @@ namespace MailKit.Net.Smtp {
 		/// <param name="address">The mailbox address.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="address"/> is <c>null</c>.
+		/// <paramref name="address"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ArgumentException">
 		/// <paramref name="address"/> is an empty string.
@@ -202,7 +206,7 @@ namespace MailKit.Net.Smtp {
 		/// <exception cref="SmtpProtocolException">
 		/// An SMTP protocol exception occurred.
 		/// </exception>
-		MailboxAddress Verify (string address, CancellationToken cancellationToken = default (CancellationToken));
+		MailboxAddress Verify (string address, CancellationToken cancellationToken = default);
 
 		/// <summary>
 		/// Asynchronously verify the existence of a mailbox address.
@@ -215,7 +219,7 @@ namespace MailKit.Net.Smtp {
 		/// <param name="address">The mailbox address.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="address"/> is <c>null</c>.
+		/// <paramref name="address"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ArgumentException">
 		/// <paramref name="address"/> is an empty string.
@@ -241,6 +245,6 @@ namespace MailKit.Net.Smtp {
 		/// <exception cref="SmtpProtocolException">
 		/// An SMTP protocol exception occurred.
 		/// </exception>
-		Task<MailboxAddress> VerifyAsync (string address, CancellationToken cancellationToken = default (CancellationToken));
+		Task<MailboxAddress> VerifyAsync (string address, CancellationToken cancellationToken = default);
 	}
 }

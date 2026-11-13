@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -26,12 +26,8 @@
 
 // Note: Find Socks4 proxy list here: https://hideip.me/en/proxy/socks4list
 
-using System;
 using System.Net;
 using System.Net.Sockets;
-using System.Threading.Tasks;
-
-using NUnit.Framework;
 
 using MailKit.Net.Proxy;
 
@@ -52,10 +48,10 @@ namespace UnitTests.Net.Proxy {
 			Assert.Throws<ArgumentOutOfRangeException> (() => new Socks4aClient (socks.ProxyHost, -1));
 			Assert.Throws<ArgumentNullException> (() => new Socks4aClient (socks.ProxyHost, 1080, null));
 
-			Assert.AreEqual (4, socks.SocksVersion);
-			Assert.AreEqual (1080, socks.ProxyPort);
-			Assert.AreEqual ("socks4.proxy.com", socks.ProxyHost);
-			Assert.AreEqual (credentials, socks.ProxyCredentials);
+			Assert.That (socks.SocksVersion, Is.EqualTo (4));
+			Assert.That (socks.ProxyPort, Is.EqualTo (1080));
+			Assert.That (socks.ProxyHost, Is.EqualTo ("socks4.proxy.com"));
+			Assert.That (socks.ProxyCredentials, Is.EqualTo (credentials));
 
 			Assert.Throws<ArgumentNullException> (() => socks.Connect (null, 80));
 			Assert.Throws<ArgumentNullException> (() => socks.Connect (null, 80, ConnectTimeout));
@@ -96,21 +92,19 @@ namespace UnitTests.Net.Proxy {
 
 				var socks = new Socks4aClient (proxy.IPAddress.ToString (), proxy.Port);
 				var host = "74.125.197.99"; // ResolveIPv4 ("www.google.com");
-				Socket socket = null;
+				Stream stream = null;
 
 				if (host == null)
 					return;
 
 				try {
-					socket = socks.Connect (host, 80, ConnectTimeout);
-					socket.Disconnect (false);
+					stream = socks.Connect (host, 80, ConnectTimeout);
 				} catch (TimeoutException) {
 					Assert.Inconclusive ("Timed out.");
 				} catch (Exception ex) {
 					Assert.Fail (ex.Message);
 				} finally {
-					if (socket != null)
-						socket.Dispose ();
+					stream?.Dispose ();
 				}
 			}
 		}
@@ -123,21 +117,19 @@ namespace UnitTests.Net.Proxy {
 
 				var socks = new Socks4aClient (proxy.IPAddress.ToString (), proxy.Port);
 				var host = "74.125.197.99"; // ResolveIPv4 ("www.google.com");
-				Socket socket = null;
+				Stream stream = null;
 
 				if (host == null)
 					return;
 
 				try {
-					socket = await socks.ConnectAsync (host, 80, ConnectTimeout);
-					socket.Disconnect (false);
+					stream = await socks.ConnectAsync (host, 80, ConnectTimeout);
 				} catch (TimeoutException) {
 					Assert.Inconclusive ("Timed out.");
 				} catch (Exception ex) {
 					Assert.Fail (ex.Message);
 				} finally {
-					if (socket != null)
-						socket.Dispose ();
+					stream?.Dispose ();
 				}
 			}
 		}
@@ -149,18 +141,16 @@ namespace UnitTests.Net.Proxy {
 				proxy.Start (IPAddress.Loopback, 0);
 
 				var socks = new Socks4aClient (proxy.IPAddress.ToString (), proxy.Port);
-				Socket socket = null;
+				Stream stream = null;
 
 				try {
-					socket = socks.Connect ("www.google.com", 80, ConnectTimeout);
-					socket.Disconnect (false);
+					stream = socks.Connect ("www.google.com", 80, ConnectTimeout);
 				} catch (TimeoutException) {
 					Assert.Inconclusive ("Timed out.");
 				} catch (Exception ex) {
 					Assert.Fail (ex.Message);
 				} finally {
-					if (socket != null)
-						socket.Dispose ();
+					stream?.Dispose ();
 				}
 			}
 		}
@@ -172,18 +162,16 @@ namespace UnitTests.Net.Proxy {
 				proxy.Start (IPAddress.Loopback, 0);
 
 				var socks = new Socks4aClient (proxy.IPAddress.ToString (), proxy.Port);
-				Socket socket = null;
+				Stream socket = null;
 
 				try {
 					socket = await socks.ConnectAsync ("www.google.com", 80, ConnectTimeout);
-					socket.Disconnect (false);
 				} catch (TimeoutException) {
 					Assert.Inconclusive ("Timed out.");
 				} catch (Exception ex) {
 					Assert.Fail (ex.Message);
 				} finally {
-					if (socket != null)
-						socket.Dispose ();
+					socket?.Dispose ();
 				}
 			}
 		}
@@ -195,11 +183,10 @@ namespace UnitTests.Net.Proxy {
 				proxy.Start (IPAddress.Loopback, 0);
 
 				var socks = new Socks4aClient (proxy.IPAddress.ToString (), proxy.Port);
-				Socket socket = null;
+				Stream stream = null;
 
 				try {
-					socket = socks.Connect ("www.google.com", 80);
-					socket.Disconnect (false);
+					stream = socks.Connect ("www.google.com", 80);
 					Assert.Fail ("Sending a domain to a SOCKS4-only proxy server should have failed.");
 				} catch (ProxyProtocolException) {
 					// This is expected since this proxy does not support Socks4a
@@ -209,8 +196,7 @@ namespace UnitTests.Net.Proxy {
 				} catch (Exception ex) {
 					Assert.Fail (ex.Message);
 				} finally {
-					if (socket != null)
-						socket.Dispose ();
+					stream?.Dispose ();
 				}
 			}
 		}
@@ -222,11 +208,10 @@ namespace UnitTests.Net.Proxy {
 				proxy.Start (IPAddress.Loopback, 0);
 
 				var socks = new Socks4aClient (proxy.IPAddress.ToString (), proxy.Port);
-				Socket socket = null;
+				Stream stream = null;
 
 				try {
-					socket = await socks.ConnectAsync ("www.google.com", 80);
-					socket.Disconnect (false);
+					stream = await socks.ConnectAsync ("www.google.com", 80);
 					Assert.Fail ("Sending a domain to a SOCKS4-only proxy server should have failed.");
 				} catch (ProxyProtocolException) {
 					// This is expected since this proxy does not support Socks4a
@@ -236,8 +221,7 @@ namespace UnitTests.Net.Proxy {
 				} catch (Exception ex) {
 					Assert.Fail (ex.Message);
 				} finally {
-					if (socket != null)
-						socket.Dispose ();
+					stream?.Dispose ();
 				}
 			}
 		}
@@ -249,18 +233,16 @@ namespace UnitTests.Net.Proxy {
 				proxy.Start (IPAddress.Loopback, 0);
 
 				var socks = new Socks4aClient (proxy.IPAddress.ToString (), proxy.Port);
-				Socket socket = null;
+				Stream stream = null;
 
 				try {
-					socket = await socks.ConnectAsync ("example.com", 25, 1000);
-					socket.Disconnect (false);
+					stream = await socks.ConnectAsync ("example.com", 25, 1000);
 				} catch (TimeoutException) {
 					Assert.Pass ();
 				} catch (Exception ex) {
 					Assert.Fail (ex.Message);
 				} finally {
-					if (socket != null)
-						socket.Dispose ();
+					stream?.Dispose ();
 				}
 			}
 		}

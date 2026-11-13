@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -30,8 +30,10 @@ using System.Net;
 using System.Text;
 using System.Threading;
 using System.Net.Sockets;
+using System.Net.Security;
 using System.Threading.Tasks;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 
 using MimeKit;
 
@@ -41,6 +43,59 @@ namespace MailKit.Net.Pop3
 {
 	public partial class Pop3Client
 	{
+		Task SendCommandAsync (CancellationToken token, string command)
+		{
+			engine.QueueCommand (null, Encoding.ASCII, command);
+
+			return engine.RunAsync (true, token);
+		}
+
+		Task<string> SendCommandAsync (CancellationToken token, string format, params object[] args)
+		{
+			return SendCommandAsync (token, Encoding.ASCII, format, args);
+		}
+
+		async Task<string> SendCommandAsync (CancellationToken token, Encoding encoding, string format, params object[] args)
+		{
+			var pc = engine.QueueCommand (null, encoding, format, args);
+
+			await engine.RunAsync (true, token).ConfigureAwait (false);
+
+			return pc.StatusText ?? string.Empty;
+		}
+
+		async Task ProbeCapabilitiesAsync (CancellationToken cancellationToken)
+		{
+			if (!engine.Capabilities.Contains (Pop3Capability.UIDL) && (probed & ProbedCapabilities.UIDL) == 0) {
+				// if the message count is > 0, we can probe the UIDL command
+				if (total > 0) {
+					try {
+						await GetMessageUidAsync (0, cancellationToken).ConfigureAwait (false);
+					} catch (NotSupportedException) {
+					}
+				}
+			}
+		}
+
+		async Task<int> UpdateMessageCountAsync (CancellationToken cancellationToken)
+		{
+			engine.QueueCommand (ProcessStatResponse, "STAT\r\n");
+
+			await engine.RunAsync (true, cancellationToken).ConfigureAwait (false);
+
+			return Count;
+		}
+
+		async Task OnAuthenticatedAsync (string message, CancellationToken cancellationToken)
+		{
+			engine.State = Pop3EngineState.Transaction;
+
+			await engine.QueryCapabilitiesAsync (cancellationToken).ConfigureAwait (false);
+			await UpdateMessageCountAsync (cancellationToken).ConfigureAwait (false);
+			await ProbeCapabilitiesAsync (cancellationToken).ConfigureAwait (false);
+			OnAuthenticated (message);
+		}
+
 		/// <summary>
 		/// Asynchronously authenticate using the specified SASL mechanism.
 		/// </summary>
@@ -54,7 +109,7 @@ namespace MailKit.Net.Pop3
 		/// <param name="mechanism">The SASL mechanism.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="mechanism"/> is <c>null</c>.
+		/// <paramref name="mechanism"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ObjectDisposedException">
 		/// The <see cref="Pop3Client"/> has been disposed.
@@ -83,23 +138,42 @@ namespace MailKit.Net.Pop3
 		/// <exception cref="Pop3ProtocolException">
 		/// An POP3 protocol error occurred.
 		/// </exception>
-		public override Task AuthenticateAsync (SaslMechanism mechanism, CancellationToken cancellationToken = default (CancellationToken))
+		public override async Task AuthenticateAsync (SaslMechanism mechanism, CancellationToken cancellationToken = default)
 		{
-			return AuthenticateAsync (mechanism, true, cancellationToken);
+			var saslUri = CheckCanAuthenticate (mechanism, cancellationToken);
+
+			using var operation = engine.StartNetworkOperation (NetworkOperationKind.Authenticate);
+
+			try {
+				var ctx = GetSaslAuthContext (mechanism, saslUri);
+
+				var pc = await ctx.AuthenticateAsync (cancellationToken).ConfigureAwait (false);
+
+				if (pc.Status == Pop3CommandStatus.Error)
+					throw new AuthenticationException ();
+
+				pc.ThrowIfError ();
+
+				await OnAuthenticatedAsync (ctx.AuthMessage!, cancellationToken).ConfigureAwait (false);
+			} catch (Exception ex) {
+				operation.SetError (ex);
+				throw;
+			}
 		}
 
 		/// <summary>
 		/// Asynchronously authenticates using the supplied credentials.
 		/// </summary>
 		/// <remarks>
+		/// <para>Asynchronously authenticates using the supplied credentials.</para>
 		/// <para>If the POP3 server supports the APOP authentication mechanism,
 		/// then APOP is used.</para>
 		/// <para>If the APOP authentication mechanism is not supported and the
 		/// server supports one or more SASL authentication mechanisms, then
-		/// the SASL mechanisms that both the client and server support are tried
-		/// in order of greatest security to weakest security. Once a SASL
-		/// authentication mechanism is found that both client and server support,
-		/// the credentials are used to authenticate.</para>
+		/// the SASL mechanisms that both the client and server support (not including
+		/// any OAUTH mechanisms) are tried in order of greatest security to weakest
+		/// security. Once a SASL authentication mechanism is found that both client
+		/// and server support, the credentials are used to authenticate.</para>
 		/// <para>If the server does not support SASL or if no common SASL mechanisms
 		/// can be found, then the <c>USER</c> and <c>PASS</c> commands are used as a
 		/// fallback.</para>
@@ -114,9 +188,9 @@ namespace MailKit.Net.Pop3
 		/// <param name="credentials">The user's credentials.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <para><paramref name="encoding"/> is <c>null</c>.</para>
+		/// <para><paramref name="encoding"/> is <see langword="null" />.</para>
 		/// <para>-or-</para>
-		/// <para><paramref name="credentials"/> is <c>null</c>.</para>
+		/// <para><paramref name="credentials"/> is <see langword="null" />.</para>
 		/// </exception>
 		/// <exception cref="System.ObjectDisposedException">
 		/// The <see cref="Pop3Client"/> has been disposed.
@@ -145,9 +219,139 @@ namespace MailKit.Net.Pop3
 		/// <exception cref="Pop3ProtocolException">
 		/// An POP3 protocol error occurred.
 		/// </exception>
-		public override Task AuthenticateAsync (Encoding encoding, ICredentials credentials, CancellationToken cancellationToken = default (CancellationToken))
+		public override async Task AuthenticateAsync (Encoding encoding, ICredentials credentials, CancellationToken cancellationToken = default)
 		{
-			return AuthenticateAsync (encoding, credentials, true, cancellationToken);
+			var saslUri = CheckCanAuthenticate (encoding, credentials, cancellationToken);
+
+			using var operation = engine.StartNetworkOperation (NetworkOperationKind.Authenticate);
+
+			try {
+				string userName, password;
+				NetworkCredential? cred;
+				string? message = null;
+
+				if (engine.Capabilities.Contains (Pop3Capability.Apop) && (cred = credentials.GetCredential (saslUri, "APOP")) != null) {
+					var apop = GetApopCommand (encoding, cred);
+
+					detector.IsAuthenticating = true;
+
+					try {
+						message = await SendCommandAsync (cancellationToken, encoding, apop).ConfigureAwait (false);
+						engine.State = Pop3EngineState.Transaction;
+					} catch (Pop3CommandException) {
+					} finally {
+						detector.IsAuthenticating = false;
+					}
+
+					if (engine.State == Pop3EngineState.Transaction) {
+						await OnAuthenticatedAsync (message ?? string.Empty, cancellationToken).ConfigureAwait (false);
+						return;
+					}
+				}
+
+				if (engine.Capabilities.Contains (Pop3Capability.Sasl)) {
+					foreach (var authmech in SaslMechanism.Rank (engine.AuthenticationMechanisms)) {
+						SaslMechanism? sasl;
+
+						cred = credentials.GetCredential (saslUri, authmech);
+
+						if (cred == null || !SaslMechanism.TryCreate (authmech, encoding, cred, out sasl))
+							continue;
+
+						cancellationToken.ThrowIfCancellationRequested ();
+
+						var ctx = GetSaslAuthContext (sasl, saslUri);
+
+						var pc = await ctx.AuthenticateAsync (cancellationToken).ConfigureAwait (false);
+
+						if (pc.Status == Pop3CommandStatus.Error)
+							continue;
+
+						pc.ThrowIfError ();
+
+						await OnAuthenticatedAsync (ctx.AuthMessage!, cancellationToken).ConfigureAwait (false);
+						return;
+					}
+				}
+
+				// fall back to the classic USER & PASS commands...
+				if ((cred = credentials.GetCredential (saslUri, "DEFAULT")) == null)
+					throw new AuthenticationException ("No credentials could be found for the POP3 server.");
+
+				userName = utf8 ? SaslMechanism.SaslPrep (cred.UserName) : cred.UserName;
+				password = utf8 ? SaslMechanism.SaslPrep (cred.Password) : cred.Password;
+				detector.IsAuthenticating = true;
+
+				try {
+					await SendCommandAsync (cancellationToken, encoding, "USER {0}\r\n", userName).ConfigureAwait (false);
+					message = await SendCommandAsync (cancellationToken, encoding, "PASS {0}\r\n", password).ConfigureAwait (false);
+				} catch (Pop3CommandException) {
+					throw new AuthenticationException ();
+				} finally {
+					detector.IsAuthenticating = false;
+				}
+
+				await OnAuthenticatedAsync (message, cancellationToken).ConfigureAwait (false);
+			} catch (Exception ex) {
+				operation.SetError (ex);
+				throw;
+			}
+		}
+
+		async Task SslHandshakeAsync (SslStream ssl, string host, CancellationToken cancellationToken)
+		{
+#if NET5_0_OR_GREATER || NETSTANDARD2_1_OR_GREATER
+			await ssl.AuthenticateAsClientAsync (GetSslClientAuthenticationOptions (host, ValidateRemoteCertificate), cancellationToken).ConfigureAwait (false);
+#else
+			await ssl.AuthenticateAsClientAsync (host, ClientCertificates, SslProtocols, CheckCertificateRevocation).ConfigureAwait (false);
+#endif
+		}
+
+		async Task PostConnectAsync (Stream stream, string host, int port, SecureSocketOptions options, bool starttls, CancellationToken cancellationToken)
+		{
+			probed = ProbedCapabilities.None;
+
+			try {
+				ProtocolLogger.LogConnect (engine.Uri!);
+			} catch {
+				stream.Dispose ();
+				throw;
+			}
+
+			var pop3 = new Pop3Stream (stream, ProtocolLogger);
+
+			await engine.ConnectAsync (pop3, cancellationToken).ConfigureAwait (false);
+
+			try {
+				await engine.QueryCapabilitiesAsync (cancellationToken).ConfigureAwait (false);
+
+				if (options == SecureSocketOptions.StartTls && !engine.Capabilities.Contains (Pop3Capability.StartTLS))
+					throw new NotSupportedException ("The POP3 server does not support the STLS extension.");
+
+				if (starttls && engine.Capabilities.Contains (Pop3Capability.StartTLS)) {
+					await SendCommandAsync (cancellationToken, "STLS\r\n").ConfigureAwait (false);
+
+					try {
+						var tls = new ExtendedSslStream (stream, false, ValidateRemoteCertificate);
+						pop3.SetStream (tls);
+
+						await SslHandshakeAsync (tls, host, cancellationToken).ConfigureAwait (false);
+					} catch (Exception ex) {
+						throw SslHandshakeException.Create (ref sslValidationInfo, ex, true, "POP3", host, port, 995, 110);
+					}
+
+					engine.IsSecure = true;
+
+					// re-issue a CAPA command
+					await engine.QueryCapabilitiesAsync (cancellationToken).ConfigureAwait (false);
+				}
+			} catch (Exception ex) {
+				engine.Disconnect (ex);
+				throw;
+			}
+
+			engine.Disconnected += OnEngineDisconnected;
+			OnConnected (host, port, options);
 		}
 
 		/// <summary>
@@ -178,7 +382,7 @@ namespace MailKit.Net.Pop3
 		/// <param name="options">The secure socket options to when connecting.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="host"/> is <c>null</c>.
+		/// <paramref name="host"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <paramref name="port"/> is not between <c>0</c> and <c>65535</c>.
@@ -215,9 +419,40 @@ namespace MailKit.Net.Pop3
 		/// <exception cref="Pop3ProtocolException">
 		/// A POP3 protocol error occurred.
 		/// </exception>
-		public override Task ConnectAsync (string host, int port = 0, SecureSocketOptions options = SecureSocketOptions.Auto, CancellationToken cancellationToken = default (CancellationToken))
+		public override async Task ConnectAsync (string host, int port = 0, SecureSocketOptions options = SecureSocketOptions.Auto, CancellationToken cancellationToken = default)
 		{
-			return ConnectAsync (host, port, options, true, cancellationToken);
+			CheckCanConnect (host, port);
+
+			ComputeDefaultValues (host, ref port, ref options, out var uri, out var starttls);
+
+			using var operation = engine.StartNetworkOperation (NetworkOperationKind.Connect, uri);
+
+			try {
+				var stream = await ConnectNetworkAsync (host, port, cancellationToken).ConfigureAwait (false);
+				stream.WriteTimeout = timeout;
+				stream.ReadTimeout = timeout;
+
+				engine.Uri = uri;
+
+				if (options == SecureSocketOptions.SslOnConnect) {
+					var ssl = new ExtendedSslStream (stream, false, ValidateRemoteCertificate);
+
+					try {
+						await SslHandshakeAsync (ssl, host, cancellationToken).ConfigureAwait (false);
+					} catch (Exception ex) {
+						ssl.Dispose ();
+
+						throw SslHandshakeException.Create (ref sslValidationInfo, ex, false, "POP3", host, port, 995, 110);
+					}
+
+					stream = ssl;
+				}
+
+				await PostConnectAsync (stream, host, port, options, starttls, cancellationToken).ConfigureAwait (false);
+			} catch (Exception ex) {
+				operation.SetError (ex);
+				throw;
+			}
 		}
 
 		/// <summary>
@@ -247,9 +482,9 @@ namespace MailKit.Net.Pop3
 		/// <param name="options">The secure socket options to when connecting.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <para><paramref name="socket"/> is <c>null</c>.</para>
+		/// <para><paramref name="socket"/> is <see langword="null" />.</para>
 		/// <para>-or-</para>
-		/// <para><paramref name="host"/> is <c>null</c>.</para>
+		/// <para><paramref name="host"/> is <see langword="null" />.</para>
 		/// </exception>
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <paramref name="port"/> is not between <c>0</c> and <c>65535</c>.
@@ -285,9 +520,11 @@ namespace MailKit.Net.Pop3
 		/// <exception cref="Pop3ProtocolException">
 		/// A POP3 protocol error occurred.
 		/// </exception>
-		public override Task ConnectAsync (Socket socket, string host, int port = 0, SecureSocketOptions options = SecureSocketOptions.Auto, CancellationToken cancellationToken = default (CancellationToken))
+		public override Task ConnectAsync (Socket socket, string host, int port = 0, SecureSocketOptions options = SecureSocketOptions.Auto, CancellationToken cancellationToken = default)
 		{
-			return ConnectAsync (socket, host, port, options, true, cancellationToken); 
+			CheckCanConnect (socket, host, port);
+
+			return ConnectAsync (new NetworkStream (socket, true), host, port, options, cancellationToken);
 		}
 
 		/// <summary>
@@ -317,9 +554,9 @@ namespace MailKit.Net.Pop3
 		/// <param name="options">The secure socket options to when connecting.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <para><paramref name="stream"/> is <c>null</c>.</para>
+		/// <para><paramref name="stream"/> is <see langword="null" />.</para>
 		/// <para>-or-</para>
-		/// <para><paramref name="host"/> is <c>null</c>.</para>
+		/// <para><paramref name="host"/> is <see langword="null" />.</para>
 		/// </exception>
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <paramref name="port"/> is not between <c>0</c> and <c>65535</c>.
@@ -353,29 +590,81 @@ namespace MailKit.Net.Pop3
 		/// <exception cref="Pop3ProtocolException">
 		/// A POP3 protocol error occurred.
 		/// </exception>
-		public override Task ConnectAsync (Stream stream, string host, int port = 0, SecureSocketOptions options = SecureSocketOptions.Auto, CancellationToken cancellationToken = default (CancellationToken))
+		public override async Task ConnectAsync (Stream stream, string host, int port = 0, SecureSocketOptions options = SecureSocketOptions.Auto, CancellationToken cancellationToken = default)
 		{
-			return ConnectAsync (stream, host, port, options, true, cancellationToken);
+			CheckCanConnect (stream, host, port);
+
+			Stream network;
+
+			ComputeDefaultValues (host, ref port, ref options, out var uri, out var starttls);
+
+			using var operation = engine.StartNetworkOperation (NetworkOperationKind.Connect, uri);
+
+			try {
+				engine.Uri = uri;
+
+				if (options == SecureSocketOptions.SslOnConnect) {
+					var ssl = new ExtendedSslStream (stream, false, ValidateRemoteCertificate);
+
+					try {
+						await SslHandshakeAsync (ssl, host, cancellationToken).ConfigureAwait (false);
+					} catch (Exception ex) {
+						ssl.Dispose ();
+
+						throw SslHandshakeException.Create (ref sslValidationInfo, ex, false, "POP3", host, port, 995, 110);
+					}
+
+					network = ssl;
+				} else {
+					network = stream;
+				}
+
+				if (network.CanTimeout) {
+					network.WriteTimeout = timeout;
+					network.ReadTimeout = timeout;
+				}
+
+				await PostConnectAsync (network, host, port, options, starttls, cancellationToken).ConfigureAwait (false);
+			} catch (Exception ex) {
+				operation.SetError (ex);
+				throw;
+			}
 		}
 
 		/// <summary>
 		/// Asynchronously disconnect the service.
 		/// </summary>
 		/// <remarks>
-		/// If <paramref name="quit"/> is <c>true</c>, a <c>QUIT</c> command will be issued in order to disconnect cleanly.
+		/// If <paramref name="quit"/> is <see langword="true" />, a <c>QUIT</c> command will be issued in order to disconnect cleanly.
 		/// </remarks>
 		/// <example>
 		/// <code language="c#" source="Examples\Pop3Examples.cs" region="DownloadMessages"/>
 		/// </example>
 		/// <returns>An asynchronous task context.</returns>
-		/// <param name="quit">If set to <c>true</c>, a <c>QUIT</c> command will be issued in order to disconnect cleanly.</param>
+		/// <param name="quit">If set to <see langword="true" />, a <c>QUIT</c> command will be issued in order to disconnect cleanly.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ObjectDisposedException">
 		/// The <see cref="Pop3Client"/> has been disposed.
 		/// </exception>
-		public override Task DisconnectAsync (bool quit, CancellationToken cancellationToken = default (CancellationToken))
+		public override async Task DisconnectAsync (bool quit, CancellationToken cancellationToken = default)
 		{
-			return DisconnectAsync (quit, true, cancellationToken);
+			CheckDisposed ();
+
+			if (!engine.IsConnected)
+				return;
+
+			if (quit) {
+				try {
+					await SendCommandAsync (cancellationToken, "QUIT\r\n").ConfigureAwait (false);
+				} catch (OperationCanceledException) {
+				} catch (Pop3ProtocolException) {
+				} catch (Pop3CommandException) {
+				} catch (IOException) {
+				}
+			}
+
+			disconnecting = true;
+			engine.Disconnect (null);
 		}
 
 		/// <summary>
@@ -407,15 +696,13 @@ namespace MailKit.Net.Pop3
 		/// <exception cref="Pop3ProtocolException">
 		/// A POP3 protocol error occurred.
 		/// </exception>
-		public override async Task<int> GetMessageCountAsync (CancellationToken cancellationToken = default (CancellationToken))
+		public override Task<int> GetMessageCountAsync (CancellationToken cancellationToken = default)
 		{
 			CheckDisposed ();
 			CheckConnected ();
 			CheckAuthenticated ();
 
-			await UpdateMessageCountAsync (true, cancellationToken).ConfigureAwait (false);
-
-			return Count;
+			return UpdateMessageCountAsync (cancellationToken);
 		}
 
 		/// <summary>
@@ -445,9 +732,13 @@ namespace MailKit.Net.Pop3
 		/// <exception cref="Pop3ProtocolException">
 		/// A POP3 protocol error occurred.
 		/// </exception>
-		public override Task NoOpAsync (CancellationToken cancellationToken = default (CancellationToken))
+		public override Task NoOpAsync (CancellationToken cancellationToken = default)
 		{
-			return NoOpAsync (true, cancellationToken);
+			CheckDisposed ();
+			CheckConnected ();
+			CheckAuthenticated ();
+
+			return SendCommandAsync (cancellationToken, "NOOP\r\n");
 		}
 
 		/// <summary>
@@ -483,9 +774,31 @@ namespace MailKit.Net.Pop3
 		/// <exception cref="Pop3ProtocolException">
 		/// A POP3 protocol error occurred.
 		/// </exception>
-		public Task EnableUTF8Async (CancellationToken cancellationToken = default (CancellationToken))
+		public async Task EnableUTF8Async (CancellationToken cancellationToken = default)
 		{
-			return EnableUTF8Async (true, cancellationToken);
+			if (!CheckCanEnableUTF8 ())
+				return;
+
+			await SendCommandAsync (cancellationToken, "UTF8\r\n").ConfigureAwait (false);
+			utf8 = true;
+		}
+
+		static async Task ReadLangResponseAsync (Pop3Engine engine, Pop3Command pc, CancellationToken cancellationToken)
+		{
+			var langs = (List<Pop3Language>) pc.UserData!;
+
+			do {
+				var response = await engine.ReadLineAsync (cancellationToken).ConfigureAwait (false);
+
+				if (response == ".")
+					break;
+
+				var tokens = response.Split (Space, 2);
+				if (tokens.Length != 2)
+					continue;
+
+				langs.Add (new Pop3Language (tokens[0], tokens[1]));
+			} while (true);
 		}
 
 		/// <summary>
@@ -519,9 +832,13 @@ namespace MailKit.Net.Pop3
 		/// <exception cref="Pop3ProtocolException">
 		/// A POP3 protocol error occurred.
 		/// </exception>
-		public Task<IList<Pop3Language>> GetLanguagesAsync (CancellationToken cancellationToken = default (CancellationToken))
+		public async Task<IList<Pop3Language>> GetLanguagesAsync (CancellationToken cancellationToken = default)
 		{
-			return GetLanguagesAsync (true, cancellationToken);
+			var pc = QueueLangCommand (out var langs);
+
+			await engine.RunAsync (true, cancellationToken).ConfigureAwait (false);
+
+			return new ReadOnlyCollection<Pop3Language> (langs);
 		}
 
 		/// <summary>
@@ -535,7 +852,7 @@ namespace MailKit.Net.Pop3
 		/// <param name="lang">The language code.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="lang"/> is <c>null</c>.
+		/// <paramref name="lang"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ArgumentException">
 		/// <paramref name="lang"/> is empty.
@@ -561,9 +878,11 @@ namespace MailKit.Net.Pop3
 		/// <exception cref="Pop3ProtocolException">
 		/// A POP3 protocol error occurred.
 		/// </exception>
-		public Task SetLanguageAsync (string lang, CancellationToken cancellationToken = default (CancellationToken))
+		public Task SetLanguageAsync (string lang, CancellationToken cancellationToken = default)
 		{
-			return SetLanguageAsync (lang, true, cancellationToken);
+			CheckCanSetLanguage (lang);
+
+			return SendCommandAsync (cancellationToken, $"LANG {lang}\r\n");
 		}
 
 		/// <summary>
@@ -572,7 +891,7 @@ namespace MailKit.Net.Pop3
 		/// <remarks>
 		/// <para>Gets the UID of the message at the specified index.</para>
 		/// <note type="warning">Not all servers support UIDs, so you should first check the
-		/// <see cref="Capabilities"/> property for the <see cref="Pop3Capabilities.UIDL"/> flag or
+		/// <see cref="Capabilities"/> property for the <see cref="Pop3Capability.UIDL"/> flag or
 		/// the <see cref="SupportsUids"/> convenience property.</note>
 		/// </remarks>
 		/// <returns>The message UID.</returns>
@@ -605,9 +924,28 @@ namespace MailKit.Net.Pop3
 		/// <exception cref="Pop3ProtocolException">
 		/// A POP3 protocol error occurred.
 		/// </exception>
-		public override Task<string> GetMessageUidAsync (int index, CancellationToken cancellationToken = default (CancellationToken))
+		public override async Task<string> GetMessageUidAsync (int index, CancellationToken cancellationToken = default)
 		{
-			return GetMessageUidAsync (index, true, cancellationToken);
+			var pc = QueueUidlCommand (index);
+
+			await engine.RunAsync (false, cancellationToken).ConfigureAwait (false);
+
+			return OnUidlComplete<string> (pc);
+		}
+
+		static async Task ReadUidlAllResponseAsync (Pop3Engine engine, Pop3Command pc, CancellationToken cancellationToken)
+		{
+			do {
+				var response = await engine.ReadLineAsync (cancellationToken).ConfigureAwait (false);
+
+				if (response == ".")
+					break;
+
+				if (pc.Exception != null)
+					continue;
+
+				ParseUidlAllResponse (pc, response);
+			} while (true);
 		}
 
 		/// <summary>
@@ -616,7 +954,7 @@ namespace MailKit.Net.Pop3
 		/// <remarks>
 		/// <para>Gets the full list of available message UIDs.</para>
 		/// <note type="warning">Not all servers support UIDs, so you should first check the
-		/// <see cref="Capabilities"/> property for the <see cref="Pop3Capabilities.UIDL"/> flag or
+		/// <see cref="Capabilities"/> property for the <see cref="Pop3Capability.UIDL"/> flag or
 		/// the <see cref="SupportsUids"/> convenience property.</note>
 		/// </remarks>
 		/// <example>
@@ -648,9 +986,13 @@ namespace MailKit.Net.Pop3
 		/// <exception cref="Pop3ProtocolException">
 		/// A POP3 protocol error occurred.
 		/// </exception>
-		public override Task<IList<string>> GetMessageUidsAsync (CancellationToken cancellationToken = default (CancellationToken))
+		public override async Task<IList<string>> GetMessageUidsAsync (CancellationToken cancellationToken = default)
 		{
-			return GetMessageUidsAsync (true, cancellationToken);
+			var pc = QueueUidlCommand ();
+
+			await engine.RunAsync (false, cancellationToken).ConfigureAwait (false);
+
+			return OnUidlComplete<List<string>> (pc);
 		}
 
 		/// <summary>
@@ -686,9 +1028,28 @@ namespace MailKit.Net.Pop3
 		/// <exception cref="Pop3ProtocolException">
 		/// A POP3 protocol error occurred.
 		/// </exception>
-		public override Task<int> GetMessageSizeAsync (int index, CancellationToken cancellationToken = default (CancellationToken))
+		public override async Task<long> GetMessageSizeAsync (int index, CancellationToken cancellationToken = default)
 		{
-			return GetMessageSizeAsync (index, true, cancellationToken);
+			var pc = QueueListCommand (index);
+
+			await engine.RunAsync (true, cancellationToken).ConfigureAwait (false);
+
+			return (long) pc.UserData!;
+		}
+
+		static async Task ReadListAllResponseAsync (Pop3Engine engine, Pop3Command pc, CancellationToken cancellationToken)
+		{
+			do {
+				var response = await engine.ReadLineAsync (cancellationToken).ConfigureAwait (false);
+
+				if (response == ".")
+					break;
+
+				if (pc.Exception != null)
+					continue;
+
+				ParseListAllResponse (pc, response);
+			} while (true);
 		}
 
 		/// <summary>
@@ -720,9 +1081,13 @@ namespace MailKit.Net.Pop3
 		/// <exception cref="Pop3ProtocolException">
 		/// A POP3 protocol error occurred.
 		/// </exception>
-		public override Task<IList<int>> GetMessageSizesAsync (CancellationToken cancellationToken = default (CancellationToken))
+		public override async Task<IList<long>> GetMessageSizesAsync (CancellationToken cancellationToken = default)
 		{
-			return GetMessageSizesAsync (true, cancellationToken);
+			var sizes = QueueListCommand ();
+
+			await engine.RunAsync (true, cancellationToken).ConfigureAwait (false);
+
+			return sizes;
 		}
 
 		/// <summary>
@@ -758,18 +1123,13 @@ namespace MailKit.Net.Pop3
 		/// <exception cref="Pop3ProtocolException">
 		/// A POP3 protocol error occurred.
 		/// </exception>
-		public override Task<HeaderList> GetMessageHeadersAsync (int index, CancellationToken cancellationToken = default (CancellationToken))
+		public override Task<HeaderList> GetMessageHeadersAsync (int index, CancellationToken cancellationToken = default)
 		{
-			CheckDisposed ();
-			CheckConnected ();
-			CheckAuthenticated ();
-
-			if (index < 0 || index >= total)
-				throw new ArgumentOutOfRangeException (nameof (index));
+			CheckCanDownload (index);
 
 			var ctx = new DownloadHeaderContext (this, parser);
 
-			return ctx.DownloadAsync (index + 1, true, true, cancellationToken);
+			return ctx.DownloadAsync (index, true, cancellationToken);
 		}
 
 		/// <summary>
@@ -777,7 +1137,7 @@ namespace MailKit.Net.Pop3
 		/// </summary>
 		/// <remarks>
 		/// <para>Gets the headers for the messages at the specified indexes.</para>
-		/// <para>When the POP3 server supports the <see cref="Pop3Capabilities.Pipelining"/>
+		/// <para>When the POP3 server supports the <see cref="Pop3Capability.Pipelining"/>
 		/// extension, this method will likely be more efficient than using
 		/// <see cref="GetMessageHeaders(int,CancellationToken)"/> for each message because
 		/// it will batch the commands to reduce latency.</para>
@@ -786,7 +1146,7 @@ namespace MailKit.Net.Pop3
 		/// <param name="indexes">The indexes of the messages.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="indexes"/> is <c>null</c>.
+		/// <paramref name="indexes"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ArgumentException">
 		/// One or more of the <paramref name="indexes"/> are invalid.
@@ -815,30 +1175,14 @@ namespace MailKit.Net.Pop3
 		/// <exception cref="Pop3ProtocolException">
 		/// A POP3 protocol error occurred.
 		/// </exception>
-		public override Task<IList<HeaderList>> GetMessageHeadersAsync (IList<int> indexes, CancellationToken cancellationToken = default (CancellationToken))
+		public override Task<IList<HeaderList>> GetMessageHeadersAsync (IList<int> indexes, CancellationToken cancellationToken = default)
 		{
-			CheckDisposed ();
-			CheckConnected ();
-			CheckAuthenticated ();
-
-			if (indexes == null)
-				throw new ArgumentNullException (nameof (indexes));
-
-			if (indexes.Count == 0)
-				return Task.FromResult ((IList<HeaderList>) new HeaderList[0]);
-
-			var seqids = new int[indexes.Count];
-
-			for (int i = 0; i < indexes.Count; i++) {
-				if (indexes[i] < 0 || indexes[i] >= total)
-					throw new ArgumentException ("One or more of the indexes are invalid.", nameof (indexes));
-
-				seqids[i] = indexes[i] + 1;
-			}
+			if (!CheckCanDownload (indexes))
+				return Task.FromResult ((IList<HeaderList>) Array.Empty<HeaderList> ());
 
 			var ctx = new DownloadHeaderContext (this, parser);
 
-			return ctx.DownloadAsync (seqids, true, true, cancellationToken);
+			return ctx.DownloadAsync (indexes, true, cancellationToken);
 		}
 
 		/// <summary>
@@ -846,7 +1190,7 @@ namespace MailKit.Net.Pop3
 		/// </summary>
 		/// <remarks>
 		/// <para>Gets the headers of the messages within the specified range.</para>
-		/// <para>When the POP3 server supports the <see cref="Pop3Capabilities.Pipelining"/>
+		/// <para>When the POP3 server supports the <see cref="Pop3Capability.Pipelining"/>
 		/// extension, this method will likely be more efficient than using
 		/// <see cref="GetMessageHeaders(int,CancellationToken)"/> for each message because
 		/// it will batch the commands to reduce latency.</para>
@@ -883,29 +1227,14 @@ namespace MailKit.Net.Pop3
 		/// <exception cref="Pop3ProtocolException">
 		/// A POP3 protocol error occurred.
 		/// </exception>
-		public override Task<IList<HeaderList>> GetMessageHeadersAsync (int startIndex, int count, CancellationToken cancellationToken = default (CancellationToken))
+		public override Task<IList<HeaderList>> GetMessageHeadersAsync (int startIndex, int count, CancellationToken cancellationToken = default)
 		{
-			CheckDisposed ();
-			CheckConnected ();
-			CheckAuthenticated ();
-
-			if (startIndex < 0 || startIndex >= total)
-				throw new ArgumentOutOfRangeException (nameof (startIndex));
-
-			if (count < 0 || count > (total - startIndex))
-				throw new ArgumentOutOfRangeException (nameof (count));
-
-			if (count == 0)
-				return Task.FromResult ((IList<HeaderList>) new HeaderList[0]);
-
-			var seqids = new int[count];
-
-			for (int i = 0; i < count; i++)
-				seqids[i] = startIndex + i + 1;
+			if (!CheckCanDownload (startIndex, count))
+				return Task.FromResult ((IList<HeaderList>) Array.Empty<HeaderList> ());
 
 			var ctx = new DownloadHeaderContext (this, parser);
 
-			return ctx.DownloadAsync (seqids, true, true, cancellationToken);
+			return ctx.DownloadAsync (startIndex, count, true, cancellationToken);
 		}
 
 		/// <summary>
@@ -945,18 +1274,13 @@ namespace MailKit.Net.Pop3
 		/// <exception cref="Pop3ProtocolException">
 		/// A POP3 protocol error occurred.
 		/// </exception>
-		public override Task<MimeMessage> GetMessageAsync (int index, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
+		public override Task<MimeMessage> GetMessageAsync (int index, CancellationToken cancellationToken = default, ITransferProgress? progress = null)
 		{
-			CheckDisposed ();
-			CheckConnected ();
-			CheckAuthenticated ();
-
-			if (index < 0 || index >= total)
-				throw new ArgumentOutOfRangeException (nameof (index));
+			CheckCanDownload (index);
 
 			var ctx = new DownloadMessageContext (this, parser, progress);
 
-			return ctx.DownloadAsync (index + 1, false, true, cancellationToken);
+			return ctx.DownloadAsync (index, false, cancellationToken);
 		}
 
 		/// <summary>
@@ -964,7 +1288,7 @@ namespace MailKit.Net.Pop3
 		/// </summary>
 		/// <remarks>
 		/// <para>Gets the messages at the specified indexes.</para>
-		/// <para>When the POP3 server supports the <see cref="Pop3Capabilities.Pipelining"/>
+		/// <para>When the POP3 server supports the <see cref="Pop3Capability.Pipelining"/>
 		/// extension, this method will likely be more efficient than using
 		/// <see cref="GetMessage(int,CancellationToken,ITransferProgress)"/> for each message
 		/// because it will batch the commands to reduce latency.</para>
@@ -974,7 +1298,7 @@ namespace MailKit.Net.Pop3
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <param name="progress">The progress reporting mechanism.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="indexes"/> is <c>null</c>.
+		/// <paramref name="indexes"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ArgumentException">
 		/// One or more of the <paramref name="indexes"/> are invalid.
@@ -1003,30 +1327,14 @@ namespace MailKit.Net.Pop3
 		/// <exception cref="Pop3ProtocolException">
 		/// A POP3 protocol error occurred.
 		/// </exception>
-		public override Task<IList<MimeMessage>> GetMessagesAsync (IList<int> indexes, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
+		public override Task<IList<MimeMessage>> GetMessagesAsync (IList<int> indexes, CancellationToken cancellationToken = default, ITransferProgress? progress = null)
 		{
-			CheckDisposed ();
-			CheckConnected ();
-			CheckAuthenticated ();
-
-			if (indexes == null)
-				throw new ArgumentNullException (nameof (indexes));
-
-			if (indexes.Count == 0)
-				return Task.FromResult ((IList<MimeMessage>) new MimeMessage[0]);
-
-			var seqids = new int[indexes.Count];
-
-			for (int i = 0; i < indexes.Count; i++) {
-				if (indexes[i] < 0 || indexes[i] >= total)
-					throw new ArgumentException ("One or more of the indexes are invalid.", nameof (indexes));
-
-				seqids[i] = indexes[i] + 1;
-			}
+			if (!CheckCanDownload (indexes))
+				return Task.FromResult ((IList<MimeMessage>) Array.Empty<MimeMessage> ());
 
 			var ctx = new DownloadMessageContext (this, parser, progress);
 
-			return ctx.DownloadAsync (seqids, false, true, cancellationToken);
+			return ctx.DownloadAsync (indexes, false, cancellationToken);
 		}
 
 		/// <summary>
@@ -1034,7 +1342,7 @@ namespace MailKit.Net.Pop3
 		/// </summary>
 		/// <remarks>
 		/// <para>Gets the messages within the specified range.</para>
-		/// <para>When the POP3 server supports the <see cref="Pop3Capabilities.Pipelining"/>
+		/// <para>When the POP3 server supports the <see cref="Pop3Capability.Pipelining"/>
 		/// extension, this method will likely be more efficient than using
 		/// <see cref="GetMessage(int,CancellationToken,ITransferProgress)"/> for each message
 		/// because it will batch the commands to reduce latency.</para>
@@ -1075,29 +1383,14 @@ namespace MailKit.Net.Pop3
 		/// <exception cref="Pop3ProtocolException">
 		/// A POP3 protocol error occurred.
 		/// </exception>
-		public override Task<IList<MimeMessage>> GetMessagesAsync (int startIndex, int count, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
+		public override Task<IList<MimeMessage>> GetMessagesAsync (int startIndex, int count, CancellationToken cancellationToken = default, ITransferProgress? progress = null)
 		{
-			CheckDisposed ();
-			CheckConnected ();
-			CheckAuthenticated ();
-
-			if (startIndex < 0 || startIndex >= total)
-				throw new ArgumentOutOfRangeException (nameof (startIndex));
-
-			if (count < 0 || count > (total - startIndex))
-				throw new ArgumentOutOfRangeException (nameof (count));
-
-			if (count == 0)
-				return Task.FromResult ((IList<MimeMessage>) new MimeMessage[0]);
-
-			var seqids = new int[count];
-
-			for (int i = 0; i < count; i++)
-				seqids[i] = startIndex + i + 1;
+			if (!CheckCanDownload (startIndex, count))
+				return Task.FromResult ((IList<MimeMessage>) Array.Empty<MimeMessage> ());
 
 			var ctx = new DownloadMessageContext (this, parser, progress);
 
-			return ctx.DownloadAsync (seqids, false, true, cancellationToken);
+			return ctx.DownloadAsync (startIndex, count, false, cancellationToken);
 		}
 
 		/// <summary>
@@ -1108,7 +1401,7 @@ namespace MailKit.Net.Pop3
 		/// </remarks>
 		/// <returns>The message or header stream.</returns>
 		/// <param name="index">The index of the message.</param>
-		/// <param name="headersOnly"><c>true</c> if only the headers should be retrieved; otherwise, <c>false</c>.</param>
+		/// <param name="headersOnly"><see langword="true" /> if only the headers should be retrieved; otherwise, <see langword="false" />.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <param name="progress">The progress reporting mechanism.</param>
 		/// <exception cref="System.ArgumentOutOfRangeException">
@@ -1135,18 +1428,13 @@ namespace MailKit.Net.Pop3
 		/// <exception cref="Pop3ProtocolException">
 		/// A POP3 protocol error occurred.
 		/// </exception>
-		public override Task<Stream> GetStreamAsync (int index, bool headersOnly = false, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
+		public override Task<Stream> GetStreamAsync (int index, bool headersOnly = false, CancellationToken cancellationToken = default, ITransferProgress? progress = null)
 		{
-			CheckDisposed ();
-			CheckConnected ();
-			CheckAuthenticated ();
-
-			if (index < 0 || index >= total)
-				throw new ArgumentOutOfRangeException (nameof (index));
+			CheckCanDownload (index);
 
 			var ctx = new DownloadStreamContext (this, progress);
 
-			return ctx.DownloadAsync (index + 1, headersOnly, true, cancellationToken);
+			return ctx.DownloadAsync (index, headersOnly, cancellationToken);
 		}
 
 		/// <summary>
@@ -1154,18 +1442,18 @@ namespace MailKit.Net.Pop3
 		/// </summary>
 		/// <remarks>
 		/// <para>Get the message or header streams at the specified indexes.</para>
-		/// <para>If the POP3 server supports the <see cref="Pop3Capabilities.Pipelining"/>
+		/// <para>If the POP3 server supports the <see cref="Pop3Capability.Pipelining"/>
 		/// extension, this method will likely be more efficient than using
 		/// <see cref="GetStream(int,bool,CancellationToken,ITransferProgress)"/> for each message
 		/// because it will batch the commands to reduce latency.</para>
 		/// </remarks>
 		/// <returns>The message or header streams.</returns>
 		/// <param name="indexes">The indexes of the messages.</param>
-		/// <param name="headersOnly"><c>true</c> if only the headers should be retrieved; otherwise, <c>false</c>.</param>
+		/// <param name="headersOnly"><see langword="true" /> if only the headers should be retrieved; otherwise, <see langword="false" />.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <param name="progress">The progress reporting mechanism.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="indexes"/> is <c>null</c>.
+		/// <paramref name="indexes"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ArgumentException">
 		/// One or more of the <paramref name="indexes"/> are invalid.
@@ -1194,30 +1482,14 @@ namespace MailKit.Net.Pop3
 		/// <exception cref="Pop3ProtocolException">
 		/// A POP3 protocol error occurred.
 		/// </exception>
-		public override Task<IList<Stream>> GetStreamsAsync (IList<int> indexes, bool headersOnly = false, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
+		public override Task<IList<Stream>> GetStreamsAsync (IList<int> indexes, bool headersOnly = false, CancellationToken cancellationToken = default, ITransferProgress? progress = null)
 		{
-			CheckDisposed ();
-			CheckConnected ();
-			CheckAuthenticated ();
-
-			if (indexes == null)
-				throw new ArgumentNullException (nameof (indexes));
-
-			if (indexes.Count == 0)
-				return Task.FromResult ((IList<Stream>) new Stream[0]);
-
-			var seqids = new int[indexes.Count];
-
-			for (int i = 0; i < indexes.Count; i++) {
-				if (indexes[i] < 0 || indexes[i] >= total)
-					throw new ArgumentException ("One or more of the indexes are invalid.", nameof (indexes));
-
-				seqids[i] = indexes[i] + 1;
-			}
+			if (!CheckCanDownload (indexes))
+				return Task.FromResult ((IList<Stream>) Array.Empty<Stream> ());
 
 			var ctx = new DownloadStreamContext (this, progress);
 
-			return ctx.DownloadAsync (seqids, headersOnly, true, cancellationToken);
+			return ctx.DownloadAsync (indexes, headersOnly, cancellationToken);
 		}
 
 		/// <summary>
@@ -1225,7 +1497,7 @@ namespace MailKit.Net.Pop3
 		/// </summary>
 		/// <remarks>
 		/// <para>Gets the message or header streams within the specified range.</para>
-		/// <para>If the POP3 server supports the <see cref="Pop3Capabilities.Pipelining"/>
+		/// <para>If the POP3 server supports the <see cref="Pop3Capability.Pipelining"/>
 		/// extension, this method will likely be more efficient than using
 		/// <see cref="GetStream(int,bool,CancellationToken,ITransferProgress)"/> for each message
 		/// because it will batch the commands to reduce latency.</para>
@@ -1233,7 +1505,7 @@ namespace MailKit.Net.Pop3
 		/// <returns>The message or header streams.</returns>
 		/// <param name="startIndex">The index of the first stream to get.</param>
 		/// <param name="count">The number of streams to get.</param>
-		/// <param name="headersOnly"><c>true</c> if only the headers should be retrieved; otherwise, <c>false</c>.</param>
+		/// <param name="headersOnly"><see langword="true" /> if only the headers should be retrieved; otherwise, <see langword="false" />.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <param name="progress">The progress reporting mechanism.</param>
 		/// <exception cref="System.ArgumentOutOfRangeException">
@@ -1264,29 +1536,14 @@ namespace MailKit.Net.Pop3
 		/// <exception cref="Pop3ProtocolException">
 		/// A POP3 protocol error occurred.
 		/// </exception>
-		public override Task<IList<Stream>> GetStreamsAsync (int startIndex, int count, bool headersOnly = false, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
+		public override Task<IList<Stream>> GetStreamsAsync (int startIndex, int count, bool headersOnly = false, CancellationToken cancellationToken = default, ITransferProgress? progress = null)
 		{
-			CheckDisposed ();
-			CheckConnected ();
-			CheckAuthenticated ();
-
-			if (startIndex < 0 || startIndex >= total)
-				throw new ArgumentOutOfRangeException (nameof (startIndex));
-
-			if (count < 0 || count > (total - startIndex))
-				throw new ArgumentOutOfRangeException (nameof (count));
-
-			if (count == 0)
-				return Task.FromResult ((IList<Stream>) new Stream[0]);
-
-			var seqids = new int[count];
-
-			for (int i = 0; i < count; i++)
-				seqids[i] = startIndex + i + 1;
+			if (!CheckCanDownload (startIndex, count))
+				return Task.FromResult ((IList<Stream>) Array.Empty<Stream> ());
 
 			var ctx = new DownloadStreamContext (this, progress);
 
-			return ctx.DownloadAsync (seqids, headersOnly, true, cancellationToken);
+			return ctx.DownloadAsync (startIndex, count, headersOnly, cancellationToken);
 		}
 
 		/// <summary>
@@ -1327,9 +1584,11 @@ namespace MailKit.Net.Pop3
 		/// <exception cref="Pop3ProtocolException">
 		/// A POP3 protocol error occurred.
 		/// </exception>
-		public override Task DeleteMessageAsync (int index, CancellationToken cancellationToken = default (CancellationToken))
+		public override Task DeleteMessageAsync (int index, CancellationToken cancellationToken = default)
 		{
-			return DeleteMessageAsync (index, true, cancellationToken);
+			CheckCanDelete (index, out string seqid);
+
+			return SendCommandAsync (cancellationToken, $"DELE {seqid}\r\n");
 		}
 
 		/// <summary>
@@ -1344,7 +1603,7 @@ namespace MailKit.Net.Pop3
 		/// <param name="indexes">The indexes of the messages.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="indexes"/> is <c>null</c>.
+		/// <paramref name="indexes"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ArgumentException">
 		/// One or more of the <paramref name="indexes"/> are invalid.
@@ -1370,9 +1629,22 @@ namespace MailKit.Net.Pop3
 		/// <exception cref="Pop3ProtocolException">
 		/// A POP3 protocol error occurred.
 		/// </exception>
-		public override Task DeleteMessagesAsync (IList<int> indexes, CancellationToken cancellationToken = default (CancellationToken))
+		public override async Task DeleteMessagesAsync (IList<int> indexes, CancellationToken cancellationToken = default)
 		{
-			return DeleteMessagesAsync (indexes, true, cancellationToken);
+			if (!CheckCanDelete (indexes))
+				return;
+
+			if (!Capabilities.Contains (Pop3Capability.Pipelining)) {
+				for (int i = 0; i < indexes.Count; i++)
+					await SendCommandAsync (cancellationToken, "DELE {0}\r\n", indexes[i] + 1).ConfigureAwait (false);
+
+				return;
+			}
+
+			for (int i = 0; i < indexes.Count; i++)
+				engine.QueueCommand (null, "DELE {0}\r\n", indexes[i] + 1);
+
+			await engine.RunAsync (true, cancellationToken).ConfigureAwait (false);
 		}
 
 		/// <summary>
@@ -1415,9 +1687,22 @@ namespace MailKit.Net.Pop3
 		/// <exception cref="Pop3ProtocolException">
 		/// A POP3 protocol error occurred.
 		/// </exception>
-		public override Task DeleteMessagesAsync (int startIndex, int count, CancellationToken cancellationToken = default (CancellationToken))
+		public override async Task DeleteMessagesAsync (int startIndex, int count, CancellationToken cancellationToken = default)
 		{
-			return DeleteMessagesAsync (startIndex, count, true, cancellationToken);
+			if (!CheckCanDelete (startIndex, count))
+				return;
+
+			if (!Capabilities.Contains (Pop3Capability.Pipelining)) {
+				for (int i = 0; i < count; i++)
+					await SendCommandAsync (cancellationToken, "DELE {0}\r\n", startIndex + i + 1).ConfigureAwait (false);
+
+				return;
+			}
+
+			for (int i = 0; i < count; i++)
+				engine.QueueCommand (null, "DELE {0}\r\n", startIndex + i + 1);
+
+			await engine.RunAsync (true, cancellationToken).ConfigureAwait (false);
 		}
 
 		/// <summary>
@@ -1451,10 +1736,12 @@ namespace MailKit.Net.Pop3
 		/// <exception cref="Pop3ProtocolException">
 		/// A POP3 protocol error occurred.
 		/// </exception>
-		public override async Task DeleteAllMessagesAsync (CancellationToken cancellationToken = default (CancellationToken))
+		public override Task DeleteAllMessagesAsync (CancellationToken cancellationToken = default)
 		{
 			if (total > 0)
-				await DeleteMessagesAsync (0, total, cancellationToken).ConfigureAwait (false);
+				return DeleteMessagesAsync (0, total, cancellationToken);
+
+			return Task.CompletedTask;
 		}
 
 		/// <summary>
@@ -1488,9 +1775,13 @@ namespace MailKit.Net.Pop3
 		/// <exception cref="Pop3ProtocolException">
 		/// A POP3 protocol error occurred.
 		/// </exception>
-		public override Task ResetAsync (CancellationToken cancellationToken = default (CancellationToken))
+		public override Task ResetAsync (CancellationToken cancellationToken = default)
 		{
-			return ResetAsync (true, cancellationToken);
+			CheckDisposed ();
+			CheckConnected ();
+			CheckAuthenticated ();
+
+			return SendCommandAsync (cancellationToken, "RSET\r\n");
 		}
 	}
 }

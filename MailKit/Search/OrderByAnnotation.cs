@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -40,23 +40,26 @@ namespace MailKit.Search {
 		/// <summary>
 		/// Initializes a new instance of the <see cref="MailKit.Search.OrderByAnnotation"/> class.
 		/// </summary>
+		/// <remarks>
+		/// Creates a new <see cref="OrderByAnnotation"/>.
+		/// </remarks>
 		/// <param name="entry">The annotation entry to sort by.</param>
 		/// <param name="attribute">The annotation attribute to use for sorting.</param>
 		/// <param name="order">The sort order.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <para><paramref name="entry"/> is <c>null</c>.</para>
+		/// <para><paramref name="entry"/> is <see langword="null" />.</para>
 		/// <para>-or-</para>
-		/// <para><paramref name="attribute"/>is <c>null</c>.</para>
+		/// <para><paramref name="attribute"/>is <see langword="null" />.</para>
 		/// </exception>
 		/// <exception cref="System.ArgumentException">
 		/// <paramref name="attribute"/> is not a valid attribute for sorting.
 		/// </exception>
 		public OrderByAnnotation (AnnotationEntry entry, AnnotationAttribute attribute, SortOrder order) : base (OrderByType.Annotation, order)
 		{
-			if (entry == null)
+			if (entry is null)
 				throw new ArgumentNullException (nameof (entry));
 
-			if (attribute == null)
+			if (attribute is null)
 				throw new ArgumentNullException (nameof (attribute));
 
 			if (attribute.Name != "value" || attribute.Scope == AnnotationScope.Both)

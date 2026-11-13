@@ -1,9 +1,9 @@
 ﻿//
-// Annotationentry.cs
+// AnnotationEntry.cs
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -172,8 +172,12 @@ namespace MailKit {
 				throw new ArgumentException ("Invalid part-specifier.", nameof (partSpecifier));
 		}
 
-		AnnotationEntry ()
+		AnnotationEntry (string? partSpecifier, string entry, string path, AnnotationScope scope)
 		{
+			PartSpecifier = partSpecifier;
+			Entry = entry;
+			Path = path;
+			Scope = scope;
 		}
 
 		/// <summary>
@@ -185,7 +189,7 @@ namespace MailKit {
 		/// <param name="path">The annotation entry path.</param>
 		/// <param name="scope">The scope of the annotation.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="path"/> is <c>null</c>.
+		/// <paramref name="path"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ArgumentException">
 		/// <paramref name="path"/> is invalid.
@@ -199,6 +203,7 @@ namespace MailKit {
 			case AnnotationScope.Shared: Entry = path + ".shared"; break;
 			default: Entry = path; break;
 			}
+
 			PartSpecifier = null;
 			Path = path;
 			Scope = scope;
@@ -214,9 +219,9 @@ namespace MailKit {
 		/// <param name="path">The annotation entry path.</param>
 		/// <param name="scope">The scope of the annotation.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <para><paramref name="partSpecifier"/> is <c>null</c>.</para>
+		/// <para><paramref name="partSpecifier"/> is <see langword="null" />.</para>
 		/// <para>-or-</para>
-		/// <para><paramref name="path"/> is <c>null</c>.</para>
+		/// <para><paramref name="path"/> is <see langword="null" />.</para>
 		/// </exception>
 		/// <exception cref="System.ArgumentException">
 		/// <para><paramref name="partSpecifier"/> is invalid.</para>
@@ -233,6 +238,7 @@ namespace MailKit {
 			case AnnotationScope.Shared: Entry = string.Format ("/{0}{1}.shared", partSpecifier, path); break;
 			default: Entry = string.Format ("/{0}{1}", partSpecifier, path); break;
 			}
+
 			PartSpecifier = partSpecifier;
 			Path = path;
 			Scope = scope;
@@ -248,9 +254,9 @@ namespace MailKit {
 		/// <param name="path">The annotation entry path.</param>
 		/// <param name="scope">The scope of the annotation.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <para><paramref name="part"/> is <c>null</c>.</para>
+		/// <para><paramref name="part"/> is <see langword="null" />.</para>
 		/// <para>-or-</para>
-		/// <para><paramref name="path"/> is <c>null</c>.</para>
+		/// <para><paramref name="path"/> is <see langword="null" />.</para>
 		/// </exception>
 		/// <exception cref="System.ArgumentException">
 		/// <paramref name="path"/> is invalid.
@@ -267,6 +273,7 @@ namespace MailKit {
 			case AnnotationScope.Shared: Entry = string.Format ("/{0}{1}.shared", part.PartSpecifier, path); break;
 			default: Entry = string.Format ("/{0}{1}", part.PartSpecifier, path); break;
 			}
+
 			PartSpecifier = part.PartSpecifier;
 			Path = path;
 			Scope = scope;
@@ -289,7 +296,8 @@ namespace MailKit {
 		/// <remarks>
 		/// Gets the part-specifier component of the annotation entry.
 		/// </remarks>
-		public string PartSpecifier {
+		/// <value>The part-specifier.</value>
+		public string? PartSpecifier {
 			get; private set;
 		}
 
@@ -299,6 +307,7 @@ namespace MailKit {
 		/// <remarks>
 		/// Gets the path component of the annotation entry.
 		/// </remarks>
+		/// <value>The path.</value>
 		public string Path {
 			get; private set;
 		}
@@ -309,6 +318,7 @@ namespace MailKit {
 		/// <remarks>
 		/// Gets the scope of the annotation.
 		/// </remarks>
+		/// <value>The scope.</value>
 		public AnnotationScope Scope {
 			get; private set;
 		}
@@ -322,9 +332,9 @@ namespace MailKit {
 		/// Determines whether the specified <see cref="MailKit.AnnotationEntry"/> is equal to the current <see cref="MailKit.AnnotationEntry"/>.
 		/// </remarks>
 		/// <param name="other">The <see cref="MailKit.AnnotationEntry"/> to compare with the current <see cref="MailKit.AnnotationEntry"/>.</param>
-		/// <returns><c>true</c> if the specified <see cref="MailKit.AnnotationEntry"/> is equal to the current
-		/// <see cref="MailKit.AnnotationEntry"/>; otherwise, <c>false</c>.</returns>
-		public bool Equals (AnnotationEntry other)
+		/// <returns><see langword="true" /> if the specified <see cref="MailKit.AnnotationEntry"/> is equal to the current
+		/// <see cref="MailKit.AnnotationEntry"/>; otherwise, <see langword="false" />.</returns>
+		public bool Equals (AnnotationEntry? other)
 		{
 			return other?.Entry == Entry;
 		}
@@ -337,7 +347,7 @@ namespace MailKit {
 		/// <remarks>
 		/// Determines whether two annotation entries are equal.
 		/// </remarks>
-		/// <returns><c>true</c> if <paramref name="entry1"/> and <paramref name="entry2"/> are equal; otherwise, <c>false</c>.</returns>
+		/// <returns><see langword="true" /> if <paramref name="entry1"/> and <paramref name="entry2"/> are equal; otherwise, <see langword="false" />.</returns>
 		/// <param name="entry1">The first annotation entry to compare.</param>
 		/// <param name="entry2">The second annotation entry to compare.</param>
 		public static bool operator == (AnnotationEntry entry1, AnnotationEntry entry2)
@@ -351,7 +361,7 @@ namespace MailKit {
 		/// <remarks>
 		/// Determines whether two annotation entries are not equal.
 		/// </remarks>
-		/// <returns><c>true</c> if <paramref name="entry1"/> and <paramref name="entry2"/> are not equal; otherwise, <c>false</c>.</returns>
+		/// <returns><see langword="true" /> if <paramref name="entry1"/> and <paramref name="entry2"/> are not equal; otherwise, <see langword="false" />.</returns>
 		/// <param name="entry1">The first annotation entry to compare.</param>
 		/// <param name="entry2">The second annotation entry to compare.</param>
 		public static bool operator != (AnnotationEntry entry1, AnnotationEntry entry2)
@@ -366,11 +376,11 @@ namespace MailKit {
 		/// Determines whether the specified <see cref="System.Object"/> is equal to the current <see cref="MailKit.AnnotationEntry"/>.
 		/// </remarks>
 		/// <param name="obj">The <see cref="System.Object"/> to compare with the current <see cref="MailKit.AnnotationEntry"/>.</param>
-		/// <returns><c>true</c> if the specified <see cref="System.Object"/> is equal to the current
-		/// <see cref="MailKit.AnnotationEntry"/>; otherwise, <c>false</c>.</returns>
-		public override bool Equals (object obj)
+		/// <returns><see langword="true" /> if the specified <see cref="System.Object"/> is equal to the current
+		/// <see cref="MailKit.AnnotationEntry"/>; otherwise, <see langword="false" />.</returns>
+		public override bool Equals (object? obj)
 		{
-			return obj is AnnotationEntry && ((AnnotationEntry) obj).Entry == Entry;
+			return obj != null && obj.GetType () == typeof (AnnotationEntry) && ((AnnotationEntry) obj).Entry == Entry;
 		}
 
 		/// <summary>
@@ -406,7 +416,7 @@ namespace MailKit {
 		/// <param name="entry">The annotation entry.</param>
 		/// <returns>The parsed annotation entry.</returns>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="entry"/> is <c>null</c>.
+		/// <paramref name="entry"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.FormatException">
 		/// <paramref name="entry"/> does not conform to the annotation entry syntax.
@@ -424,7 +434,7 @@ namespace MailKit {
 
 			var scope = AnnotationScope.Both;
 			int startIndex = 0, endIndex;
-			string partSpecifier = null;
+			string? partSpecifier = null;
 			var component = 0;
 			var pc = entry[0];
 			string path;
@@ -494,12 +504,7 @@ namespace MailKit {
 
 			path = entry.Substring (startIndex, endIndex - startIndex);
 
-			return new AnnotationEntry {
-				PartSpecifier = partSpecifier,
-				Entry = entry,
-				Path = path,
-				Scope = scope
-			};
+			return new AnnotationEntry (partSpecifier, entry, path, scope);
 		}
 
 		internal static AnnotationEntry Create (string entry)

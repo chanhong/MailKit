@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -24,12 +24,7 @@
 // THE SOFTWARE.
 //
 
-using System;
 using System.Net;
-using System.Net.Sockets;
-using System.Threading.Tasks;
-
-using NUnit.Framework;
 
 using MailKit.Net.Proxy;
 
@@ -38,6 +33,26 @@ namespace UnitTests.Net.Proxy {
 	public class HttpProxyClientTests
 	{
 		const int ConnectTimeout = 5 * 1000; // 5 seconds
+
+		[TestCase ("HTTP/1.1 200 Connection established\r\n\r\n")]
+		[TestCase ("HTTP/1.0 200 OK\r\n\r\n")]
+		[TestCase ("HTTP/1.1 200 \r\n\r\n")]
+		[TestCase ("HTTP/1.1 200\r\n\r\n")]
+		[TestCase ("HTTP/1.1 200\n\n")]
+		public void TestValidateHttpResponseSuccess (string response)
+		{
+			Assert.DoesNotThrow (() => HttpProxyClient.ValidateHttpResponse (response, "www.example.com", 25));
+		}
+
+		[TestCase ("HTTP/1.1 200")]
+		[TestCase ("HTTP/1.1 2000\r\n\r\n")]
+		[TestCase ("HTTP/1.1 201 Created\r\n\r\n")]
+		[TestCase ("HTTP/1.1 405 Method Not Allowed\r\n\r\n")]
+		[TestCase ("HTTP/2.0 200 OK\r\n\r\n")]
+		public void TestValidateHttpResponseFailure (string response)
+		{
+			Assert.Throws<ProxyProtocolException> (() => HttpProxyClient.ValidateHttpResponse (response, "www.example.com", 25));
+		}
 
 		[Test]
 		public void TestArgumentExceptions ()
@@ -50,9 +65,9 @@ namespace UnitTests.Net.Proxy {
 			Assert.Throws<ArgumentOutOfRangeException> (() => new HttpProxyClient (proxy.ProxyHost, -1));
 			Assert.Throws<ArgumentNullException> (() => new HttpProxyClient (proxy.ProxyHost, 1080, null));
 
-			Assert.AreEqual (1080, proxy.ProxyPort);
-			Assert.AreEqual ("http.proxy.com", proxy.ProxyHost);
-			Assert.AreEqual (credentials, proxy.ProxyCredentials);
+			Assert.That (proxy.ProxyPort, Is.EqualTo (1080));
+			Assert.That (proxy.ProxyHost, Is.EqualTo ("http.proxy.com"));
+			Assert.That (proxy.ProxyCredentials, Is.EqualTo (credentials));
 
 			Assert.Throws<ArgumentNullException> (() => proxy.Connect (null, 80));
 			Assert.Throws<ArgumentNullException> (() => proxy.Connect (null, 80, ConnectTimeout));
@@ -77,22 +92,21 @@ namespace UnitTests.Net.Proxy {
 		public void TestMethodNotAllowed ()
 		{
 			var proxy = new HttpProxyClient ("www.google.com", 80);
-			Socket socket = null;
+			Stream stream = null;
 
 			try {
-				socket = proxy.Connect ("www.google.com", 80);
-				socket.Disconnect (false);
+				stream = proxy.Connect ("www.google.com", 80);
 				Assert.Fail ("www.google.com is not an HTTP proxy, so CONNECT should have failed.");
 			} catch (ProxyProtocolException ex) {
-				// This is expected since this proxy does not support Socks4a
-				Assert.AreEqual ("Failed to connect to www.google.com:80: HTTP/1.1 405 Method Not Allowed", ex.Message);
+				// This is expected since this is not an HTTP proxy
+				var response = ex.Message.Substring (0, ex.Message.IndexOf ("\r\n"));
+				Assert.That (response, Is.EqualTo ("Failed to connect to www.google.com:80: HTTP/1.1 405 Method Not Allowed"));
 			} catch (TimeoutException) {
 				Assert.Inconclusive ("Timed out.");
 			} catch (Exception ex) {
 				Assert.Fail (ex.Message);
 			} finally {
-				if (socket != null)
-					socket.Dispose ();
+				stream?.Dispose ();
 			}
 		}
 
@@ -100,22 +114,65 @@ namespace UnitTests.Net.Proxy {
 		public async Task TestMethodNotAllowedAsync ()
 		{
 			var proxy = new HttpProxyClient ("www.google.com", 80);
-			Socket socket = null;
+			Stream stream = null;
 
 			try {
-				socket = await proxy.ConnectAsync ("www.google.com", 80);
-				socket.Disconnect (false);
+				stream = await proxy.ConnectAsync ("www.google.com", 80);
 				Assert.Fail ("www.google.com is not an HTTP proxy, so CONNECT should have failed.");
 			} catch (ProxyProtocolException ex) {
-				// This is expected since this proxy does not support Socks4a
-				Assert.AreEqual ("Failed to connect to www.google.com:80: HTTP/1.1 405 Method Not Allowed", ex.Message);
+				// This is expected since this is not an HTTP proxy
+				var response = ex.Message.Substring (0, ex.Message.IndexOf ("\r\n"));
+				Assert.That (response, Is.EqualTo ("Failed to connect to www.google.com:80: HTTP/1.1 405 Method Not Allowed"));
 			} catch (TimeoutException) {
 				Assert.Inconclusive ("Timed out.");
 			} catch (Exception ex) {
 				Assert.Fail (ex.Message);
 			} finally {
-				if (socket != null)
-					socket.Dispose ();
+				stream?.Dispose ();
+			}
+		}
+
+		[Test]
+		public void TestConnectWithCredentials ()
+		{
+			using (var server = new HttpProxyListener ()) {
+				server.Start (IPAddress.Loopback, 0);
+
+				var credentials = new NetworkCredential ("username", "password");
+				var proxy = new HttpProxyClient (server.IPAddress.ToString (), server.Port, credentials);
+				Stream stream = null;
+
+				try {
+					stream = proxy.Connect ("www.google.com", 80, ConnectTimeout);
+				} catch (TimeoutException) {
+					Assert.Inconclusive ("Timed out.");
+				} catch (Exception ex) {
+					Assert.Fail (ex.Message);
+				} finally {
+					stream?.Dispose ();
+				}
+			}
+		}
+
+		[Test]
+		public async Task TestConnectWithCredentialsAsync ()
+		{
+			using (var server = new HttpProxyListener ()) {
+				server.Start (IPAddress.Loopback, 0);
+
+				var credentials = new NetworkCredential ("username", "password");
+				var proxy = new HttpProxyClient (server.IPAddress.ToString (), server.Port, credentials);
+				Stream stream = null;
+
+				try {
+					stream = await proxy.ConnectAsync ("www.google.com", 80, ConnectTimeout);
+				} catch (TimeoutException) {
+					Assert.Inconclusive ("Timed out.");
+				} catch (Exception ex) {
+					Assert.Fail (ex.Message);
+				} finally {
+					stream?.Dispose ();
+				}
 			}
 		}
 	}

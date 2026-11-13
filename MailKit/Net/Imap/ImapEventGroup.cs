@@ -4,7 +4,7 @@
 // Authors: Steffen Kieß <s-kiess@web.de>
 //          Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -49,9 +49,9 @@ namespace MailKit.Net.Imap {
 		/// <param name="mailboxFilter">The mailbox filter.</param>
 		/// <param name="events">The list of IMAP events.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <para><paramref name="mailboxFilter"/> is <c>null</c>.</para>
+		/// <para><paramref name="mailboxFilter"/> is <see langword="null" />.</para>
 		/// <para>-or-</para>
-		/// <para><paramref name="events"/> is <c>null</c>.</para>
+		/// <para><paramref name="events"/> is <see langword="null" />.</para>
 		/// </exception>
 		public ImapEventGroup (ImapMailboxFilter mailboxFilter, IList<ImapEvent> events)
 		{
@@ -63,6 +63,23 @@ namespace MailKit.Net.Imap {
 
 			MailboxFilter = mailboxFilter;
 			Events = events;
+		}
+
+		/// <summary>
+		/// Initializes a new instance of the <see cref="T:MailKit.Net.Imap.ImapEventGroup"/> class.
+		/// </summary>
+		/// <remarks>
+		/// Initializes a new instance of the <see cref="T:MailKit.Net.Imap.ImapEventGroup"/> class.
+		/// </remarks>
+		/// <param name="mailboxFilter">The mailbox filter.</param>
+		/// <param name="events">The list of IMAP events.</param>
+		/// <exception cref="System.ArgumentNullException">
+		/// <para><paramref name="mailboxFilter"/> is <see langword="null" />.</para>
+		/// <para>-or-</para>
+		/// <para><paramref name="events"/> is <see langword="null" />.</para>
+		/// </exception>
+		public ImapEventGroup (ImapMailboxFilter mailboxFilter, params ImapEvent[] events) : this (mailboxFilter, (IList<ImapEvent>) events)
+		{
 		}
 
 		/// <summary>
@@ -96,15 +113,15 @@ namespace MailKit.Net.Imap {
 		/// <param name="engine">The IMAP engine.</param>
 		/// <param name="command">The IMAP command builder.</param>
 		/// <param name="args">The IMAP command argument builder.</param>
-		/// <param name="notifySelectedNewExpunge">Gets set to <c>true</c> if the NOTIFY command requests the MessageNew or
+		/// <param name="notifySelectedNewExpunge">Gets set to <see langword="true" /> if the NOTIFY command requests the MessageNew or
 		/// MessageExpunged events for a SELECTED or SELECTED-DELAYED mailbox filter; otherwise it is left unchanged.</param>
 		internal void Format (ImapEngine engine, StringBuilder command, IList<object> args, ref bool notifySelectedNewExpunge)
 		{
 			bool isSelectedFilter = MailboxFilter == ImapMailboxFilter.Selected || MailboxFilter == ImapMailboxFilter.SelectedDelayed;
 
-			command.Append ("(");
+			command.Append ('(');
 			MailboxFilter.Format (engine, command, args);
-			command.Append (" ");
+			command.Append (' ');
 
 			if (Events.Count > 0) {
 				var haveAnnotationChange = false;
@@ -112,7 +129,7 @@ namespace MailKit.Net.Imap {
 				var haveMessageNew = false;
 				var haveFlagChange = false;
 
-				command.Append ("(");
+				command.Append ('(');
 
 				for (int i = 0; i < Events.Count; i++) {
 					var @event = Events[i];
@@ -130,11 +147,11 @@ namespace MailKit.Net.Imap {
 						haveAnnotationChange = true;
 
 					if (i > 0)
-						command.Append (" ");
+						command.Append (' ');
 
 					@event.Format (engine, command, args, isSelectedFilter);
 				}
-				command.Append (")");
+				command.Append (')');
 
 				// https://tools.ietf.org/html/rfc5465#section-5
 				if ((haveMessageNew && !haveMessageExpunge) || (!haveMessageNew && haveMessageExpunge))
@@ -148,7 +165,7 @@ namespace MailKit.Net.Imap {
 				command.Append ("NONE");
 			}
 
-			command.Append (")");
+			command.Append (')');
 		}
 	}
 
@@ -234,7 +251,7 @@ namespace MailKit.Net.Imap {
 			/// </remarks>
 			/// <param name="folders">The list of folders to watch for events.</param>
 			/// <exception cref="System.ArgumentNullException">
-			/// <paramref name="folders"/> is <c>null</c>.
+			/// <paramref name="folders"/> is <see langword="null" />.
 			/// </exception>
 			/// <exception cref="System.ArgumentException">
 			/// <para>The list of <paramref name="folders"/> is empty.</para>
@@ -254,7 +271,7 @@ namespace MailKit.Net.Imap {
 			/// </remarks>
 			/// <param name="folders">The list of folders to watch for events.</param>
 			/// <exception cref="System.ArgumentNullException">
-			/// <paramref name="folders"/> is <c>null</c>.
+			/// <paramref name="folders"/> is <see langword="null" />.
 			/// </exception>
 			/// <exception cref="System.ArgumentException">
 			/// <para>The list of <paramref name="folders"/> is empty.</para>
@@ -262,7 +279,7 @@ namespace MailKit.Net.Imap {
 			/// <para>The list of <paramref name="folders"/> contains folders that are not of
 			/// type <see cref="ImapFolder"/>.</para>
 			/// </exception>
-			public Mailboxes (params IMailFolder[] folders) : this ("MAILBOXES", folders)
+			public Mailboxes (params IMailFolder[] folders) : this ((IList<IMailFolder>) folders)
 			{
 			}
 
@@ -275,7 +292,7 @@ namespace MailKit.Net.Imap {
 			/// <param name="name">The name of the mailbox filter.</param>
 			/// <param name="folders">The list of folders to watch for events.</param>
 			/// <exception cref="System.ArgumentNullException">
-			/// <paramref name="folders"/> is <c>null</c>.
+			/// <paramref name="folders"/> is <see langword="null" />.
 			/// </exception>
 			/// <exception cref="System.ArgumentException">
 			/// <para>The list of <paramref name="folders"/> is empty.</para>
@@ -293,7 +310,7 @@ namespace MailKit.Net.Imap {
 
 				this.folders = new ImapFolder[folders.Count];
 				for (int i = 0; i < folders.Count; i++) {
-					if (!(folders[i] is ImapFolder folder))
+					if (folders[i] is not ImapFolder folder)
 						throw new ArgumentException ("All folders must be ImapFolders.", nameof (folders));
 
 					this.folders[i] = folder;
@@ -314,22 +331,25 @@ namespace MailKit.Net.Imap {
 				command.Append (Name);
 				command.Append (' ');
 
-				// FIXME: should we verify that each ImapFolder belongs to this ImapEngine?
+				for (int i = 0; i < folders.Length; i++) {
+					if (folders[i].Engine != engine)
+						throw new InvalidOperationException ("One or more folders do not belong to this ImapClient.");
+				}
 
 				if (folders.Length == 1) {
 					command.Append ("%F");
 					args.Add (folders[0]);
 				} else {
-					command.Append ("(");
+					command.Append ('(');
 
 					for (int i = 0; i < folders.Length; i++) {
 						if (i > 0)
-							command.Append (" ");
+							command.Append (' ');
 						command.Append ("%F");
 						args.Add (folders[i]);
 					}
 
-					command.Append (")");
+					command.Append (')');
 				}
 			}
 		}
@@ -351,7 +371,7 @@ namespace MailKit.Net.Imap {
 			/// </remarks>
 			/// <param name="folders">The list of folders to watch for events.</param>
 			/// <exception cref="System.ArgumentNullException">
-			/// <paramref name="folders"/> is <c>null</c>.
+			/// <paramref name="folders"/> is <see langword="null" />.
 			/// </exception>
 			/// <exception cref="System.ArgumentException">
 			/// <para>The list of <paramref name="folders"/> is empty.</para>
@@ -371,7 +391,7 @@ namespace MailKit.Net.Imap {
 			/// </remarks>
 			/// <param name="folders">The list of folders to watch for events.</param>
 			/// <exception cref="System.ArgumentNullException">
-			/// <paramref name="folders"/> is <c>null</c>.
+			/// <paramref name="folders"/> is <see langword="null" />.
 			/// </exception>
 			/// <exception cref="System.ArgumentException">
 			/// <para>The list of <paramref name="folders"/> is empty.</para>
@@ -379,7 +399,7 @@ namespace MailKit.Net.Imap {
 			/// <para>The list of <paramref name="folders"/> contains folders that are not of
 			/// type <see cref="ImapFolder"/>.</para>
 			/// </exception>
-			public Subtree (params IMailFolder[] folders) : base ("SUBTREE", folders)
+			public Subtree (params IMailFolder[] folders) : this ((IList<IMailFolder>) folders)
 			{
 			}
 		}
@@ -435,8 +455,8 @@ namespace MailKit.Net.Imap {
 		/// <para>If the expunged message or messages are in the selected mailbox, the server notifies the client
 		/// using <see cref="IMailFolder.MessageExpunged"/> (or <see cref="IMailFolder.MessagesVanished"/> if
 		/// the <a href="https://tools.ietf.org/html/rfc5162">QRESYNC</a> extension has been enabled via
-		/// <see cref="ImapClient.EnableQuickResync(System.Threading.CancellationToken)"/> or
-		/// <see cref="ImapClient.EnableQuickResyncAsync(System.Threading.CancellationToken)"/>).</para>
+		/// <see cref="ImapClient.Enable(ImapFeatures,System.Threading.CancellationToken)"/> or
+		/// <see cref="ImapClient.EnableAsync(ImapFeatures,System.Threading.CancellationToken)"/>).</para>
 		/// <para>If the expunged message or messages are in another mailbox, the <see cref="IMailFolder.UidNext"/>
 		/// and <see cref="IMailFolder.Count"/> properties will be updated and the appropriate
 		/// <see cref="IMailFolder.UidNextChanged"/> and <see cref="IMailFolder.CountChanged"/> events will be
@@ -463,15 +483,15 @@ namespace MailKit.Net.Imap {
 		/// <para>On the other hand, if the <see cref="FlagChange"/> notification arrives for a message that is not
 		/// located in the currently selected folder, then the events that are emitted will depend on the
 		/// <see cref="ImapCapabilities"/> of the IMAP server.</para>
-		/// <para>If the server supports the <see cref="ImapCapabilities.CondStore"/> capability (or the
-		/// <see cref="ImapCapabilities.QuickResync"/> capability and the client has enabled it via
-		/// <see cref="ImapClient.EnableQuickResync(System.Threading.CancellationToken)"/>), then the
+		/// <para>If the server supports the <see cref="ImapCapability.CondStore"/> capability (or the
+		/// <see cref="ImapCapability.QuickResync"/> capability and the client has enabled it via
+		/// <see cref="ImapClient.Enable(ImapFeatures,System.Threading.CancellationToken)"/>), then the
 		/// <see cref="IMailFolder.HighestModSeqChanged"/> event will be emitted as well as the
 		/// <see cref="IMailFolder.UidValidityChanged"/> event (if the latter has changed). If the number of
 		/// seen messages has changed, then the <see cref="IMailFolder.UnreadChanged"/> event may also be emitted.</para>
-		/// <para>If the server does not support either the <see cref="ImapCapabilities.CondStore"/> capability nor
-		/// the <see cref="ImapCapabilities.QuickResync"/> capability and the client has not enabled the later capability
-		/// via <see cref="ImapClient.EnableQuickResync(System.Threading.CancellationToken)"/>, then the server may choose
+		/// <para>If the server does not support either the <see cref="ImapCapability.CondStore"/> capability nor
+		/// the <see cref="ImapCapability.QuickResync"/> capability and the client has not enabled the later capability
+		/// via <see cref="ImapClient.Enable(ImapFeatures,System.Threading.CancellationToken)"/>, then the server may choose
 		/// only to notify the client of <see cref="IMailFolder.UidValidity"/> changes by emitting the
 		/// <see cref="IMailFolder.UidValidityChanged"/> event.</para>
 		/// </remarks>
@@ -488,15 +508,15 @@ namespace MailKit.Net.Imap {
 		/// <para>On the other hand, if the <see cref="AnnotationChange"/> notification arrives for a message that is not
 		/// located in the currently selected folder, then the events that are emitted will depend on the
 		/// <see cref="ImapCapabilities"/> of the IMAP server.</para>
-		/// <para>If the server supports the <see cref="ImapCapabilities.CondStore"/> capability (or the
-		/// <see cref="ImapCapabilities.QuickResync"/> capability and the client has enabled it via
-		/// <see cref="ImapClient.EnableQuickResync(System.Threading.CancellationToken)"/>), then the
+		/// <para>If the server supports the <see cref="ImapCapability.CondStore"/> capability (or the
+		/// <see cref="ImapCapability.QuickResync"/> capability and the client has enabled it via
+		/// <see cref="ImapClient.Enable(ImapFeatures,System.Threading.CancellationToken)"/>), then the
 		/// <see cref="IMailFolder.HighestModSeqChanged"/> event will be emitted as well as the
 		/// <see cref="IMailFolder.UidValidityChanged"/> event (if the latter has changed). If the number of
 		/// seen messages has changed, then the <see cref="IMailFolder.UnreadChanged"/> event may also be emitted.</para>
-		/// <para>If the server does not support either the <see cref="ImapCapabilities.CondStore"/> capability nor
-		/// the <see cref="ImapCapabilities.QuickResync"/> capability and the client has not enabled the later capability
-		/// via <see cref="ImapClient.EnableQuickResync(System.Threading.CancellationToken)"/>, then the server may choose
+		/// <para>If the server does not support either the <see cref="ImapCapability.CondStore"/> capability nor
+		/// the <see cref="ImapCapability.QuickResync"/> capability and the client has not enabled the later capability
+		/// via <see cref="ImapClient.Enable(ImapFeatures,System.Threading.CancellationToken)"/>, then the server may choose
 		/// only to notify the client of <see cref="IMailFolder.UidValidity"/> changes by emitting the
 		/// <see cref="IMailFolder.UidValidityChanged"/> event.</para>
 		/// </remarks>
@@ -507,10 +527,10 @@ namespace MailKit.Net.Imap {
 		/// </summary>
 		/// <remarks>
 		/// <para>These notifications are sent if an affected mailbox name was created, deleted, or renamed.</para>
-		/// <para>As these notifications are received by the client, the apropriate will be emitted:
+		/// <para>As these notifications are received by the client, the appropriate will be emitted:
 		/// <see cref="MailStore.FolderCreated"/>, <see cref="IMailFolder.Deleted"/>, or
 		/// <see cref="IMailFolder.Renamed"/>, respectively.</para>
-		/// <note type="info">If the server supports <see cref="ImapCapabilities.Acl"/>, granting or revocation of the
+		/// <note type="info">If the server supports <see cref="ImapCapability.Acl"/>, granting or revocation of the
 		/// <see cref="AccessRight.LookupFolder"/> right to the current user on the affected folder will also be
 		/// considered folder creation or deletion, respectively. If a folder is created or deleted, the folder itself
 		/// and its direct parent (whether it is an existing folder or not) are considered to be affected.</note>
@@ -531,7 +551,7 @@ namespace MailKit.Net.Imap {
 		/// An IMAP event notification for changes to folder metadata.
 		/// </summary>
 		/// <remarks>
-		/// <para>Support for this event type is OPTIONAL unless <see cref="ImapCapabilities.Metadata"/> is supported
+		/// <para>Support for this event type is OPTIONAL unless <see cref="ImapCapability.Metadata"/> is supported
 		/// by the server, in which case support for this event type is REQUIRED.</para>
 		/// <para>If the server does support this event, then the <see cref="IMailFolder.MetadataChanged"/> event
 		/// will be emitted whenever metadata changes for any folder included in the <see cref="ImapMailboxFilter"/>.</para>
@@ -542,7 +562,7 @@ namespace MailKit.Net.Imap {
 		/// An IMAP event notification for changes to server metadata.
 		/// </summary>
 		/// <remarks>
-		/// <para>Support for this event type is OPTIONAL unless <see cref="ImapCapabilities.Metadata"/> is supported
+		/// <para>Support for this event type is OPTIONAL unless <see cref="ImapCapability.Metadata"/> is supported
 		/// by the server, in which case support for this event type is REQUIRED.</para>
 		/// <para>If the server does support this event, then the <see cref="IMailStore.MetadataChanged"/> event
 		/// will be emitted whenever metadata changes.</para>
@@ -556,7 +576,7 @@ namespace MailKit.Net.Imap {
 		/// Initializes a new instance of the <see cref="T:MailKit.Net.Imap.ImapEvent"/> class.
 		/// </remarks>
 		/// <param name="name">The name of the IMAP event.</param>
-		/// <param name="isMessageEvent"><c>true</c> if the event is a message event; otherwise, <c>false</c>.</param>
+		/// <param name="isMessageEvent"><see langword="true" /> if the event is a message event; otherwise, <see langword="false" />.</param>
 		internal ImapEvent (string name, bool isMessageEvent)
 		{
 			IsMessageEvent = isMessageEvent;
@@ -569,7 +589,7 @@ namespace MailKit.Net.Imap {
 		/// <remarks>
 		/// Gets whether or not this <see cref="T:MailKit.Net.Imap.ImapEvent"/> is a message event.
 		/// </remarks>
-		/// <value><c>true</c> if is message event; otherwise, <c>false</c>.</value>
+		/// <value><see langword="true" /> if is message event; otherwise, <see langword="false" />.</value>
 		internal bool IsMessageEvent {
 			get; private set;
 		}
@@ -594,7 +614,7 @@ namespace MailKit.Net.Imap {
 		/// <param name="engine">The IMAP engine.</param>
 		/// <param name="command">The IMAP command builder.</param>
 		/// <param name="args">The IMAP command argument builder.</param>
-		/// <param name="isSelectedFilter"><c>true</c> if the event is being registered for a
+		/// <param name="isSelectedFilter"><see langword="true" /> if the event is being registered for a
 		/// <see cref="ImapMailboxFilter.Selected"/> or <see cref="ImapMailboxFilter.SelectedDelayed"/>
 		/// mailbox filter.</param>
 		internal virtual void Format (ImapEngine engine, StringBuilder command, IList<object> args, bool isSelectedFilter)
@@ -612,13 +632,31 @@ namespace MailKit.Net.Imap {
 		/// <see cref="IMailFolder.MessageSummaryFetched"/> event containing the information requested by the client.</para>
 		/// <note type="note">These events will not be emitted for any message created by the client on this particular folder
 		/// as a result of, for example, a call to
-		/// <see cref="IMailFolder.Append(MimeMessage, MessageFlags, System.Threading.CancellationToken, ITransferProgress)"/>
-		/// or <see cref="IMailFolder.CopyTo(IList{UniqueId}, IMailFolder, System.Threading.CancellationToken)"/>.</note>
+		/// <see cref="IMailFolder.Append(IAppendRequest, System.Threading.CancellationToken)"/>
+		/// or <see cref="IMailFolder.CopyTo(IList{UniqueId}, ICopyRequest, System.Threading.CancellationToken)"/>.</note>
 		/// </remarks>
 		public class MessageNew : ImapEvent
 		{
-			readonly MessageSummaryItems items;
-			readonly HashSet<string> headers;
+			readonly IFetchRequest request;
+
+			/// <summary>
+			/// Initializes a new instance of the <see cref="T:MailKit.Net.Imap.ImapEvent.MessageNew"/> class.
+			/// </summary>
+			/// <remarks>
+			/// Initializes a new instance of the <see cref="T:MailKit.Net.Imap.ImapEvent.MessageNew"/> class.
+			/// </remarks>
+			/// <param name="request">The fetch request to use when new messages arrive.</param>
+			/// <exception cref="ArgumentNullException">
+			/// <paramref name="request"/> is <see langword="null" />.
+			/// </exception>
+			public MessageNew (IFetchRequest request) : base ("MessageNew", true)
+			{
+				if (request == null)
+					throw new ArgumentNullException (nameof (request));
+
+				this.request = request;
+			}
+
 
 			/// <summary>
 			/// Initializes a new instance of the <see cref="T:MailKit.Net.Imap.ImapEvent.MessageNew"/> class.
@@ -627,10 +665,8 @@ namespace MailKit.Net.Imap {
 			/// Initializes a new instance of the <see cref="T:MailKit.Net.Imap.ImapEvent.MessageNew"/> class.
 			/// </remarks>
 			/// <param name="items">The message summary items to automatically retrieve for new messages.</param>
-			public MessageNew (MessageSummaryItems items = MessageSummaryItems.None) : base ("MessageNew", true)
+			public MessageNew (MessageSummaryItems items = MessageSummaryItems.None) : this (new FetchRequest (items))
 			{
-				headers = ImapFolder.EmptyHeaderFields;
-				this.items = items;
 			}
 
 			/// <summary>
@@ -641,9 +677,14 @@ namespace MailKit.Net.Imap {
 			/// </remarks>
 			/// <param name="items">The message summary items to automatically retrieve for new messages.</param>
 			/// <param name="headers">Additional message headers to retrieve for new messages.</param>
-			public MessageNew (MessageSummaryItems items, HashSet<HeaderId> headers) : this (items)
+			/// <exception cref="ArgumentNullException">
+			/// <paramref name="headers"/> is <see langword="null" />.
+			/// </exception>
+			/// <exception cref="ArgumentException">
+			/// <para>One or more of the specified <paramref name="headers"/> is invalid.</para>
+			/// </exception>
+			public MessageNew (MessageSummaryItems items, IEnumerable<HeaderId> headers) : this (new FetchRequest (items, headers))
 			{
-				this.headers = ImapUtils.GetUniqueHeaders (headers);
 			}
 
 			/// <summary>
@@ -654,9 +695,14 @@ namespace MailKit.Net.Imap {
 			/// </remarks>
 			/// <param name="items">The message summary items to automatically retrieve for new messages.</param>
 			/// <param name="headers">Additional message headers to retrieve for new messages.</param>
-			public MessageNew (MessageSummaryItems items, HashSet<string> headers) : this (items)
+			/// <exception cref="ArgumentNullException">
+			/// <paramref name="headers"/> is <see langword="null" />.
+			/// </exception>
+			/// <exception cref="ArgumentException">
+			/// <para>One or more of the specified <paramref name="headers"/> is invalid.</para>
+			/// </exception>
+			public MessageNew (MessageSummaryItems items, IEnumerable<string> headers) : this (new FetchRequest (items, headers))
 			{
-				this.headers = ImapUtils.GetUniqueHeaders (headers);
 			}
 
 			/// <summary>
@@ -668,24 +714,21 @@ namespace MailKit.Net.Imap {
 			/// <param name="engine">The IMAP engine.</param>
 			/// <param name="command">The IMAP command builder.</param>
 			/// <param name="args">The IMAP command argument builder.</param>
-			/// <param name="isSelectedFilter"><c>true</c> if the event is being registered for a
+			/// <param name="isSelectedFilter"><see langword="true" /> if the event is being registered for a
 			/// <see cref="ImapMailboxFilter.Selected"/> or <see cref="ImapMailboxFilter.SelectedDelayed"/>
 			/// mailbox filter.</param>
 			internal override void Format (ImapEngine engine, StringBuilder command, IList<object> args, bool isSelectedFilter)
 			{
 				command.Append (Name);
 
-				if (items == MessageSummaryItems.None && headers.Count == 0)
+				if (ImapFolder.IsEmptyFetchRequest (request))
 					return;
 
 				if (!isSelectedFilter)
 					throw new InvalidOperationException ("The MessageNew event cannot have any parameters for mailbox filters other than SELECTED and SELECTED-DELAYED.");
 
-				var xitems = items;
-				bool previewText;
-
-				command.Append (" ");
-				command.Append (ImapFolder.FormatSummaryItems (engine, ref xitems, headers, out previewText, isNotify: true));
+				command.Append (' ');
+				command.Append (ImapFolder.FormatSummaryItems (engine, request, out _, isNotify: true));
 			}
 		}
 	}

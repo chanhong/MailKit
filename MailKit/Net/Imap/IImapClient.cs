@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -41,23 +41,22 @@ namespace MailKit.Net.Imap {
 		/// Get the capabilities supported by the IMAP server.
 		/// </summary>
 		/// <remarks>
-		/// The capabilities will not be known until a successful connection has been made via one of
+		/// <para>The capabilities will not be known until a successful connection has been made via one of
 		/// the <a href="Overload_MailKit_Net_Imap_ImapClient_Connect.htm">Connect</a> methods and may
 		/// change as a side-effect of calling one of the
 		/// <a href="Overload_MailKit_Net_Imap_ImapClient_Authenticate.htm">Authenticate</a>
-		/// methods.
+		/// methods.</para>
+		/// <para>To prevent MailKit from using a particular extension, use
+		/// <see cref="ImapCapabilities.Disable(ImapCapability)"/>.</para>
 		/// </remarks>
 		/// <example>
 		/// <code language="c#" source="Examples\ImapExamples.cs" region="Capabilities"/>
 		/// </example>
 		/// <value>The capabilities.</value>
-		/// <exception cref="System.ArgumentException">
-		/// Capabilities cannot be enabled, they may only be disabled.
-		/// </exception>
-		ImapCapabilities Capabilities { get; set; }
+		ImapCapabilities Capabilities { get; }
 
 		/// <summary>
-		/// Gets the maximum size of a message that can be appended to a folder.
+		/// Get the maximum size of a message that can be appended to a folder.
 		/// </summary>
 		/// <remarks>
 		/// <para>Gets the maximum size of a message, in bytes, that can be appended to a folder.</para>
@@ -67,7 +66,7 @@ namespace MailKit.Net.Imap {
 		uint? AppendLimit { get; }
 
 		/// <summary>
-		/// Gets the internationalization level supported by the IMAP server.
+		/// Get the internationalization level supported by the IMAP server.
 		/// </summary>
 		/// <remarks>
 		/// <para>Gets the internationalization level supported by the IMAP server.</para>
@@ -97,17 +96,19 @@ namespace MailKit.Net.Imap {
 		/// <remarks>
 		/// Gets whether or not the client is currently in the IDLE state.
 		/// </remarks>
-		/// <value><c>true</c> if an IDLE command is active; otherwise, <c>false</c>.</value>
+		/// <value><see langword="true" /> if an IDLE command is active; otherwise, <see langword="false" />.</value>
 		bool IsIdle { get; }
 
+#if NET8_0_OR_GREATER
 		/// <summary>
 		/// Enable compression over the IMAP connection.
 		/// </summary>
 		/// <remarks>
 		/// <para>Enables compression over the IMAP connection.</para>
-		/// <para>If the IMAP server supports the <see cref="ImapCapabilities.Compress"/> extension,
+		/// <para>If the IMAP server supports the <see cref="ImapCapability.Compress"/> extension,
 		/// it is possible at any point after connecting to enable compression to reduce network
 		/// bandwidth usage. Ideally, this method should be called before authenticating.</para>
+		/// <note type="note">This method is only available on .NET 8.0 and later.</note>
 		/// </remarks>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ObjectDisposedException">
@@ -120,7 +121,7 @@ namespace MailKit.Net.Imap {
 		/// Compression must be enabled before a folder has been selected.
 		/// </exception>
 		/// <exception cref="System.NotSupportedException">
-		/// The IMAP server does not support the <see cref="ImapCapabilities.Compress"/> extension.
+		/// The IMAP server does not support the <see cref="ImapCapability.Compress"/> extension.
 		/// </exception>
 		/// <exception cref="System.OperationCanceledException">
 		/// The operation was canceled via the cancellation token.
@@ -134,16 +135,17 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapProtocolException">
 		/// An IMAP protocol error occurred.
 		/// </exception>
-		void Compress (CancellationToken cancellationToken = default (CancellationToken));
+		void Compress (CancellationToken cancellationToken = default);
 
 		/// <summary>
 		/// Asynchronously enable compression over the IMAP connection.
 		/// </summary>
 		/// <remarks>
 		/// <para>Asynchronously enables compression over the IMAP connection.</para>
-		/// <para>If the IMAP server supports the <see cref="ImapCapabilities.Compress"/> extension,
+		/// <para>If the IMAP server supports the <see cref="ImapCapability.Compress"/> extension,
 		/// it is possible at any point after connecting to enable compression to reduce network
 		/// bandwidth usage. Ideally, this method should be called before authenticating.</para>
+		/// <note type="note">This method is only available on .NET 8.0 and later.</note>
 		/// </remarks>
 		/// <returns>An asynchronous task context.</returns>
 		/// <param name="cancellationToken">The cancellation token.</param>
@@ -171,15 +173,27 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapProtocolException">
 		/// An IMAP protocol error occurred.
 		/// </exception>
-		Task CompressAsync (CancellationToken cancellationToken = default (CancellationToken));
+		Task CompressAsync (CancellationToken cancellationToken = default);
+#endif
 
 		/// <summary>
-		/// Enable the UTF8=ACCEPT extension.
+		/// Enable the specified IMAP features.
 		/// </summary>
 		/// <remarks>
-		/// Enables the <a href="https://tools.ietf.org/html/rfc6855">UTF8=ACCEPT</a> extension.
+		/// <para>Enables the specified features using the <a href="https://tools.ietf.org/html/rfc5161">ENABLE</a>
+		/// command. Multiple features may be enabled at once by combining them, e.g.
+		/// <c>ImapFeatures.UTF8Accept | ImapFeatures.IMAP4rev2</c>.</para>
+		/// <para>Features that have already been enabled are not requested again. If all of the requested
+		/// features are already enabled, then no command is sent to the server.</para>
+		/// <para>This method needs to be called immediately after calling one of the
+		/// <a href="Overload_MailKit_Net_Imap_ImapClient_Authenticate.htm">Authenticate</a> methods, before
+		/// opening any folders.</para>
 		/// </remarks>
+		/// <param name="features">The features to enable.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
+		/// <exception cref="System.ArgumentOutOfRangeException">
+		/// <paramref name="features"/> contains unknown feature flags.
+		/// </exception>
 		/// <exception cref="System.ObjectDisposedException">
 		/// The <see cref="ImapClient"/> has been disposed.
 		/// </exception>
@@ -190,10 +204,10 @@ namespace MailKit.Net.Imap {
 		/// The <see cref="ImapClient"/> is not authenticated.
 		/// </exception>
 		/// <exception cref="System.InvalidOperationException">
-		/// UTF8=ACCEPT needs to be enabled before selecting a folder.
+		/// Features need to be enabled before selecting a folder.
 		/// </exception>
 		/// <exception cref="System.NotSupportedException">
-		/// The IMAP server does not support the UTF8=ACCEPT extension.
+		/// The IMAP server does not support one or more of the requested features.
 		/// </exception>
 		/// <exception cref="System.OperationCanceledException">
 		/// The operation was canceled via the cancellation token.
@@ -207,16 +221,27 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapProtocolException">
 		/// An IMAP protocol error occurred.
 		/// </exception>
-		void EnableUTF8 (CancellationToken cancellationToken = default (CancellationToken));
+		void Enable (ImapFeatures features, CancellationToken cancellationToken = default);
 
 		/// <summary>
-		/// Asynchronously enable the UTF8=ACCEPT extension.
+		/// Asynchronously enable the specified IMAP features.
 		/// </summary>
 		/// <remarks>
-		/// Enables the <a href="https://tools.ietf.org/html/rfc6855">UTF8=ACCEPT</a> extension.
+		/// <para>Enables the specified features using the <a href="https://tools.ietf.org/html/rfc5161">ENABLE</a>
+		/// command. Multiple features may be enabled at once by combining them, e.g.
+		/// <c>ImapFeatures.UTF8Accept | ImapFeatures.IMAP4rev2</c>.</para>
+		/// <para>Features that have already been enabled are not requested again. If all of the requested
+		/// features are already enabled, then no command is sent to the server.</para>
+		/// <para>This method needs to be called immediately after calling one of the
+		/// <a href="Overload_MailKit_Net_Imap_ImapClient_Authenticate.htm">Authenticate</a> methods, before
+		/// opening any folders.</para>
 		/// </remarks>
 		/// <returns>An asynchronous task context.</returns>
+		/// <param name="features">The features to enable.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
+		/// <exception cref="System.ArgumentOutOfRangeException">
+		/// <paramref name="features"/> contains unknown feature flags.
+		/// </exception>
 		/// <exception cref="System.ObjectDisposedException">
 		/// The <see cref="ImapClient"/> has been disposed.
 		/// </exception>
@@ -227,10 +252,10 @@ namespace MailKit.Net.Imap {
 		/// The <see cref="ImapClient"/> is not authenticated.
 		/// </exception>
 		/// <exception cref="System.InvalidOperationException">
-		/// UTF8=ACCEPT needs to be enabled before selecting a folder.
+		/// Features need to be enabled before selecting a folder.
 		/// </exception>
 		/// <exception cref="System.NotSupportedException">
-		/// The IMAP server does not support the UTF8=ACCEPT extension.
+		/// The IMAP server does not support one or more of the requested features.
 		/// </exception>
 		/// <exception cref="System.OperationCanceledException">
 		/// The operation was canceled via the cancellation token.
@@ -244,7 +269,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapProtocolException">
 		/// An IMAP protocol error occurred.
 		/// </exception>
-		Task EnableUTF8Async (CancellationToken cancellationToken = default (CancellationToken));
+		Task EnableAsync (ImapFeatures features, CancellationToken cancellationToken = default);
 
 		/// <summary>
 		/// Identify the client implementation to the server and obtain the server implementation details.
@@ -252,14 +277,14 @@ namespace MailKit.Net.Imap {
 		/// <remarks>
 		/// <para>Passes along the client implementation details to the server while also obtaining implementation
 		/// details from the server.</para>
-		/// <para>If the <paramref name="clientImplementation"/> is <c>null</c> or no properties have been set, no
+		/// <para>If the <paramref name="clientImplementation"/> is <see langword="null" /> or no properties have been set, no
 		/// identifying information will be sent to the server.</para>
 		/// <note type="security">
 		/// <para>Security Implications</para>
 		/// <para>This command has the danger of violating the privacy of users if misused. Clients should
 		/// notify users that they send the ID command.</para>
 		/// <para>It is highly desirable that implementations provide a method of disabling ID support, perhaps by
-		/// not calling this method at all, or by passing <c>null</c> as the <paramref name="clientImplementation"/>
+		/// not calling this method at all, or by passing <see langword="null" /> as the <paramref name="clientImplementation"/>
 		/// argument.</para>
 		/// <para>Implementors must exercise extreme care in adding properties to the <paramref name="clientImplementation"/>.
 		/// Some properties, such as a processor ID number, Ethernet address, or other unique (or mostly unique) identifier
@@ -270,7 +295,7 @@ namespace MailKit.Net.Imap {
 		/// <example>
 		/// <code language="c#" source="Examples\ImapExamples.cs" region="Capabilities"/>
 		/// </example>
-		/// <returns>The implementation details of the server if available; otherwise, <c>null</c>.</returns>
+		/// <returns>The implementation details of the server if available; otherwise, <see langword="null" />.</returns>
 		/// <param name="clientImplementation">The client implementation.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ObjectDisposedException">
@@ -294,7 +319,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapProtocolException">
 		/// An IMAP protocol error occurred.
 		/// </exception>
-		ImapImplementation Identify (ImapImplementation clientImplementation, CancellationToken cancellationToken = default (CancellationToken));
+		ImapImplementation Identify (ImapImplementation clientImplementation, CancellationToken cancellationToken = default);
 
 		/// <summary>
 		/// Asynchronously identify the client implementation to the server and obtain the server implementation details.
@@ -302,14 +327,14 @@ namespace MailKit.Net.Imap {
 		/// <remarks>
 		/// <para>Passes along the client implementation details to the server while also obtaining implementation
 		/// details from the server.</para>
-		/// <para>If the <paramref name="clientImplementation"/> is <c>null</c> or no properties have been set, no
+		/// <para>If the <paramref name="clientImplementation"/> is <see langword="null" /> or no properties have been set, no
 		/// identifying information will be sent to the server.</para>
 		/// <note type="security">
 		/// <para>Security Implications</para>
 		/// <para>This command has the danger of violating the privacy of users if misused. Clients should
 		/// notify users that they send the ID command.</para>
 		/// <para>It is highly desirable that implementations provide a method of disabling ID support, perhaps by
-		/// not calling this method at all, or by passing <c>null</c> as the <paramref name="clientImplementation"/>
+		/// not calling this method at all, or by passing <see langword="null" /> as the <paramref name="clientImplementation"/>
 		/// argument.</para>
 		/// <para>Implementors must exercise extreme care in adding properties to the <paramref name="clientImplementation"/>.
 		/// Some properties, such as a processor ID number, Ethernet address, or other unique (or mostly unique) identifier
@@ -317,7 +342,7 @@ namespace MailKit.Net.Imap {
 		/// attackers to exploit security holes in the client.</para>
 		/// </note>
 		/// </remarks>
-		/// <returns>The implementation details of the server if available; otherwise, <c>null</c>.</returns>
+		/// <returns>The implementation details of the server if available; otherwise, <see langword="null" />.</returns>
 		/// <param name="clientImplementation">The client implementation.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ObjectDisposedException">
@@ -341,7 +366,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapProtocolException">
 		/// An IMAP protocol error occurred.
 		/// </exception>
-		Task<ImapImplementation> IdentifyAsync (ImapImplementation clientImplementation, CancellationToken cancellationToken = default (CancellationToken));
+		Task<ImapImplementation> IdentifyAsync (ImapImplementation clientImplementation, CancellationToken cancellationToken = default);
 
 		/// <summary>
 		/// Toggle the <see cref="ImapClient"/> into the IDLE state.
@@ -397,7 +422,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapProtocolException">
 		/// The server responded with an unexpected token.
 		/// </exception>
-		void Idle (CancellationToken doneToken, CancellationToken cancellationToken = default (CancellationToken));
+		void Idle (CancellationToken doneToken, CancellationToken cancellationToken = default);
 
 		/// <summary>
 		/// Asynchronously toggle the <see cref="ImapClient"/> into the IDLE state.
@@ -451,7 +476,27 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapProtocolException">
 		/// The server responded with an unexpected token.
 		/// </exception>
-		Task IdleAsync (CancellationToken doneToken, CancellationToken cancellationToken = default (CancellationToken));
+		Task IdleAsync (CancellationToken doneToken, CancellationToken cancellationToken = default);
+
+		/// <summary>
+		/// Create a new <see cref="ImapIdleSession"/> for waiting on changes to the selected folder.
+		/// </summary>
+		/// <remarks>
+		/// <para>Creates a new <see cref="ImapIdleSession"/> that can be used to wait for changes
+		/// to the selected folder without having to manage the IDLE command manually.</para>
+		/// <para>The idle session automatically re-issues the IDLE command before servers
+		/// time it out, falls back to polling with NOOP when the server does not support the
+		/// IDLE extension, and returns the changes that occurred as a batch.</para>
+		/// </remarks>
+		/// <example>
+		/// <code language="c#" source="Examples\ImapIdleSessionExample.cs"/>
+		/// </example>
+		/// <returns>The idle session.</returns>
+		/// <param name="options">The idle options or <see langword="null" /> to use the default options.</param>
+		/// <exception cref="System.ObjectDisposedException">
+		/// The <see cref="ImapClient"/> has been disposed.
+		/// </exception>
+		ImapIdleSession CreateIdleSession (ImapIdleOptions? options = null);
 
 		/// <summary>
 		/// Request the specified notification events from the IMAP server.
@@ -464,12 +509,12 @@ namespace MailKit.Net.Imap {
 		/// <para>This, combined with <see cref="Idle(CancellationToken, CancellationToken)"/>,
 		/// can be used to get instant notifications for changes to any of the specified folders.</para>
 		/// </remarks>
-		/// <param name="status"><c>true</c> if the server should immediately notify the client of the
-		/// selected folder's status; otherwise, <c>false</c>.</param>
+		/// <param name="status"><see langword="true" /> if the server should immediately notify the client of the
+		/// selected folder's status; otherwise, <see langword="false" />.</param>
 		/// <param name="eventGroups">The specific event groups that the client would like to receive notifications for.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="eventGroups"/> is <c>null</c>.
+		/// <paramref name="eventGroups"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ArgumentException">
 		/// <paramref name="eventGroups"/> is empty.
@@ -501,7 +546,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapProtocolException">
 		/// The server responded with an unexpected token.
 		/// </exception>
-		void Notify (bool status, IList<ImapEventGroup> eventGroups, CancellationToken cancellationToken = default (CancellationToken));
+		void Notify (bool status, IList<ImapEventGroup> eventGroups, CancellationToken cancellationToken = default);
 
 		/// <summary>
 		/// Asynchronously request the specified notification events from the IMAP server.
@@ -515,12 +560,12 @@ namespace MailKit.Net.Imap {
 		/// can be used to get instant notifications for changes to any of the specified folders.</para>
 		/// </remarks>
 		/// <returns>An asynchronous task context.</returns>
-		/// <param name="status"><c>true</c> if the server should immediately notify the client of the
-		/// selected folder's status; otherwise, <c>false</c>.</param>
+		/// <param name="status"><see langword="true" /> if the server should immediately notify the client of the
+		/// selected folder's status; otherwise, <see langword="false" />.</param>
 		/// <param name="eventGroups">The specific event groups that the client would like to receive notifications for.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="eventGroups"/> is <c>null</c>.
+		/// <paramref name="eventGroups"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ArgumentException">
 		/// <paramref name="eventGroups"/> is empty.
@@ -552,7 +597,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapProtocolException">
 		/// The server responded with an unexpected token.
 		/// </exception>
-		Task NotifyAsync (bool status, IList<ImapEventGroup> eventGroups, CancellationToken cancellationToken = default (CancellationToken));
+		Task NotifyAsync (bool status, IList<ImapEventGroup> eventGroups, CancellationToken cancellationToken = default);
 
 		/// <summary>
 		/// Disable any previously requested notification events from the IMAP server.
@@ -587,7 +632,7 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapProtocolException">
 		/// The server responded with an unexpected token.
 		/// </exception>
-		void DisableNotify (CancellationToken cancellationToken = default (CancellationToken));
+		void DisableNotify (CancellationToken cancellationToken = default);
 
 		/// <summary>
 		/// Asynchronously disable any previously requested notification events from the IMAP server.
@@ -623,6 +668,6 @@ namespace MailKit.Net.Imap {
 		/// <exception cref="ImapProtocolException">
 		/// The server responded with an unexpected token.
 		/// </exception>
-		Task DisableNotifyAsync (CancellationToken cancellationToken = default (CancellationToken));
+		Task DisableNotifyAsync (CancellationToken cancellationToken = default);
 	}
 }

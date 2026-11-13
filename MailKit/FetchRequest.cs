@@ -1,0 +1,252 @@
+﻿//
+// FetchRequest.cs
+//
+// Author: Jeffrey Stedfast <jestedfa@microsoft.com>
+//
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+// THE SOFTWARE.
+//
+
+using System;
+using System.Collections.Generic;
+
+using MimeKit;
+
+namespace MailKit {
+	/// <summary>
+	/// A request for fetching various properties of a message.
+	/// </summary>
+	/// <remarks>
+	/// A request for fetching various properties of a message.
+	/// </remarks>
+	public class FetchRequest : IFetchRequest
+	{
+		/// <summary>
+		/// Initializes a new instance of the <see cref="FetchRequest"/> class.
+		/// </summary>
+		/// <remarks>
+		/// Creates a new <see cref="FetchRequest"/>.
+		/// </remarks>
+		public FetchRequest ()
+		{
+		}
+
+		/// <summary>
+		/// Initializes a new instance of the <see cref="FetchRequest"/> class.
+		/// </summary>
+		/// <remarks>
+		/// Creates a new <see cref="FetchRequest"/>.
+		/// </remarks>
+		/// <param name="items">The items to fetch.</param>
+		public FetchRequest (MessageSummaryItems items)
+		{
+			Items = items;
+		}
+
+		/// <summary>
+		/// Initializes a new instance of the <see cref="FetchRequest"/> class.
+		/// </summary>
+		/// <remarks>
+		/// Creates a new <see cref="FetchRequest"/>.
+		/// </remarks>
+		/// <param name="items">The items to fetch.</param>
+		/// <param name="headers">The specific set of headers to fetch.</param>
+		/// <exception cref="ArgumentNullException">
+		/// <paramref name="headers"/> is <see langword="null" />.
+		/// </exception>
+		/// <exception cref="ArgumentException">
+		/// One or more of the specified <paramref name="headers"/> is invalid.
+		/// </exception>
+		public FetchRequest (MessageSummaryItems items, IEnumerable<HeaderId> headers) : this (items)
+		{
+			Headers = (headers is HeaderSet set) ? set : new HeaderSet (headers);
+		}
+
+		/// <summary>
+		/// Initializes a new instance of the <see cref="FetchRequest"/> class.
+		/// </summary>
+		/// <remarks>
+		/// Creates a new <see cref="FetchRequest"/>.
+		/// </remarks>
+		/// <param name="items">The items to fetch.</param>
+		/// <param name="headers">The specific set of headers to fetch.</param>
+		/// <exception cref="ArgumentNullException">
+		/// <paramref name="headers"/> is <see langword="null" />.
+		/// </exception>
+		/// <exception cref="ArgumentException">
+		/// One or more of the specified <paramref name="headers"/> is invalid.
+		/// </exception>
+		public FetchRequest (MessageSummaryItems items, IEnumerable<string> headers) : this (items)
+		{
+			Headers = (headers is HeaderSet set) ? set : new HeaderSet (headers);
+		}
+
+		/// <summary>
+		/// Get or set the mod-sequence value that indicates the last known state of the messages being requested.
+		/// </summary>
+		/// <remarks>
+		/// <para>Gets or sets the mod-sequence value that indicates the last known state of the messages being requested.</para>
+		/// <para>If this property is set, the results returned by <a href="Overload_MailKit_IMailFolder_Fetch.htm">Fetch</a>
+		/// or <a href="Overload_MailKit_IMailFolder_FetchAsync.htm">FetchAsync</a> will only include the message summaries which
+		/// have a higher mod-sequence value than the one specified.</para>
+		/// <para>If the mail store supports quick resynchronization and the application has enabled this feature via
+		/// <see cref="MailKit.Net.Imap.ImapClient.Enable(MailKit.Net.Imap.ImapFeatures,System.Threading.CancellationToken)"/>, then the Fetch or FetchAsync method
+		/// will emit <see cref="IMailFolder.MessagesVanished"/> events for messages that were expunged from the folder after
+		/// the change specified by the mod-sequence value.</para>
+		/// <para>It should be noted that if another client has modified any message in the folder, the mail service may choose
+		/// to return information that was not explicitly requested. It is therefore important to be prepared to handle both
+		/// additional fields on a <see cref="IMessageSummary"/> for messages that were requested as well as summaries for
+		/// messages that were not requested at all.</para>
+		/// </remarks>
+		/// <value>The mod-sequence value that indicates the last known state of the messages being requested.</value>
+		public ulong? ChangedSince { get; set; }
+
+		/// <summary>
+		/// Get or set the partial range of messages to fetch.
+		/// </summary>
+		/// <remarks>
+		/// <para>Gets or sets the partial range of messages to fetch.</para>
+		/// <para>If this property is set, the results returned by
+		/// <see cref="IMailFolder.Fetch(System.Collections.Generic.IList&lt;UniqueId&gt;, IFetchRequest, System.Threading.CancellationToken)"/>
+		/// or <see cref="IMailFolder.FetchAsync(System.Collections.Generic.IList&lt;UniqueId&gt;, IFetchRequest, System.Threading.CancellationToken)"/>
+		/// will only include the message summaries for the specified range of messages. Positive positions within the range are
+		/// relative to the oldest message in the set of unique identifiers while negative positions are relative to the newest
+		/// message. For example, a range of <c>-1:-100</c> will fetch the requested items for the newest 100 messages in the set.</para>
+		/// <para>This property is useful when the set of unique identifiers references an unknown number of messages, such as a
+		/// <see cref="UniqueIdRange"/> that spans unknown or expunged unique identifiers.</para>
+		/// <note type="note">This feature is only supported by IMAP servers that advertise support for the
+		/// <a href="https://tools.ietf.org/html/rfc9394">PARTIAL</a> extension and can only be used when fetching
+		/// messages by unique identifiers.</note>
+		/// </remarks>
+		/// <value>The partial range of messages to fetch.</value>
+		public PartialRange? PartialRange { get; set; }
+
+		/// <summary>
+		/// Get or set the message summary items to fetch.
+		/// </summary>
+		/// <remarks>
+		/// Gets or sets the message summary items to fetch.
+		/// </remarks>
+		/// <value>The message summary items.</value>
+		public MessageSummaryItems Items { get; set; }
+
+		/// <summary>
+		/// Get the set of headers that will be fetched.
+		/// </summary>
+		/// <remarks>
+		/// Gets the set of headers that will be fetched.
+		/// </remarks>
+		/// <value>The set of headers to be fetched.</value>
+		public HeaderSet? Headers { get; set; }
+
+#if ENABLE_LAZY_PREVIEW_API
+		/// <summary>
+		/// Get or set options to use when fetching <see cref="MessageSummaryItems.PreviewText"/>.
+		/// </summary>
+		/// <remarks>
+		/// <para>Gets or sets options to use when fetching <see cref="MessageSummaryItems.PreviewText"/>.</para>
+		/// <note type="note">These options are only used if <see cref="Items"/> includes the
+		/// <see cref="MessageSummaryItems.PreviewText"/> value.</note>
+		/// </remarks>
+		public PreviewOptions PreviewOptions { get; set; }
+#endif
+
+		/// <summary>
+		/// Called when a subset of the messages is about to be fetched.
+		/// </summary>
+		/// <remarks>
+		/// <para>Called immediately before a command that will fetch the specified subset of messages is sent
+		/// to the server. A single <a href="Overload_MailKit_IMailFolder_Fetch.htm">Fetch</a> operation may be split
+		/// into multiple commands, in which case this method will be called once for each subset of the messages.</para>
+		/// <para>The default implementation does nothing.</para>
+		/// </remarks>
+		/// <param name="folder">The folder that the messages belong to.</param>
+		/// <param name="uids">The UIDs of the messages that are about to be fetched.</param>
+		public virtual void OnStarted (IMailFolder folder, IList<UniqueId> uids)
+		{
+		}
+
+		/// <summary>
+		/// Called when a subset of the messages is about to be fetched.
+		/// </summary>
+		/// <remarks>
+		/// <para>Called immediately before a command that will fetch the specified subset of messages is sent
+		/// to the server.</para>
+		/// <para>The default implementation does nothing.</para>
+		/// </remarks>
+		/// <param name="folder">The folder that the messages belong to.</param>
+		/// <param name="indexes">The indexes of the messages that are about to be fetched.</param>
+		public virtual void OnStarted (IMailFolder folder, IList<int> indexes)
+		{
+		}
+
+		/// <summary>
+		/// Called when the server has successfully fetched a subset of the messages.
+		/// </summary>
+		/// <remarks>
+		/// <para>Called after the server has successfully completed the command that fetched the specified subset of messages.</para>
+		/// <para>If <see cref="MessageSummaryItems.PreviewText"/> was requested, then the preview text for some messages may
+		/// be fetched using additional commands after this method has been called.</para>
+		/// <para>The default implementation does nothing.</para>
+		/// </remarks>
+		/// <param name="folder">The folder that the messages belong to.</param>
+		/// <param name="uids">The UIDs of the messages that were requested.</param>
+		public virtual void OnCompleted (IMailFolder folder, IList<UniqueId> uids)
+		{
+		}
+
+		/// <summary>
+		/// Called when the server has successfully fetched a subset of the messages.
+		/// </summary>
+		/// <remarks>
+		/// <para>Called after the server has successfully completed the command that fetched the specified subset of messages.</para>
+		/// <para>If <see cref="MessageSummaryItems.PreviewText"/> was requested, then the preview text for some messages may
+		/// be fetched using additional commands after this method has been called.</para>
+		/// <para>The default implementation does nothing.</para>
+		/// </remarks>
+		/// <param name="folder">The folder that the messages belong to.</param>
+		/// <param name="indexes">The indexes of the messages that were requested.</param>
+		public virtual void OnCompleted (IMailFolder folder, IList<int> indexes)
+		{
+		}
+
+		/// <summary>
+		/// Called when the server reports the progress of a command.
+		/// </summary>
+		/// <remarks>
+		/// <para>Called when the server reports the progress of the command that is fetching the subset of messages
+		/// most recently passed to <c>OnStarted</c>. Progress is reported per command, so if the operation is split
+		/// into multiple commands, the progress will start over for each subset of messages.</para>
+		/// <para>The values are reported as-is from the server. The <paramref name="processed"/> value may decrease or the
+		/// <paramref name="total"/> may change if the server discovers additional work. If the server is unable to count
+		/// items, then it may report progress as a percentage, in which case <paramref name="total"/> will be <c>100</c>.
+		/// If both values are <see langword="null" />, then the server has only indicated that the command is still in progress.</para>
+		/// <note type="note">Progress is only reported by IMAP servers that support the
+		/// <a href="https://tools.ietf.org/html/rfc9585">INPROGRESS</a> extension.</note>
+		/// <para>The default implementation does nothing.</para>
+		/// </remarks>
+		/// <param name="folder">The folder that the messages belong to.</param>
+		/// <param name="processed">The number of items processed so far, or <see langword="null" /> if unknown.</param>
+		/// <param name="total">The total number of items to process, or <see langword="null" /> if unknown.</param>
+		public virtual void OnProgress (IMailFolder folder, long? processed, long? total)
+		{
+		}
+	}
+}

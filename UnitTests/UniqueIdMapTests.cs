@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -24,11 +24,7 @@
 // THE SOFTWARE.
 //
 
-using System;
 using System.Collections;
-using System.Collections.Generic;
-
-using NUnit.Framework;
 
 using MailKit;
 
@@ -50,30 +46,28 @@ namespace UnitTests {
 			int i = 0;
 			uint u;
 
-			Assert.AreEqual (7, map.Count, "Count");
+			Assert.That (map, Has.Count.EqualTo (7), "Count");
 
 			for (u = 1; u < 8; u++)
-				Assert.IsTrue (map.ContainsKey (new UniqueId (1436832101, u)), "ContainsKey {0}", u);
-			Assert.IsFalse (map.ContainsKey (new UniqueId (1436832101, u)), "ContainsKey {0}", u);
+				Assert.That (map.ContainsKey (new UniqueId (1436832101, u)), Is.True, $"ContainsKey {u}");
+			Assert.That (map.ContainsKey (new UniqueId (1436832101, u)), Is.False, $"ContainsKey {u}");
 
 			foreach (var key in map.Keys) {
-				UniqueId value;
-
-				Assert.AreEqual (map.Source[i], key, "Source[{0}] vs Key[{0}]", i);
-				Assert.IsTrue (map.TryGetValue (key, out value), "TryGetValue ({0})", key);
-				Assert.AreEqual (map.Destination[i], value, "Destination[{0}] vs value", i);
+				Assert.That (key, Is.EqualTo (map.Source[i]), $"Source[{i}] vs Key[{i}]");
+				Assert.That (map.TryGetValue (key, out var value), Is.True, $"TryGetValue ({key})");
+				Assert.That (value, Is.EqualTo (map.Destination[i]), $"Destination[{i}] vs value");
 				i++;
 			}
 
 			foreach (var kvp in map)
-				Assert.AreEqual (kvp.Value.Id, kvp.Key.Id + 10, "KeyValuePair {0} -> {1}", kvp.Key, kvp.Value);
+				Assert.That (kvp.Key.Id + 10, Is.EqualTo (kvp.Value.Id), $"KeyValuePair {kvp.Key} -> {kvp.Value}");
 
 			foreach (KeyValuePair<UniqueId,UniqueId> kvp in (IEnumerable) map)
-				Assert.AreEqual (kvp.Value.Id, kvp.Key.Id + 10, "Generic KeyValuePair {0} -> {1}", kvp.Key, kvp.Value);
+				Assert.That (kvp.Key.Id + 10, Is.EqualTo (kvp.Value.Id), $"Generic KeyValuePair {kvp.Key} -> {kvp.Value}");
 
 			Assert.Throws<ArgumentOutOfRangeException> (() => { var x = map[new UniqueId (27)]; });
 			foreach (var uid in map.Source)
-				Assert.AreEqual (uid.Id + 10, map[uid].Id, "map[{0}]", uid);
+				Assert.That (map[uid].Id, Is.EqualTo (uid.Id + 10), $"map[{uid}]");
 		}
 	}
 }

@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -24,12 +24,6 @@
 // THE SOFTWARE.
 //
 
-using System;
-using System.IO;
-using System.Runtime.Serialization.Formatters.Binary;
-
-using NUnit.Framework;
-
 using MailKit.Security;
 
 namespace UnitTests.Security {
@@ -40,23 +34,6 @@ namespace UnitTests.Security {
 		public void TestArgumentExceptions ()
 		{
 			Assert.Throws<ArgumentNullException> (() => new SaslException (null, SaslErrorCode.MissingChallenge, "message"));
-		}
-
-		[Test]
-		public void TestSerialization ()
-		{
-			var expected = new SaslException ("CRAM-MD5", SaslErrorCode.InvalidChallenge, "Bad boys, bad boys. Whatcha gonna do?");
-
-			using (var stream = new MemoryStream ()) {
-				var formatter = new BinaryFormatter ();
-				formatter.Serialize (stream, expected);
-				stream.Position = 0;
-
-				var ex = (SaslException) formatter.Deserialize (stream);
-				Assert.AreEqual (expected.Message, ex.Message, "Unexpected Message.");
-				Assert.AreEqual (expected.Mechanism, ex.Mechanism, "Unexpected Mechanism.");
-				Assert.AreEqual (expected.ErrorCode, ex.ErrorCode, "Unexpected ErrorCode.");
-			}
 		}
 	}
 }

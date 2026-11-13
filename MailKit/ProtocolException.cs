@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -25,10 +25,6 @@
 //
 
 using System;
-#if SERIALIZABLE
-using System.Security;
-using System.Runtime.Serialization;
-#endif
 
 namespace MailKit {
 	/// <summary>
@@ -41,25 +37,38 @@ namespace MailKit {
 	/// or not the client is still connected using the <see cref="IMailService.IsConnected"/>
 	/// property when this exception is thrown.</para>
 	/// </remarks>
-#if SERIALIZABLE
-	[Serializable]
-#endif
 	public abstract class ProtocolException : Exception
 	{
-#if SERIALIZABLE
+		const string ProtocolLogHelpLink = "https://github.com/jstedfast/MailKit/blob/master/FAQ.md#protocol-log";
+
 		/// <summary>
 		/// Initializes a new instance of the <see cref="MailKit.ProtocolException"/> class.
 		/// </summary>
 		/// <remarks>
 		/// Creates a new <see cref="ProtocolException"/>.
 		/// </remarks>
-		/// <param name="info">The serialization info.</param>
-		/// <param name="context">The streaming context.</param>
-		[SecuritySafeCritical]
-		protected ProtocolException (SerializationInfo info, StreamingContext context) : base (info, context)
+		/// <param name="message">The error message.</param>
+		/// <param name="errorType">The type of protocol error.</param>
+		/// <param name="innerException">An inner exception.</param>
+		protected ProtocolException (string message, ProtocolErrorType errorType, Exception innerException) : base (message, innerException)
 		{
+			HelpLink = ProtocolLogHelpLink;
+			ErrorType = errorType;
 		}
-#endif
+
+		/// <summary>
+		/// Initializes a new instance of the <see cref="MailKit.ProtocolException"/> class.
+		/// </summary>
+		/// <remarks>
+		/// Creates a new <see cref="ProtocolException"/>.
+		/// </remarks>
+		/// <param name="message">The error message.</param>
+		/// <param name="errorType">The type of protocol error.</param>
+		protected ProtocolException (string message, ProtocolErrorType errorType) : base (message)
+		{
+			HelpLink = ProtocolLogHelpLink;
+			ErrorType = errorType;
+		}
 
 		/// <summary>
 		/// Initializes a new instance of the <see cref="MailKit.ProtocolException"/> class.
@@ -71,7 +80,7 @@ namespace MailKit {
 		/// <param name="innerException">An inner exception.</param>
 		protected ProtocolException (string message, Exception innerException) : base (message, innerException)
 		{
-			HelpLink = "https://github.com/jstedfast/MailKit/blob/master/FAQ.md#ProtocolLog";
+			HelpLink = ProtocolLogHelpLink;
 		}
 
 		/// <summary>
@@ -83,7 +92,7 @@ namespace MailKit {
 		/// <param name="message">The error message.</param>
 		protected ProtocolException (string message) : base (message)
 		{
-			HelpLink = "https://github.com/jstedfast/MailKit/blob/master/FAQ.md#ProtocolLog";
+			HelpLink = ProtocolLogHelpLink;
 		}
 
 		/// <summary>
@@ -94,7 +103,19 @@ namespace MailKit {
 		/// </remarks>
 		protected ProtocolException ()
 		{
-			HelpLink = "https://github.com/jstedfast/MailKit/blob/master/FAQ.md#ProtocolLog";
+			HelpLink = ProtocolLogHelpLink;
 		}
+
+		/// <summary>
+		/// Get the type of protocol error.
+		/// </summary>
+		/// <remarks>
+		/// Gets the type of protocol error, if known.
+		/// </remarks>
+		/// <value>The type of protocol error.</value>
+		public ProtocolErrorType ErrorType {
+			get; private set;
+		}
+
 	}
 }

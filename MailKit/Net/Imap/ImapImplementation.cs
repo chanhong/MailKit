@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -24,6 +24,7 @@
 // THE SOFTWARE.
 //
 
+using System;
 using System.Collections.Generic;
 
 namespace MailKit.Net.Imap {
@@ -50,14 +51,12 @@ namespace MailKit.Net.Imap {
 		/// </example>
 		public ImapImplementation ()
 		{
-			Properties = new Dictionary<string, string> ();
+			Properties = new Dictionary<string, string?> (StringComparer.OrdinalIgnoreCase);
 		}
 
-		string GetProperty (string property)
+		string? GetProperty (string property)
 		{
-			string value;
-
-			Properties.TryGetValue (property, out value);
+			Properties.TryGetValue (property, out var value);
 
 			return value;
 		}
@@ -72,7 +71,7 @@ namespace MailKit.Net.Imap {
 		/// <code language="c#" source="Examples\ImapExamples.cs" region="Capabilities"/>
 		/// </example>
 		/// <value>The properties.</value>
-		public Dictionary<string, string> Properties {
+		public Dictionary<string, string?> Properties {
 			get; private set;
 		}
 
@@ -86,7 +85,7 @@ namespace MailKit.Net.Imap {
 		/// <code language="c#" source="Examples\ImapExamples.cs" region="Capabilities"/>
 		/// </example>
 		/// <value>The program name.</value>
-		public string Name {
+		public string? Name {
 			get { return GetProperty ("name"); }
 			set { Properties["name"] = value; }
 		}
@@ -101,7 +100,7 @@ namespace MailKit.Net.Imap {
 		/// <code language="c#" source="Examples\ImapExamples.cs" region="Capabilities"/>
 		/// </example>
 		/// <value>The program version.</value>
-		public string Version {
+		public string? Version {
 			get { return GetProperty ("version"); }
 			set { Properties["version"] = value; }
 		}
@@ -113,7 +112,7 @@ namespace MailKit.Net.Imap {
 		/// Gets or sets the name of the operating system.
 		/// </remarks>
 		/// <value>The name of the operation system.</value>
-		public string OS {
+		public string? OS {
 			get { return GetProperty ("os"); }
 			set { Properties["os"] = value; }
 		}
@@ -125,7 +124,7 @@ namespace MailKit.Net.Imap {
 		/// Gets or sets the version of the operating system.
 		/// </remarks>
 		/// <value>The version of the operation system.</value>
-		public string OSVersion {
+		public string? OSVersion {
 			get { return GetProperty ("os-version"); }
 			set { Properties["os-version"] = value; }
 		}
@@ -137,7 +136,7 @@ namespace MailKit.Net.Imap {
 		/// Gets or sets the name of the vendor.
 		/// </remarks>
 		/// <value>The name of the vendor.</value>
-		public string Vendor {
+		public string? Vendor {
 			get { return GetProperty ("vendor"); }
 			set { Properties["vendor"] = value; }
 		}
@@ -149,7 +148,7 @@ namespace MailKit.Net.Imap {
 		/// Gets or sets the support URL.
 		/// </remarks>
 		/// <value>The support URL.</value>
-		public string SupportUrl {
+		public string? SupportUrl {
 			get { return GetProperty ("support-url"); }
 			set { Properties["support-url"] = value; }
 		}
@@ -161,7 +160,7 @@ namespace MailKit.Net.Imap {
 		/// Gets or sets the postal address of the vendor.
 		/// </remarks>
 		/// <value>The postal address.</value>
-		public string Address {
+		public string? Address {
 			get { return GetProperty ("address"); }
 			set { Properties["address"] = value; }
 		}
@@ -173,7 +172,7 @@ namespace MailKit.Net.Imap {
 		/// Gets or sets the release date of the program.
 		/// </remarks>
 		/// <value>The release date.</value>
-		public string ReleaseDate {
+		public string? ReleaseDate {
 			get { return GetProperty ("date"); }
 			set { Properties["date"] = value; }
 		}
@@ -185,7 +184,7 @@ namespace MailKit.Net.Imap {
 		/// Gets or sets the command used to start the program.
 		/// </remarks>
 		/// <value>The command used to start the program.</value>
-		public string Command {
+		public string? Command {
 			get { return GetProperty ("command"); }
 			set { Properties["command"] = value; }
 		}
@@ -197,7 +196,7 @@ namespace MailKit.Net.Imap {
 		/// Gets or sets the command-line arguments used to start the program.
 		/// </remarks>
 		/// <value>The command-line arguments used to start the program.</value>
-		public string Arguments {
+		public string? Arguments {
 			get { return GetProperty ("arguments"); }
 			set { Properties["arguments"] = value; }
 		}
@@ -209,7 +208,7 @@ namespace MailKit.Net.Imap {
 		/// Get or set the environment variables available to the program.
 		/// </remarks>
 		/// <value>The environment variables.</value>
-		public string Environment {
+		public string? Environment {
 			get { return GetProperty ("environment"); }
 			set { Properties["environment"] = value; }
 		}

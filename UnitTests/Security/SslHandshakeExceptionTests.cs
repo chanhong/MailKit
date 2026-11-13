@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -24,135 +24,38 @@
 // THE SOFTWARE.
 //
 
-using System;
-using System.IO;
 using System.Net;
 using System.Text;
-using System.Threading;
 using System.Net.Sockets;
 using System.Net.Security;
-using System.Threading.Tasks;
-using System.Collections.Generic;
+using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
-using System.Runtime.Serialization.Formatters.Binary;
-
-using NUnit.Framework;
 
 using MailKit;
 using MailKit.Security;
-
-using AuthenticationException = System.Security.Authentication.AuthenticationException;
 
 namespace UnitTests.Security {
 	[TestFixture]
 	public class SslHandshakeExceptionTests
 	{
-		const string HelpLink = "https://github.com/jstedfast/MailKit/blob/master/FAQ.md#SslHandshakeException";
+		const string HelpLink = "https://github.com/jstedfast/MailKit/blob/master/FAQ.md#ssl-handshake-exception";
 
 		[Test]
-		public void TestSerialization ()
+		public void TestHelpLink ()
 		{
-			var expected = new SslHandshakeException ("Bad boys, bad boys. Whatcha gonna do?", new IOException ("I/O Error."));
+			SslCertificateValidationInfo info = null;
 
-			Assert.AreEqual (HelpLink, expected.HelpLink, "Unexpected HelpLink.");
+			Assert.That (new SslHandshakeException ("message", new IOException ("I/O Error.")).HelpLink, Is.EqualTo (HelpLink), "(string, Exception)");
+			Assert.That (new SslHandshakeException ("message").HelpLink, Is.EqualTo (HelpLink), "(string)");
+			Assert.That (new SslHandshakeException ().HelpLink, Is.EqualTo (HelpLink), "()");
 
-			using (var stream = new MemoryStream ()) {
-				var formatter = new BinaryFormatter ();
-				formatter.Serialize (stream, expected);
-				stream.Position = 0;
-
-				var ex = (SslHandshakeException) formatter.Deserialize (stream);
-				Assert.AreEqual (expected.Message, ex.Message, "Unexpected Message.");
-				Assert.AreEqual (expected.HelpLink, ex.HelpLink, "Unexpected HelpLink.");
-			}
-
-			expected = new SslHandshakeException ("Bad boys, bad boys. Whatcha gonna do?");
-
-			Assert.AreEqual (HelpLink, expected.HelpLink, "Unexpected HelpLink.");
-
-			using (var stream = new MemoryStream ()) {
-				var formatter = new BinaryFormatter ();
-				formatter.Serialize (stream, expected);
-				stream.Position = 0;
-
-				var ex = (SslHandshakeException) formatter.Deserialize (stream);
-				Assert.AreEqual (expected.Message, ex.Message, "Unexpected Message.");
-				Assert.AreEqual (expected.HelpLink, ex.HelpLink, "Unexpected HelpLink.");
-			}
-
-			expected = new SslHandshakeException ();
-
-			Assert.AreEqual (HelpLink, expected.HelpLink, "Unexpected HelpLink.");
-
-			using (var stream = new MemoryStream ()) {
-				var formatter = new BinaryFormatter ();
-				formatter.Serialize (stream, expected);
-				stream.Position = 0;
-
-				var ex = (SslHandshakeException) formatter.Deserialize (stream);
-				Assert.AreEqual (expected.Message, ex.Message, "Unexpected Message.");
-				Assert.AreEqual (expected.HelpLink, ex.HelpLink, "Unexpected HelpLink.");
-			}
-
-			expected = SslHandshakeException.Create (null, new AggregateException ("Aggregate errors.", new IOException (), new IOException ()), false, "IMAP", "localhost", 993, 993, 143);
-
-			Assert.AreEqual (HelpLink, expected.HelpLink, "Unexpected HelpLink.");
-
-			using (var stream = new MemoryStream ()) {
-				var formatter = new BinaryFormatter ();
-				formatter.Serialize (stream, expected);
-				stream.Position = 0;
-
-				var ex = (SslHandshakeException) formatter.Deserialize (stream);
-				Assert.AreEqual (expected.Message, ex.Message, "Unexpected Message.");
-				Assert.AreEqual (expected.HelpLink, ex.HelpLink, "Unexpected HelpLink.");
-			}
-
-			expected = SslHandshakeException.Create (null, new AggregateException ("Aggregate errors.", new IOException (), new IOException ()), true, "IMAP", "localhost", 143, 993, 143);
-
-			Assert.AreEqual (HelpLink, expected.HelpLink, "Unexpected HelpLink.");
-
-			using (var stream = new MemoryStream ()) {
-				var formatter = new BinaryFormatter ();
-				formatter.Serialize (stream, expected);
-				stream.Position = 0;
-
-				var ex = (SslHandshakeException) formatter.Deserialize (stream);
-				Assert.AreEqual (expected.Message, ex.Message, "Unexpected Message.");
-				Assert.AreEqual (expected.HelpLink, ex.HelpLink, "Unexpected HelpLink.");
-			}
-
-			expected = SslHandshakeException.Create (null, new AggregateException ("Aggregate errors.", new IOException ()), false, "IMAP", "localhost", 993, 993, 143);
-
-			Assert.AreEqual (HelpLink, expected.HelpLink, "Unexpected HelpLink.");
-
-			using (var stream = new MemoryStream ()) {
-				var formatter = new BinaryFormatter ();
-				formatter.Serialize (stream, expected);
-				stream.Position = 0;
-
-				var ex = (SslHandshakeException) formatter.Deserialize (stream);
-				Assert.AreEqual (expected.Message, ex.Message, "Unexpected Message.");
-				Assert.AreEqual (expected.HelpLink, ex.HelpLink, "Unexpected HelpLink.");
-			}
-
-			expected = SslHandshakeException.Create (null, new AggregateException ("Aggregate errors.", new IOException ()), true, "IMAP", "localhost", 143, 993, 143);
-
-			Assert.AreEqual (HelpLink, expected.HelpLink, "Unexpected HelpLink.");
-
-			using (var stream = new MemoryStream ()) {
-				var formatter = new BinaryFormatter ();
-				formatter.Serialize (stream, expected);
-				stream.Position = 0;
-
-				var ex = (SslHandshakeException) formatter.Deserialize (stream);
-				Assert.AreEqual (expected.Message, ex.Message, "Unexpected Message.");
-				Assert.AreEqual (expected.HelpLink, ex.HelpLink, "Unexpected HelpLink.");
-			}
+			var ex = SslHandshakeException.Create (ref info, new AggregateException ("Aggregate errors.", new IOException (), new IOException ()), false, "IMAP", "localhost", 993, 993, 143);
+			Assert.That (ex.HelpLink, Is.EqualTo (HelpLink), "Create");
 		}
 
 		class FakeClient : MailService
 		{
+			SslCertificateValidationInfo sslValidationInfo;
 			int timeout = 2 * 60 * 1000;
 			string hostName;
 
@@ -172,6 +75,24 @@ namespace UnitTests.Security {
 
 			public override bool IsSigned => throw new NotImplementedException ();
 
+			public override SslProtocols SslProtocol => throw new NotImplementedException ();
+
+			public override CipherAlgorithmType? SslCipherAlgorithm => throw new NotImplementedException ();
+
+			public override int? SslCipherStrength => throw new NotImplementedException ();
+
+#if NET5_0_OR_GREATER
+			public override TlsCipherSuite? SslCipherSuite => throw new NotImplementedException ();
+#endif
+
+			public override HashAlgorithmType? SslHashAlgorithm => throw new NotImplementedException ();
+
+			public override int? SslHashStrength => throw new NotImplementedException ();
+
+			public override ExchangeAlgorithmType? SslKeyExchangeAlgorithm => throw new NotImplementedException ();
+
+			public override int? SslKeyExchangeStrength => throw new NotImplementedException ();
+
 			public override bool IsAuthenticated => throw new NotImplementedException ();
 
 			public override int Timeout {
@@ -181,124 +102,305 @@ namespace UnitTests.Security {
 
 			protected override string Protocol => throw new NotImplementedException ();
 
-			public override void Authenticate (Encoding encoding, ICredentials credentials, CancellationToken cancellationToken = default (CancellationToken))
+			public override void Authenticate (Encoding encoding, ICredentials credentials, CancellationToken cancellationToken = default)
 			{
 				throw new NotImplementedException ();
 			}
 
-			public override void Authenticate (SaslMechanism mechanism, CancellationToken cancellationToken = default (CancellationToken))
+			public override void Authenticate (SaslMechanism mechanism, CancellationToken cancellationToken = default)
 			{
 				throw new NotImplementedException ();
 			}
 
-			public override Task AuthenticateAsync (Encoding encoding, ICredentials credentials, CancellationToken cancellationToken = default (CancellationToken))
+			public override Task AuthenticateAsync (Encoding encoding, ICredentials credentials, CancellationToken cancellationToken = default)
 			{
 				throw new NotImplementedException ();
 			}
 
-			public override Task AuthenticateAsync (SaslMechanism mechanism, CancellationToken cancellationToken = default (CancellationToken))
+			public override Task AuthenticateAsync (SaslMechanism mechanism, CancellationToken cancellationToken = default)
 			{
 				throw new NotImplementedException ();
 			}
 
 			bool ValidateRemoteCertificate (object sender, X509Certificate certificate, X509Chain chain, SslPolicyErrors sslPolicyErrors)
 			{
-				if (ServerCertificateValidationCallback != null)
-					return ServerCertificateValidationCallback (hostName, certificate, chain, sslPolicyErrors);
+				bool valid;
 
-				return DefaultServerCertificateValidationCallback (hostName, certificate, chain, sslPolicyErrors);
+				sslValidationInfo?.Dispose ();
+				sslValidationInfo = null;
+
+				if (ServerCertificateValidationCallback != null) {
+					valid = ServerCertificateValidationCallback (hostName, certificate, chain, sslPolicyErrors);
+				} else if (ServicePointManager.ServerCertificateValidationCallback != null) {
+					valid = ServicePointManager.ServerCertificateValidationCallback (hostName, certificate, chain, sslPolicyErrors);
+				} else {
+					valid = DefaultServerCertificateValidationCallback (hostName, certificate, chain, sslPolicyErrors);
+				}
+
+				if (!valid) {
+					// Note: The SslHandshakeException.Create() method will nullify this once it's done using it.
+					sslValidationInfo = new SslCertificateValidationInfo (hostName, certificate, chain, sslPolicyErrors);
+				}
+
+				return valid;
 			}
 
-			async Task ConnectAsync (string host, int port, SecureSocketOptions options, bool doAsync, CancellationToken cancellationToken)
+			public override void Connect (string host, int port = 0, SecureSocketOptions options = SecureSocketOptions.Auto, CancellationToken cancellationToken = default)
 			{
-				using (var socket = await ConnectSocket (host, port, doAsync, cancellationToken).ConfigureAwait (false)) {
+				using (var stream = ConnectNetwork (host, port, cancellationToken)) {
 					hostName = host;
 
-					var ssl = new SslStream (new NetworkStream (socket, false), false, ValidateRemoteCertificate);
+					var ssl = new SslStream (stream, false, ValidateRemoteCertificate);
 
 					try {
-						if (doAsync) {
-							await ssl.AuthenticateAsClientAsync (host, ClientCertificates, SslProtocols, CheckCertificateRevocation).ConfigureAwait (false);
-						} else {
-							ssl.AuthenticateAsClient (host, ClientCertificates, SslProtocols, CheckCertificateRevocation);
-						}
+						ssl.AuthenticateAsClient (host, ClientCertificates, SslProtocols, CheckCertificateRevocation);
 					} catch (Exception ex) {
 						ssl.Dispose ();
 
-						throw SslHandshakeException.Create (this, ex, false, "HTTP", host, port, 443, 80);
+						throw SslHandshakeException.Create (ref sslValidationInfo, ex, false, "HTTP", host, port, 443, 80);
 					}
 				}
 			}
 
-			public override void Connect (string host, int port = 0, SecureSocketOptions options = SecureSocketOptions.Auto, CancellationToken cancellationToken = default (CancellationToken))
-			{
-				ConnectAsync (host, port, options, false, cancellationToken).GetAwaiter ().GetResult ();
-			}
-
-			public override void Connect (Socket socket, string host, int port = 0, SecureSocketOptions options = SecureSocketOptions.Auto, CancellationToken cancellationToken = default (CancellationToken))
+			public override void Connect (Socket socket, string host, int port = 0, SecureSocketOptions options = SecureSocketOptions.Auto, CancellationToken cancellationToken = default)
 			{
 				throw new NotImplementedException ();
 			}
 
-			public override void Connect (Stream stream, string host, int port = 0, SecureSocketOptions options = SecureSocketOptions.Auto, CancellationToken cancellationToken = default (CancellationToken))
+			public override void Connect (Stream stream, string host, int port = 0, SecureSocketOptions options = SecureSocketOptions.Auto, CancellationToken cancellationToken = default)
 			{
 				throw new NotImplementedException ();
 			}
 
-			public override Task ConnectAsync (string host, int port = 0, SecureSocketOptions options = SecureSocketOptions.Auto, CancellationToken cancellationToken = default (CancellationToken))
+			public override async Task ConnectAsync (string host, int port = 0, SecureSocketOptions options = SecureSocketOptions.Auto, CancellationToken cancellationToken = default)
 			{
-				return ConnectAsync (host, port, options, false, cancellationToken);
+				using (var stream = await ConnectNetworkAsync (host, port, cancellationToken).ConfigureAwait (false)) {
+					hostName = host;
+
+					var ssl = new SslStream (stream, false, ValidateRemoteCertificate);
+
+					try {
+						await ssl.AuthenticateAsClientAsync (host, ClientCertificates, SslProtocols, CheckCertificateRevocation).ConfigureAwait (false);
+					} catch (Exception ex) {
+						ssl.Dispose ();
+
+						throw SslHandshakeException.Create (ref sslValidationInfo, ex, false, "HTTP", host, port, 443, 80);
+					}
+				}
 			}
 
-			public override Task ConnectAsync (Socket socket, string host, int port = 0, SecureSocketOptions options = SecureSocketOptions.Auto, CancellationToken cancellationToken = default (CancellationToken))
-			{
-				throw new NotImplementedException ();
-			}
-
-			public override Task ConnectAsync (Stream stream, string host, int port = 0, SecureSocketOptions options = SecureSocketOptions.Auto, CancellationToken cancellationToken = default (CancellationToken))
-			{
-				throw new NotImplementedException ();
-			}
-
-			public override void Disconnect (bool quit, CancellationToken cancellationToken = default (CancellationToken))
-			{
-				throw new NotImplementedException ();
-			}
-
-			public override Task DisconnectAsync (bool quit, CancellationToken cancellationToken = default (CancellationToken))
+			public override Task ConnectAsync (Socket socket, string host, int port = 0, SecureSocketOptions options = SecureSocketOptions.Auto, CancellationToken cancellationToken = default)
 			{
 				throw new NotImplementedException ();
 			}
 
-			public override void NoOp (CancellationToken cancellationToken = default (CancellationToken))
+			public override Task ConnectAsync (Stream stream, string host, int port = 0, SecureSocketOptions options = SecureSocketOptions.Auto, CancellationToken cancellationToken = default)
 			{
 				throw new NotImplementedException ();
 			}
 
-			public override Task NoOpAsync (CancellationToken cancellationToken = default (CancellationToken))
+			public override void Disconnect (bool quit, CancellationToken cancellationToken = default)
+			{
+				throw new NotImplementedException ();
+			}
+
+			public override Task DisconnectAsync (bool quit, CancellationToken cancellationToken = default)
+			{
+				throw new NotImplementedException ();
+			}
+
+			public override void NoOp (CancellationToken cancellationToken = default)
+			{
+				throw new NotImplementedException ();
+			}
+
+			public override Task NoOpAsync (CancellationToken cancellationToken = default)
 			{
 				throw new NotImplementedException ();
 			}
 		}
 
-		static void AssertServerCertificate (X509Certificate2 certificate)
+		// Note: The badssl.com certificates get renewed periodically (often with a different issuing CA, intermediate
+		// and/or root), so these helpers only assert properties that are inherent to each badssl.com test endpoint
+		// rather than pinning issuers, serial numbers or thumbprints.
+		static string GetCommonName (X509Certificate2 certificate)
 		{
-			Assert.AreEqual ("*.badssl.com", certificate.GetNameInfo (X509NameType.SimpleName, false), "CommonName");
-			Assert.AreEqual ("CN=BadSSL Untrusted Root Certificate Authority, O=BadSSL, L=San Francisco, S=California, C=US", certificate.Issuer, "Issuer");
-			Assert.AreEqual ("00ECB00B04F4E12D3C", certificate.SerialNumber, "SerialNumber");
-			Assert.AreEqual ("69D6DC42A2D60A20CF2B384D3A7763EDABC2E144", certificate.Thumbprint, "Thumbprint");
+			return certificate.GetNameInfo (X509NameType.SimpleName, false);
 		}
 
-		static void AssertRootCertificate (X509Certificate2 certificate)
+		static void AssertSelfSigned (X509Certificate2 certificate, string message)
 		{
-			Assert.AreEqual ("BadSSL Untrusted Root Certificate Authority", certificate.GetNameInfo (X509NameType.SimpleName, false), "CommonName");
-			Assert.AreEqual ("CN=BadSSL Untrusted Root Certificate Authority, O=BadSSL, L=San Francisco, S=California, C=US", certificate.Issuer, "Issuer");
-			Assert.AreEqual ("0097A0FCFAD7E528FD", certificate.SerialNumber, "SerialNumber");
-			Assert.AreEqual ("7890C8934D5869B25D2F8D0D646F9A5D7385BA85", certificate.Thumbprint, "Thumbprint");
+			Assert.That (certificate.SubjectName.RawData, Is.EqualTo (certificate.IssuerName.RawData), message);
+		}
+
+		static void AssertBadSslRootCertificateAuthority (X509Certificate2 root, X509Certificate2 server)
+		{
+			Assert.That (root.Thumbprint, Is.Not.EqualTo (server.Thumbprint), "RootCertificateAuthority should not be the server certificate");
+			AssertSelfSigned (root, "RootCertificateAuthority should be self-signed");
+		}
+
+		static void AssertBadSslExpiredServerCertificate (X509Certificate2 certificate)
+		{
+			Assert.That (GetCommonName (certificate), Is.EqualTo ("*.badssl.com"), "CommonName");
+			Assert.That (certificate.NotAfter, Is.LessThan (DateTime.Now), "NotAfter");
 		}
 
 		[Test]
-		public void TestSslCertificateValidationFailure ()
+		public void TestExpiredCertificateValidationFailure ()
+		{
+			Assert.Throws<ArgumentNullException> (() => new FakeClient (null));
+
+			using (var client = new FakeClient (new NullProtocolLogger ())) {
+				try {
+					client.Connect ("expired.badssl.com", 443, SecureSocketOptions.SslOnConnect);
+					Assert.Fail ("SSL handshake should have failed with expired.badssl.com.");
+				} catch (SslHandshakeException ex) {
+					Assert.That (ex.ServerCertificate, Is.Not.Null, "ServerCertificate");
+					AssertBadSslExpiredServerCertificate ((X509Certificate2) ex.ServerCertificate);
+
+					// Note: This is null on Mono because Mono provides an empty chain.
+					if (ex.RootCertificateAuthority is X509Certificate2 root)
+						AssertBadSslRootCertificateAuthority (root, (X509Certificate2) ex.ServerCertificate);
+				} catch (Exception ex) {
+					Assert.Ignore ($"SSL handshake failure inconclusive: {ex}");
+				}
+			}
+		}
+
+		[Test]
+		public async Task TestExpiredCertificateValidationFailureAsync ()
+		{
+			Assert.Throws<ArgumentNullException> (() => new FakeClient (null));
+
+			using (var client = new FakeClient (new NullProtocolLogger ())) {
+				try {
+					await client.ConnectAsync ("expired.badssl.com", 443, SecureSocketOptions.SslOnConnect);
+					Assert.Fail ("SSL handshake should have failed with expired.badssl.com.");
+				} catch (SslHandshakeException ex) {
+					Assert.That (ex.ServerCertificate, Is.Not.Null, "ServerCertificate");
+					AssertBadSslExpiredServerCertificate ((X509Certificate2) ex.ServerCertificate);
+
+					// Note: This is null on Mono because Mono provides an empty chain.
+					if (ex.RootCertificateAuthority is X509Certificate2 root)
+						AssertBadSslRootCertificateAuthority (root, (X509Certificate2) ex.ServerCertificate);
+				} catch (Exception ex) {
+					Assert.Ignore ($"SSL handshake failure inconclusive: {ex}");
+				}
+			}
+		}
+
+		static void AssertBadSslWrongHostServerCertificate (X509Certificate2 certificate)
+		{
+			// Note: wrong.host.badssl.com serves the *.badssl.com certificate which does not match the 2-level subdomain.
+			Assert.That (GetCommonName (certificate), Is.EqualTo ("*.badssl.com"), "CommonName");
+		}
+
+		[Test]
+		public void TestWrongHostCertificateValidationFailure ()
+		{
+			Assert.Throws<ArgumentNullException> (() => new FakeClient (null));
+
+			using (var client = new FakeClient (new NullProtocolLogger ())) {
+				try {
+					client.Connect ("wrong.host.badssl.com", 443, SecureSocketOptions.SslOnConnect);
+					Assert.Fail ("SSL handshake should have failed with wrong.host.badssl.com.");
+				} catch (SslHandshakeException ex) {
+					Assert.That (ex.ServerCertificate, Is.Not.Null, "ServerCertificate");
+					AssertBadSslWrongHostServerCertificate ((X509Certificate2) ex.ServerCertificate);
+
+					// Note: This is null on Mono because Mono provides an empty chain.
+					if (ex.RootCertificateAuthority is X509Certificate2 root)
+						AssertBadSslRootCertificateAuthority (root, (X509Certificate2) ex.ServerCertificate);
+				} catch (Exception ex) {
+					Assert.Ignore ($"SSL handshake failure inconclusive: {ex}");
+				}
+			}
+		}
+
+		[Test]
+		public async Task TestWrongHostCertificateValidationFailureAsync ()
+		{
+			Assert.Throws<ArgumentNullException> (() => new FakeClient (null));
+
+			using (var client = new FakeClient (new NullProtocolLogger ())) {
+				try {
+					await client.ConnectAsync ("wrong.host.badssl.com", 443, SecureSocketOptions.SslOnConnect);
+					Assert.Fail ("SSL handshake should have failed with wrong.host.badssl.com.");
+				} catch (SslHandshakeException ex) {
+					Assert.That (ex.ServerCertificate, Is.Not.Null, "ServerCertificate");
+					AssertBadSslWrongHostServerCertificate ((X509Certificate2) ex.ServerCertificate);
+
+					// Note: This is null on Mono because Mono provides an empty chain.
+					if (ex.RootCertificateAuthority is X509Certificate2 root)
+						AssertBadSslRootCertificateAuthority (root, (X509Certificate2) ex.ServerCertificate);
+				} catch (Exception ex) {
+					Assert.Ignore ($"SSL handshake failure inconclusive: {ex}");
+				}
+			}
+		}
+
+		static void AssertBadSslSelfSignedServerCertificate (X509Certificate2 certificate)
+		{
+			Assert.That (GetCommonName (certificate), Is.EqualTo ("*.badssl.com"), "CommonName");
+			AssertSelfSigned (certificate, "ServerCertificate should be self-signed");
+		}
+
+		[Test]
+		public void TestSelfSignedCertificateValidationFailure ()
+		{
+			Assert.Throws<ArgumentNullException> (() => new FakeClient (null));
+
+			using (var client = new FakeClient (new NullProtocolLogger ())) {
+				try {
+					client.Connect ("self-signed.badssl.com", 443, SecureSocketOptions.SslOnConnect);
+					Assert.Fail ("SSL handshake should have failed with self-signed.badssl.com.");
+				} catch (SslHandshakeException ex) {
+					Assert.That (ex.ServerCertificate, Is.Not.Null, "ServerCertificate");
+					AssertBadSslSelfSignedServerCertificate ((X509Certificate2) ex.ServerCertificate);
+
+					Assert.That (ex.RootCertificateAuthority, Is.Null, "RootCertificateAuthority");
+				} catch (Exception ex) {
+					Assert.Ignore ($"SSL handshake failure inconclusive: {ex}");
+				}
+			}
+		}
+
+		[Test]
+		public async Task TestSelfSignedCertificateValidationFailureAsync ()
+		{
+			Assert.Throws<ArgumentNullException> (() => new FakeClient (null));
+
+			using (var client = new FakeClient (new NullProtocolLogger ())) {
+				try {
+					await client.ConnectAsync ("self-signed.badssl.com", 443, SecureSocketOptions.SslOnConnect);
+					Assert.Fail ("SSL handshake should have failed with self-signed.badssl.com.");
+				} catch (SslHandshakeException ex) {
+					Assert.That (ex.ServerCertificate, Is.Not.Null, "ServerCertificate");
+					AssertBadSslSelfSignedServerCertificate ((X509Certificate2) ex.ServerCertificate);
+
+					Assert.That (ex.RootCertificateAuthority, Is.Null, "RootCertificateAuthority");
+				} catch (Exception ex) {
+					Assert.Ignore ($"SSL handshake failure inconclusive: {ex}");
+				}
+			}
+		}
+
+		const string BadSslUntrustedRootCommonName = "BadSSL Untrusted Root Certificate Authority";
+
+		public static void AssertBadSslUntrustedRootServerCertificate (X509Certificate2 certificate)
+		{
+			Assert.That (GetCommonName (certificate), Is.EqualTo ("*.badssl.com"), "CommonName");
+			Assert.That (certificate.GetNameInfo (X509NameType.SimpleName, true), Is.EqualTo (BadSslUntrustedRootCommonName), "Issuer");
+		}
+
+		public static void AssertBadSslUntrustedRootCACertificate (X509Certificate2 certificate)
+		{
+			Assert.That (GetCommonName (certificate), Is.EqualTo (BadSslUntrustedRootCommonName), "CommonName");
+			AssertSelfSigned (certificate, "RootCertificateAuthority should be self-signed");
+		}
+
+		[Test]
+		public void TestUntrustedRootCertificateValidationFailure ()
 		{
 			Assert.Throws<ArgumentNullException> (() => new FakeClient (null));
 
@@ -307,20 +409,20 @@ namespace UnitTests.Security {
 					client.Connect ("untrusted-root.badssl.com", 443, SecureSocketOptions.SslOnConnect);
 					Assert.Fail ("SSL handshake should have failed with untrusted-root.badssl.com.");
 				} catch (SslHandshakeException ex) {
-					Assert.NotNull (ex.ServerCertificate, "ServerCertificate");
-					AssertServerCertificate ((X509Certificate2) ex.ServerCertificate);
+					Assert.That (ex.ServerCertificate, Is.Not.Null, "ServerCertificate");
+					AssertBadSslUntrustedRootServerCertificate ((X509Certificate2) ex.ServerCertificate);
 
 					// Note: This is null on Mono because Mono provides an empty chain.
 					if (ex.RootCertificateAuthority is X509Certificate2 root)
-						AssertRootCertificate (root);
+						AssertBadSslUntrustedRootCACertificate (root);
 				} catch (Exception ex) {
-					Assert.Ignore ("SSL handshake failure inconclusive: {0}", ex);
+					Assert.Ignore ($"SSL handshake failure inconclusive: {ex}");
 				}
 			}
 		}
 
 		[Test]
-		public async Task TestSslCertificateValidationFailureAsync ()
+		public async Task TestUntrustedRootCertificateValidationFailureAsync ()
 		{
 			Assert.Throws<ArgumentNullException> (() => new FakeClient (null));
 
@@ -329,14 +431,63 @@ namespace UnitTests.Security {
 					await client.ConnectAsync ("untrusted-root.badssl.com", 443, SecureSocketOptions.SslOnConnect);
 					Assert.Fail ("SSL handshake should have failed with untrusted-root.badssl.com.");
 				} catch (SslHandshakeException ex) {
-					Assert.NotNull (ex.ServerCertificate, "ServerCertificate");
-					AssertServerCertificate ((X509Certificate2) ex.ServerCertificate);
+					Assert.That (ex.ServerCertificate, Is.Not.Null, "ServerCertificate");
+					AssertBadSslUntrustedRootServerCertificate ((X509Certificate2) ex.ServerCertificate);
 
 					// Note: This is null on Mono because Mono provides an empty chain.
 					if (ex.RootCertificateAuthority is X509Certificate2 root)
-						AssertRootCertificate (root);
+						AssertBadSslUntrustedRootCACertificate (root);
 				} catch (Exception ex) {
-					Assert.Ignore ("SSL handshake failure inconclusive: {0}", ex);
+					Assert.Ignore ($"SSL handshake failure inconclusive: {ex}");
+				}
+			}
+		}
+
+		static void AssertBadSslRevokedServerCertificate (X509Certificate2 certificate)
+		{
+			Assert.That (GetCommonName (certificate), Is.EqualTo ("revoked.badssl.com"), "CommonName");
+		}
+
+		[Test]
+		public void TestRevokedCertificateValidationFailure ()
+		{
+			Assert.Throws<ArgumentNullException> (() => new FakeClient (null));
+
+			using (var client = new FakeClient (new NullProtocolLogger ())) {
+				try {
+					client.Connect ("revoked.badssl.com", 443, SecureSocketOptions.SslOnConnect);
+					Assert.Fail ("SSL handshake should have failed with revoked.badssl.com.");
+				} catch (SslHandshakeException ex) {
+					Assert.That (ex.ServerCertificate, Is.Not.Null, "ServerCertificate");
+					AssertBadSslRevokedServerCertificate ((X509Certificate2) ex.ServerCertificate);
+
+					// Note: This is null on Mono because Mono provides an empty chain.
+					if (ex.RootCertificateAuthority is X509Certificate2 root)
+						AssertBadSslRootCertificateAuthority (root, (X509Certificate2) ex.ServerCertificate);
+				} catch (Exception ex) {
+					Assert.Ignore ($"SSL handshake failure inconclusive: {ex}");
+				}
+			}
+		}
+
+		[Test]
+		public async Task TestRevokedCertificateValidationFailureAsync ()
+		{
+			Assert.Throws<ArgumentNullException> (() => new FakeClient (null));
+
+			using (var client = new FakeClient (new NullProtocolLogger ())) {
+				try {
+					await client.ConnectAsync ("revoked.badssl.com", 443, SecureSocketOptions.SslOnConnect);
+					Assert.Fail ("SSL handshake should have failed with revoked.badssl.com.");
+				} catch (SslHandshakeException ex) {
+					Assert.That (ex.ServerCertificate, Is.Not.Null, "ServerCertificate");
+					AssertBadSslRevokedServerCertificate ((X509Certificate2) ex.ServerCertificate);
+
+					// Note: This is null on Mono because Mono provides an empty chain.
+					if (ex.RootCertificateAuthority is X509Certificate2 root)
+						AssertBadSslRootCertificateAuthority (root, (X509Certificate2) ex.ServerCertificate);
+				} catch (Exception ex) {
+					Assert.Ignore ($"SSL handshake failure inconclusive: {ex}");
 				}
 			}
 		}
@@ -351,10 +502,10 @@ namespace UnitTests.Security {
 					client.Connect ("www.google.com", 80, SecureSocketOptions.SslOnConnect);
 					Assert.Fail ("SSL handshake should have failed with www.google.com:80.");
 				} catch (SslHandshakeException ex) {
-					Assert.IsNull (ex.ServerCertificate, "ServerCertificate");
-					Assert.IsNull (ex.RootCertificateAuthority, "RootCertificateAuthority");
+					Assert.That (ex.ServerCertificate, Is.Null, "ServerCertificate");
+					Assert.That (ex.RootCertificateAuthority, Is.Null, "RootCertificateAuthority");
 				} catch (Exception ex) {
-					Assert.Ignore ("SSL handshake failure inconclusive: {0}", ex);
+					Assert.Ignore ($"SSL handshake failure inconclusive: {ex}");
 				}
 			}
 		}
@@ -369,10 +520,10 @@ namespace UnitTests.Security {
 					await client.ConnectAsync ("www.google.com", 80, SecureSocketOptions.SslOnConnect);
 					Assert.Fail ("SSL handshake should have failed with www.google.com:80.");
 				} catch (SslHandshakeException ex) {
-					Assert.IsNull (ex.ServerCertificate, "ServerCertificate");
-					Assert.IsNull (ex.RootCertificateAuthority, "RootCertificateAuthority");
+					Assert.That (ex.ServerCertificate, Is.Null, "ServerCertificate");
+					Assert.That (ex.RootCertificateAuthority, Is.Null, "RootCertificateAuthority");
 				} catch (Exception ex) {
-					Assert.Ignore ("SSL handshake failure inconclusive: {0}", ex);
+					Assert.Ignore ($"SSL handshake failure inconclusive: {ex}");
 				}
 			}
 		}

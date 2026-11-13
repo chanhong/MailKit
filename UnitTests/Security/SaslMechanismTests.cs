@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -24,11 +24,8 @@
 // THE SOFTWARE.
 //
 
-using System;
 using System.Net;
 using System.Text;
-
-using NUnit.Framework;
 
 using MailKit.Security;
 
@@ -40,16 +37,22 @@ namespace UnitTests.Security {
 		public void TestArgumentExceptions ()
 		{
 			var credentials = new NetworkCredential ("username", "password");
-			var uri = new Uri ("smtp://localhost");
 
-			Assert.Throws<ArgumentNullException> (() => SaslMechanism.Create (null, uri, Encoding.UTF8, credentials));
-			Assert.Throws<ArgumentNullException> (() => SaslMechanism.Create ("PLAIN", null, Encoding.UTF8, credentials));
-			Assert.Throws<ArgumentNullException> (() => SaslMechanism.Create ("PLAIN", uri, null, credentials));
-			Assert.Throws<ArgumentNullException> (() => SaslMechanism.Create ("PLAIN", uri, Encoding.UTF8, null));
-
-			Assert.Throws<ArgumentNullException> (() => SaslMechanism.Create (null, uri, credentials));
+			Assert.Throws<ArgumentNullException> (() => SaslMechanism.Create (null, Encoding.UTF8, credentials));
 			Assert.Throws<ArgumentNullException> (() => SaslMechanism.Create ("PLAIN", null, credentials));
-			Assert.Throws<ArgumentNullException> (() => SaslMechanism.Create ("PLAIN", uri, null));
+			Assert.Throws<ArgumentNullException> (() => SaslMechanism.Create ("PLAIN", Encoding.UTF8, null));
+
+			Assert.Throws<ArgumentNullException> (() => SaslMechanism.Create (null, credentials));
+			Assert.Throws<ArgumentNullException> (() => SaslMechanism.Create ("PLAIN", null));
+
+			Assert.Throws<ArgumentNullException> (() => SaslMechanism.TryCreate (null, Encoding.UTF8, credentials, out _));
+			Assert.Throws<ArgumentNullException> (() => SaslMechanism.TryCreate ("PLAIN", null, credentials, out _));
+			Assert.Throws<ArgumentNullException> (() => SaslMechanism.TryCreate ("PLAIN", Encoding.UTF8, null, out _));
+
+			Assert.Throws<ArgumentNullException> (() => SaslMechanism.TryCreate (null, credentials, out _));
+			Assert.Throws<ArgumentNullException> (() => SaslMechanism.TryCreate ("PLAIN", null, out _));
+
+			Assert.Throws<ArgumentNullException> (() => SaslMechanism.IsSupported (null));
 
 			Assert.Throws<ArgumentNullException> (() => SaslMechanism.SaslPrep (null));
 		}
@@ -57,23 +60,53 @@ namespace UnitTests.Security {
 		[Test]
 		public void TestIsSupported ()
 		{
-			var supported = new [] { "PLAIN", "LOGIN", "CRAM-MD5", "DIGEST-MD5", "SCRAM-SHA-1", "SCRAM-SHA-256", "NTLM", "XOAUTH2" };
-			var unsupported = new [] { "ANONYMOUS", "GSSAPI", "KERBEROS_V4" };
+			var supported = new [] { "PLAIN", "LOGIN", "CRAM-MD5", "DIGEST-MD5", "SCRAM-SHA-1", "SCRAM-SHA-1-PLUS", "SCRAM-SHA-256", "SCRAM-SHA-256-PLUS", "SCRAM-SHA-512", "SCRAM-SHA-512-PLUS", "NTLM", "OAUTHBEARER", "XOAUTH2", "ANONYMOUS" };
+			var unsupported = new [] { "EXTERNAL", "GSSAPI", "KERBEROS_V4" };
 			var credentials = new NetworkCredential ("username", "password");
-			var uri = new Uri ("smtp://localhost");
 
 			foreach (var mechanism in supported) {
-				Assert.IsTrue (SaslMechanism.IsSupported (mechanism), mechanism);
+				Assert.That (SaslMechanism.IsSupported (mechanism), Is.True, mechanism);
 
-				var sasl = SaslMechanism.Create (mechanism, uri, credentials);
-				Assert.IsNotNull (sasl, mechanism);
-				Assert.AreEqual (mechanism, sasl.MechanismName, "MechanismName");
+				var sasl = SaslMechanism.Create (mechanism, credentials);
+				Assert.That (sasl, Is.Not.Null, mechanism);
+				Assert.That (sasl.MechanismName, Is.EqualTo (mechanism), "MechanismName");
 
 				sasl.Reset ();
 			}
 
 			foreach (var mechanism in unsupported)
-				Assert.IsFalse (SaslMechanism.IsSupported (mechanism), mechanism);
+				Assert.That (SaslMechanism.IsSupported (mechanism), Is.False, mechanism);
+		}
+
+		[Test]
+		public void TestCreateUnsupported ()
+		{
+			var unsupported = new [] { "EXTERNAL", "KERBEROS_V4", "X-UNKNOWN" };
+			var credentials = new NetworkCredential ("username", "password");
+
+			foreach (var mechanism in unsupported) {
+				Assert.Throws<NotSupportedException> (() => SaslMechanism.Create (mechanism, credentials), mechanism);
+				Assert.Throws<NotSupportedException> (() => SaslMechanism.Create (mechanism, Encoding.UTF8, credentials), mechanism);
+
+				Assert.That (SaslMechanism.TryCreate (mechanism, credentials, out var sasl), Is.False, mechanism);
+				Assert.That (sasl, Is.Null, mechanism);
+
+				Assert.That (SaslMechanism.TryCreate (mechanism, Encoding.UTF8, credentials, out sasl), Is.False, mechanism);
+				Assert.That (sasl, Is.Null, mechanism);
+			}
+		}
+
+		[Test]
+		public void TestTryCreate ()
+		{
+			var supported = new [] { "PLAIN", "LOGIN", "CRAM-MD5", "DIGEST-MD5", "SCRAM-SHA-1", "SCRAM-SHA-1-PLUS", "SCRAM-SHA-256", "SCRAM-SHA-256-PLUS", "SCRAM-SHA-512", "SCRAM-SHA-512-PLUS", "NTLM", "OAUTHBEARER", "XOAUTH2", "ANONYMOUS" };
+			var credentials = new NetworkCredential ("username", "password");
+
+			foreach (var mechanism in supported) {
+				Assert.That (SaslMechanism.TryCreate (mechanism, credentials, out var sasl), Is.True, mechanism);
+				Assert.That (sasl, Is.Not.Null, mechanism);
+				Assert.That (sasl.MechanismName, Is.EqualTo (mechanism), "MechanismName");
+			}
 		}
 
 		[Test]
@@ -83,15 +116,15 @@ namespace UnitTests.Security {
 			// #  Input            Output     Comments
 			// -  -----            ------     --------
 			// 1  I<U+00AD>X       IX         SOFT HYPHEN mapped to nothing
-			Assert.AreEqual ("IX", SaslMechanism.SaslPrep ("I\u00ADX"), "1");
+			Assert.That (SaslMechanism.SaslPrep ("I\u00ADX"), Is.EqualTo ("IX"), "1");
 			// 2  user             user       no transformation
-			Assert.AreEqual ("user", SaslMechanism.SaslPrep ("user"), "2");
+			Assert.That (SaslMechanism.SaslPrep ("user"), Is.EqualTo ("user"), "2");
 			// 3  USER             USER       case preserved, will not match #2
-			Assert.AreEqual ("USER", SaslMechanism.SaslPrep ("USER"), "3");
+			Assert.That (SaslMechanism.SaslPrep ("USER"), Is.EqualTo ("USER"), "3");
 			// 4  <U+00AA>         a          output is NFKC, input in ISO 8859-1
-			Assert.AreEqual ("a", SaslMechanism.SaslPrep ("\u00AA"), "4");
+			Assert.That (SaslMechanism.SaslPrep ("\u00AA"), Is.EqualTo ("a"), "4");
 			// 5  <U+2168>         IX         output is NFKC, will match #1
-			Assert.AreEqual ("IX", SaslMechanism.SaslPrep ("\u2168"), "5");
+			Assert.That (SaslMechanism.SaslPrep ("\u2168"), Is.EqualTo ("IX"), "5");
 			// 6  <U+0007>                    Error - prohibited character
 			try {
 				SaslMechanism.SaslPrep ("\u0007");
@@ -109,13 +142,13 @@ namespace UnitTests.Security {
 			foreach (var c in prohibited) {
 				try {
 					SaslMechanism.SaslPrep (c.ToString ());
-					Assert.Fail ("prohibited: '\\u{0:X}'", c);
+					Assert.Fail ($"prohibited: '\\u{c:X}'");
 				} catch (ArgumentException) {
 				}
 			}
 
-			Assert.AreEqual (string.Empty, SaslMechanism.SaslPrep (string.Empty));
-			Assert.AreEqual ("a b", SaslMechanism.SaslPrep ("a\u00A0b"));
+			Assert.That (SaslMechanism.SaslPrep (string.Empty), Is.EqualTo (string.Empty));
+			Assert.That (SaslMechanism.SaslPrep ("a\u00A0b"), Is.EqualTo ("a b"));
 		}
 	}
 }

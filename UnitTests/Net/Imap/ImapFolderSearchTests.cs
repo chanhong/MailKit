@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -24,15 +24,12 @@
 // THE SOFTWARE.
 //
 
-using System;
 using System.Net;
 using System.Text;
-using System.Collections.Generic;
-
-using NUnit.Framework;
 
 using MailKit;
 using MailKit.Search;
+using MailKit.Security;
 using MailKit.Net.Imap;
 
 namespace UnitTests.Net.Imap {
@@ -42,21 +39,22 @@ namespace UnitTests.Net.Imap {
 		[Test]
 		public void TestArgumentExceptions ()
 		{
-			var commands = new List<ImapReplayCommand> ();
-			commands.Add (new ImapReplayCommand ("", "dovecot.greeting.txt"));
-			commands.Add (new ImapReplayCommand ("A00000000 LOGIN username password\r\n", "dovecot.authenticate+gmail-capabilities.txt"));
-			commands.Add (new ImapReplayCommand ("A00000001 NAMESPACE\r\n", "dovecot.namespace.txt"));
-			commands.Add (new ImapReplayCommand ("A00000002 LIST \"\" \"INBOX\" RETURN (SUBSCRIBED CHILDREN)\r\n", "dovecot.list-inbox.txt"));
-			commands.Add (new ImapReplayCommand ("A00000003 LIST (SPECIAL-USE) \"\" \"*\" RETURN (SUBSCRIBED CHILDREN)\r\n", "dovecot.list-special-use.txt"));
-			commands.Add (new ImapReplayCommand ("A00000004 SELECT INBOX (CONDSTORE)\r\n", "common.select-inbox.txt"));
+			var commands = new List<ImapReplayCommand> {
+				new ImapReplayCommand ("", "dovecot.greeting.txt"),
+				new ImapReplayCommand ("A00000000 LOGIN username password\r\n", "dovecot.authenticate+gmail-capabilities.txt"),
+				new ImapReplayCommand ("A00000001 NAMESPACE\r\n", "dovecot.namespace.txt"),
+				new ImapReplayCommand ("A00000002 LIST \"\" \"INBOX\" RETURN (SUBSCRIBED CHILDREN)\r\n", "dovecot.list-inbox.txt"),
+				new ImapReplayCommand ("A00000003 LIST (SPECIAL-USE) \"\" \"*\" RETURN (SUBSCRIBED CHILDREN)\r\n", "dovecot.list-special-use.txt"),
+				new ImapReplayCommand ("A00000004 SELECT INBOX (CONDSTORE)\r\n", "common.select-inbox.txt")
+			};
 
-			using (var client = new ImapClient ()) {
+			using (var client = new ImapClient () { TagPrefix = 'A' }) {
 				var credentials = new NetworkCredential ("username", "password");
 
 				try {
-					client.ReplayConnect ("localhost", new ImapReplayStream (commands, false));
+					client.Connect (new ImapReplayStream (commands, false), "localhost", 143, SecureSocketOptions.None);
 				} catch (Exception ex) {
-					Assert.Fail ("Did not expect an exception in Connect: {0}", ex);
+					Assert.Fail ($"Did not expect an exception in Connect: {ex}");
 				}
 
 				// Note: we do not want to use SASL at all...
@@ -65,10 +63,10 @@ namespace UnitTests.Net.Imap {
 				try {
 					client.Authenticate (credentials);
 				} catch (Exception ex) {
-					Assert.Fail ("Did not expect an exception in Authenticate: {0}", ex);
+					Assert.Fail ($"Did not expect an exception in Authenticate: {ex}");
 				}
 
-				Assert.IsInstanceOf<ImapEngine> (client.Inbox.SyncRoot, "SyncRoot");
+				Assert.That (client.Inbox.SyncRoot, Is.InstanceOf<ImapEngine> (), "SyncRoot");
 
 				var inbox = (ImapFolder) client.Inbox;
 				inbox.Open (FolderAccess.ReadWrite);
@@ -76,7 +74,7 @@ namespace UnitTests.Net.Imap {
 				// Search
 				var searchOptions = SearchOptions.All | SearchOptions.Min | SearchOptions.Max | SearchOptions.Count;
 				var orderBy = new OrderBy [] { OrderBy.Arrival };
-				var emptyOrderBy = new OrderBy[0];
+				var emptyOrderBy = Array.Empty<OrderBy> ();
 
 				Assert.Throws<ArgumentNullException> (() => inbox.Search ((SearchQuery) null));
 				Assert.ThrowsAsync<ArgumentNullException> (async () => await inbox.SearchAsync ((SearchQuery) null));
@@ -95,6 +93,13 @@ namespace UnitTests.Net.Imap {
 				Assert.ThrowsAsync<ArgumentNullException> (async () => await inbox.SearchAsync ((string) null));
 				Assert.Throws<ArgumentException> (() => inbox.Search (string.Empty));
 				Assert.ThrowsAsync<ArgumentException> (async () => await inbox.SearchAsync (string.Empty));
+
+				Assert.Throws<ArgumentNullException> (() => inbox.Search (SearchOptions.None, (SearchQuery) null, new PartialRange (1, 10)));
+				Assert.ThrowsAsync<ArgumentNullException> (async () => await inbox.SearchAsync (SearchOptions.None, (SearchQuery) null, new PartialRange (1, 10)));
+				Assert.Throws<ArgumentException> (() => inbox.Search (SearchOptions.All, SearchQuery.All, new PartialRange (1, 10)));
+				Assert.ThrowsAsync<ArgumentException> (async () => await inbox.SearchAsync (SearchOptions.All, SearchQuery.All, new PartialRange (1, 10)));
+				Assert.Throws<ArgumentException> (() => inbox.Search (searchOptions, SearchQuery.All, new PartialRange (1, 10)));
+				Assert.ThrowsAsync<ArgumentException> (async () => await inbox.SearchAsync (searchOptions, SearchQuery.All, new PartialRange (1, 10)));
 
 				// Sort
 				Assert.Throws<ArgumentNullException> (() => inbox.Sort ((SearchQuery) null, orderBy));
@@ -134,6 +139,15 @@ namespace UnitTests.Net.Imap {
 				Assert.Throws<ArgumentException> (() => inbox.Sort (string.Empty));
 				Assert.ThrowsAsync<ArgumentException> (async () => await inbox.SortAsync (string.Empty));
 
+				Assert.Throws<ArgumentNullException> (() => inbox.Sort (SearchOptions.None, (SearchQuery) null, orderBy, new PartialRange (1, 10)));
+				Assert.ThrowsAsync<ArgumentNullException> (async () => await inbox.SortAsync (SearchOptions.None, (SearchQuery) null, orderBy, new PartialRange (1, 10)));
+				Assert.Throws<ArgumentNullException> (() => inbox.Sort (SearchOptions.None, SearchQuery.All, null, new PartialRange (1, 10)));
+				Assert.ThrowsAsync<ArgumentNullException> (async () => await inbox.SortAsync (SearchOptions.None, SearchQuery.All, null, new PartialRange (1, 10)));
+				Assert.Throws<ArgumentException> (() => inbox.Sort (SearchOptions.None, SearchQuery.All, emptyOrderBy, new PartialRange (1, 10)));
+				Assert.ThrowsAsync<ArgumentException> (async () => await inbox.SortAsync (SearchOptions.None, SearchQuery.All, emptyOrderBy, new PartialRange (1, 10)));
+				Assert.Throws<ArgumentException> (() => inbox.Sort (SearchOptions.All, SearchQuery.All, orderBy, new PartialRange (1, 10)));
+				Assert.ThrowsAsync<ArgumentException> (async () => await inbox.SortAsync (SearchOptions.All, SearchQuery.All, orderBy, new PartialRange (1, 10)));
+
 				// Thread
 				Assert.Throws<ArgumentOutOfRangeException> (() => inbox.Thread ((ThreadingAlgorithm) 500, SearchQuery.All));
 				Assert.ThrowsAsync<ArgumentOutOfRangeException> (async () => await inbox.ThreadAsync ((ThreadingAlgorithm) 500, SearchQuery.All));
@@ -150,25 +164,38 @@ namespace UnitTests.Net.Imap {
 			}
 		}
 
-		[Test]
-		public void TestRawUnicodeSearch ()
+		static IList<ImapReplayCommand> CreateSearchKeywordsCommands ()
 		{
-			var commands = new List<ImapReplayCommand> ();
-			commands.Add (new ImapReplayCommand ("", "dovecot.greeting.txt"));
-			commands.Add (new ImapReplayCommand ("A00000000 LOGIN username password\r\n", "dovecot.authenticate+gmail-capabilities.txt"));
-			commands.Add (new ImapReplayCommand ("A00000001 NAMESPACE\r\n", "dovecot.namespace.txt"));
-			commands.Add (new ImapReplayCommand ("A00000002 LIST \"\" \"INBOX\" RETURN (SUBSCRIBED CHILDREN)\r\n", "dovecot.list-inbox.txt"));
-			commands.Add (new ImapReplayCommand ("A00000003 LIST (SPECIAL-USE) \"\" \"*\" RETURN (SUBSCRIBED CHILDREN)\r\n", "dovecot.list-special-use.txt"));
-			commands.Add (new ImapReplayCommand ("A00000004 SELECT INBOX (CONDSTORE)\r\n", "common.select-inbox.txt"));
-			commands.Add (new ImapReplayCommand (Encoding.UTF8, "A00000005 UID SEARCH SUBJECT {13+}\r\nComunicação\r\n", "dovecot.search-raw.txt"));
+			return new List<ImapReplayCommand> {
+				new ImapReplayCommand ("", "dovecot.greeting.txt"),
+				new ImapReplayCommand ("A00000000 LOGIN username password\r\n", "dovecot.authenticate+filters.txt"),
+				new ImapReplayCommand ("A00000001 NAMESPACE\r\n", "dovecot.namespace.txt"),
+				new ImapReplayCommand ("A00000002 LIST \"\" \"INBOX\" RETURN (SUBSCRIBED CHILDREN)\r\n", "dovecot.list-inbox.txt"),
+				new ImapReplayCommand ("A00000003 LIST (SPECIAL-USE) \"\" \"*\" RETURN (SUBSCRIBED CHILDREN)\r\n", "dovecot.list-special-use.txt"),
+				new ImapReplayCommand ("A00000004 SELECT INBOX (CONDSTORE)\r\n", "common.select-inbox.txt"),
+				new ImapReplayCommand ("A00000005 UID SEARCH RETURN (ALL) KEYWORD \\flag\r\n", "dovecot.search-all.txt"),
+				new ImapReplayCommand ("A00000006 UID SEARCH RETURN (ALL) UNKEYWORD \\flag\r\n", "dovecot.search-all.txt"),
+				new ImapReplayCommand ("A00000007 UID SEARCH RETURN (ALL) KEYWORD \"two words\"\r\n", "dovecot.search-all.txt"),
+				new ImapReplayCommand ("A00000008 UID SEARCH RETURN (ALL) UNKEYWORD \"two words\"\r\n", "dovecot.search-all.txt"),
+				new ImapReplayCommand ("A00000009 UID SEARCH RETURN (ALL) KEYWORD $IsSpam\r\n", "dovecot.search-all.txt"),
+				new ImapReplayCommand ("A00000010 UID SEARCH RETURN (ALL) UNKEYWORD $IsSpam\r\n", "dovecot.search-all.txt"),
+				new ImapReplayCommand ("A00000011 UID SEARCH RETURN (ALL) KEYWORD \\flag KEYWORD \"two words\" KEYWORD $IsSpam\r\n", "dovecot.search-all.txt"),
+				new ImapReplayCommand ("A00000012 UID SEARCH RETURN (ALL) UNKEYWORD \\flag UNKEYWORD \"two words\" UNKEYWORD $IsSpam\r\n", "dovecot.search-all.txt")
+			};
+		}
 
-			using (var client = new ImapClient ()) {
+		[Test]
+		public void TestSearchKeywords ()
+		{
+			var commands = CreateSearchKeywordsCommands ();
+
+			using (var client = new ImapClient () { TagPrefix = 'A' }) {
 				var credentials = new NetworkCredential ("username", "password");
 
 				try {
-					client.ReplayConnect ("localhost", new ImapReplayStream (commands, false));
+					client.Connect (new ImapReplayStream (commands, false), "localhost", 143, SecureSocketOptions.None);
 				} catch (Exception ex) {
-					Assert.Fail ("Did not expect an exception in Connect: {0}", ex);
+					Assert.Fail ($"Did not expect an exception in Connect: {ex}");
 				}
 
 				// Note: we do not want to use SASL at all...
@@ -177,45 +204,948 @@ namespace UnitTests.Net.Imap {
 				try {
 					client.Authenticate (credentials);
 				} catch (Exception ex) {
-					Assert.Fail ("Did not expect an exception in Authenticate: {0}", ex);
+					Assert.Fail ($"Did not expect an exception in Authenticate: {ex}");
 				}
 
-				Assert.IsInstanceOf<ImapEngine> (client.Inbox.SyncRoot, "SyncRoot");
+				Assert.That (client.Capabilities.Contains (ImapCapability.Filters), Is.True, "ImapCapability.Filters");
+
+				var inbox = (ImapFolder) client.Inbox;
+				inbox.Open (FolderAccess.ReadWrite);
+
+				var uids = inbox.Search (SearchQuery.HasKeyword ("\\flag"));
+				Assert.That (uids, Has.Count.EqualTo (14), "Unexpected number of UIDs");
+				for (int i = 0; i < uids.Count; i++)
+					Assert.That (uids[i].Id, Is.EqualTo (i + 1), $"Unexpected value for uids[{i}]");
+
+				uids = inbox.Search (SearchQuery.NotKeyword ("\\flag"));
+				Assert.That (uids, Has.Count.EqualTo (14), "Unexpected number of UIDs");
+				for (int i = 0; i < uids.Count; i++)
+					Assert.That (uids[i].Id, Is.EqualTo (i + 1), $"Unexpected value for uids[{i}]");
+
+				uids = inbox.Search (SearchQuery.HasKeyword ("two words"));
+				Assert.That (uids, Has.Count.EqualTo (14), "Unexpected number of UIDs");
+				for (int i = 0; i < uids.Count; i++)
+					Assert.That (uids[i].Id, Is.EqualTo (i + 1), $"Unexpected value for uids[{i}]");
+
+				uids = inbox.Search (SearchQuery.NotKeyword ("two words"));
+				Assert.That (uids, Has.Count.EqualTo (14), "Unexpected number of UIDs");
+				for (int i = 0; i < uids.Count; i++)
+					Assert.That (uids[i].Id, Is.EqualTo (i + 1), $"Unexpected value for uids[{i}]");
+
+				uids = inbox.Search (SearchQuery.HasKeyword ("$IsSpam"));
+				Assert.That (uids, Has.Count.EqualTo (14), "Unexpected number of UIDs");
+				for (int i = 0; i < uids.Count; i++)
+					Assert.That (uids[i].Id, Is.EqualTo (i + 1), $"Unexpected value for uids[{i}]");
+
+				uids = inbox.Search (SearchQuery.NotKeyword ("$IsSpam"));
+				Assert.That (uids, Has.Count.EqualTo (14), "Unexpected number of UIDs");
+				for (int i = 0; i < uids.Count; i++)
+					Assert.That (uids[i].Id, Is.EqualTo (i + 1), $"Unexpected value for uids[{i}]");
+
+				uids = inbox.Search (SearchQuery.HasKeywords ("\\flag", "two words", "$IsSpam"));
+				Assert.That (uids, Has.Count.EqualTo (14), "Unexpected number of UIDs");
+				for (int i = 0; i < uids.Count; i++)
+					Assert.That (uids[i].Id, Is.EqualTo (i + 1), $"Unexpected value for uids[{i}]");
+
+				uids = inbox.Search (SearchQuery.NotKeywords ("\\flag", "two words", "$IsSpam"));
+				Assert.That (uids, Has.Count.EqualTo (14), "Unexpected number of UIDs");
+				for (int i = 0; i < uids.Count; i++)
+					Assert.That (uids[i].Id, Is.EqualTo (i + 1), $"Unexpected value for uids[{i}]");
+
+				client.Disconnect (false);
+			}
+		}
+
+		[Test]
+		public async Task TestSearchKeywordsAsync ()
+		{
+			var commands = CreateSearchKeywordsCommands ();
+
+			using (var client = new ImapClient () { TagPrefix = 'A' }) {
+				var credentials = new NetworkCredential ("username", "password");
+
+				try {
+					await client.ConnectAsync (new ImapReplayStream (commands, true), "localhost", 143, SecureSocketOptions.None);
+				} catch (Exception ex) {
+					Assert.Fail ($"Did not expect an exception in Connect: {ex}");
+				}
+
+				// Note: we do not want to use SASL at all...
+				client.AuthenticationMechanisms.Clear ();
+
+				try {
+					await client.AuthenticateAsync (credentials);
+				} catch (Exception ex) {
+					Assert.Fail ($"Did not expect an exception in Authenticate: {ex}");
+				}
+
+				Assert.That (client.Capabilities.Contains (ImapCapability.Filters), Is.True, "ImapCapability.Filters");
+
+				var inbox = (ImapFolder) client.Inbox;
+				await inbox.OpenAsync (FolderAccess.ReadWrite);
+
+				var uids = await inbox.SearchAsync (SearchQuery.HasKeyword ("\\flag"));
+				Assert.That (uids, Has.Count.EqualTo (14), "Unexpected number of UIDs");
+				for (int i = 0; i < uids.Count; i++)
+					Assert.That (uids[i].Id, Is.EqualTo (i + 1), $"Unexpected value for uids[{i}]");
+
+				uids = await inbox.SearchAsync (SearchQuery.NotKeyword ("\\flag"));
+				Assert.That (uids, Has.Count.EqualTo (14), "Unexpected number of UIDs");
+				for (int i = 0; i < uids.Count; i++)
+					Assert.That (uids[i].Id, Is.EqualTo (i + 1), $"Unexpected value for uids[{i}]");
+
+				uids = await inbox.SearchAsync (SearchQuery.HasKeyword ("two words"));
+				Assert.That (uids, Has.Count.EqualTo (14), "Unexpected number of UIDs");
+				for (int i = 0; i < uids.Count; i++)
+					Assert.That (uids[i].Id, Is.EqualTo (i + 1), $"Unexpected value for uids[{i}]");
+
+				uids = await inbox.SearchAsync (SearchQuery.NotKeyword ("two words"));
+				Assert.That (uids, Has.Count.EqualTo (14), "Unexpected number of UIDs");
+				for (int i = 0; i < uids.Count; i++)
+					Assert.That (uids[i].Id, Is.EqualTo (i + 1), $"Unexpected value for uids[{i}]");
+
+				uids = await inbox.SearchAsync (SearchQuery.HasKeyword ("$IsSpam"));
+				Assert.That (uids, Has.Count.EqualTo (14), "Unexpected number of UIDs");
+				for (int i = 0; i < uids.Count; i++)
+					Assert.That (uids[i].Id, Is.EqualTo (i + 1), $"Unexpected value for uids[{i}]");
+
+				uids = await inbox.SearchAsync (SearchQuery.NotKeyword ("$IsSpam"));
+				Assert.That (uids, Has.Count.EqualTo (14), "Unexpected number of UIDs");
+				for (int i = 0; i < uids.Count; i++)
+					Assert.That (uids[i].Id, Is.EqualTo (i + 1), $"Unexpected value for uids[{i}]");
+
+				uids = await inbox.SearchAsync (SearchQuery.HasKeywords ("\\flag", "two words", "$IsSpam"));
+				Assert.That (uids, Has.Count.EqualTo (14), "Unexpected number of UIDs");
+				for (int i = 0; i < uids.Count; i++)
+					Assert.That (uids[i].Id, Is.EqualTo (i + 1), $"Unexpected value for uids[{i}]");
+
+				uids = await inbox.SearchAsync (SearchQuery.NotKeywords ("\\flag", "two words", "$IsSpam"));
+				Assert.That (uids, Has.Count.EqualTo (14), "Unexpected number of UIDs");
+				for (int i = 0; i < uids.Count; i++)
+					Assert.That (uids[i].Id, Is.EqualTo (i + 1), $"Unexpected value for uids[{i}]");
+
+				await client.DisconnectAsync (false);
+			}
+		}
+
+		static IList<ImapReplayCommand> CreateSearchFilterCommands ()
+		{
+			return new List<ImapReplayCommand> {
+				new ImapReplayCommand ("", "dovecot.greeting.txt"),
+				new ImapReplayCommand ("A00000000 LOGIN username password\r\n", "dovecot.authenticate+filters.txt"),
+				new ImapReplayCommand ("A00000001 NAMESPACE\r\n", "dovecot.namespace.txt"),
+				new ImapReplayCommand ("A00000002 LIST \"\" \"INBOX\" RETURN (SUBSCRIBED CHILDREN)\r\n", "dovecot.list-inbox.txt"),
+				new ImapReplayCommand ("A00000003 LIST (SPECIAL-USE) \"\" \"*\" RETURN (SUBSCRIBED CHILDREN)\r\n", "dovecot.list-special-use.txt"),
+				new ImapReplayCommand ("A00000004 SELECT INBOX (CONDSTORE)\r\n", "common.select-inbox.txt"),
+				new ImapReplayCommand ("A00000005 UID SEARCH RETURN (ALL) FILTER MyFilter\r\n", "dovecot.search-all.txt"),
+				new ImapReplayCommand ("A00000006 UID SEARCH RETURN (ALL) FILTER MyUndefinedFilter\r\n", Encoding.ASCII.GetBytes ("A00000006 NO [UNDEFINED-FILTER MyUndefinedFilter] THe specified filter is undefined.\r\n")),
+			};
+		}
+
+		[Test]
+		public void TestSearchFilter ()
+		{
+			var commands = CreateSearchFilterCommands ();
+
+			using (var client = new ImapClient () { TagPrefix = 'A' }) {
+				var credentials = new NetworkCredential ("username", "password");
+
+				try {
+					client.Connect (new ImapReplayStream (commands, false), "localhost", 143, SecureSocketOptions.None);
+				} catch (Exception ex) {
+					Assert.Fail ($"Did not expect an exception in Connect: {ex}");
+				}
+
+				// Note: we do not want to use SASL at all...
+				client.AuthenticationMechanisms.Clear ();
+
+				try {
+					client.Authenticate (credentials);
+				} catch (Exception ex) {
+					Assert.Fail ($"Did not expect an exception in Authenticate: {ex}");
+				}
+
+				Assert.That (client.Capabilities.Contains (ImapCapability.Filters), Is.True, "ImapCapability.Filters");
+
+				var inbox = (ImapFolder) client.Inbox;
+				inbox.Open (FolderAccess.ReadWrite);
+
+				var uids = inbox.Search (SearchQuery.Filter ("MyFilter"));
+				Assert.That (uids, Has.Count.EqualTo (14), "Unexpected number of UIDs");
+				for (int i = 0; i < uids.Count; i++)
+					Assert.That (uids[i].Id, Is.EqualTo (i + 1), $"Unexpected value for uids[{i}]");
+
+				var cex = Assert.Throws<ImapCommandException> (() => inbox.Search (SearchQuery.Filter ("MyUndefinedFilter")));
+				Assert.That (cex.ResponseCodes, Has.Count.EqualTo (1), "ResponseCodes");
+				Assert.That (cex.ResponseCodes[0], Is.InstanceOf<UndefinedFilterResponseCode> (), "ResponseCodes[0]");
+				Assert.That (((UndefinedFilterResponseCode) cex.ResponseCodes[0]).Name, Is.EqualTo ("MyUndefinedFilter"), "UndefinedFilter.Name");
+				Assert.That (cex.ResponseCodes[0].IsTagged, Is.True, "UndefinedFilter.IsTagged");
+				Assert.That (cex.ErrorType, Is.EqualTo (CommandErrorType.NotFound), "ErrorType");
+
+				// Now disable the FILTERS extension and try again...
+				client.Capabilities.Disable (ImapCapability.Filters);
+				Assert.Throws<NotSupportedException> (() => inbox.Search (SearchQuery.Filter ("MyFilter")));
+
+				client.Disconnect (false);
+			}
+		}
+
+		[Test]
+		public async Task TestSearchFilterAsync ()
+		{
+			var commands = CreateSearchFilterCommands ();
+
+			using (var client = new ImapClient () { TagPrefix = 'A' }) {
+				var credentials = new NetworkCredential ("username", "password");
+
+				try {
+					await client.ConnectAsync (new ImapReplayStream (commands, true), "localhost", 143, SecureSocketOptions.None);
+				} catch (Exception ex) {
+					Assert.Fail ($"Did not expect an exception in Connect: {ex}");
+				}
+
+				// Note: we do not want to use SASL at all...
+				client.AuthenticationMechanisms.Clear ();
+
+				try {
+					await client.AuthenticateAsync (credentials);
+				} catch (Exception ex) {
+					Assert.Fail ($"Did not expect an exception in Authenticate: {ex}");
+				}
+
+				Assert.That (client.Capabilities.Contains (ImapCapability.Filters), Is.True, "ImapCapability.Filters");
+
+				var inbox = (ImapFolder) client.Inbox;
+				await inbox.OpenAsync (FolderAccess.ReadWrite);
+
+				var uids = await inbox.SearchAsync (SearchQuery.Filter ("MyFilter"));
+				Assert.That (uids, Has.Count.EqualTo (14), "Unexpected number of UIDs");
+				for (int i = 0; i < uids.Count; i++)
+					Assert.That (uids[i].Id, Is.EqualTo (i + 1), $"Unexpected value for uids[{i}]");
+
+				var cex = Assert.ThrowsAsync<ImapCommandException> (() => inbox.SearchAsync (SearchQuery.Filter ("MyUndefinedFilter")));
+				Assert.That (cex.ResponseCodes, Has.Count.EqualTo (1), "ResponseCodes");
+				Assert.That (cex.ResponseCodes[0], Is.InstanceOf<UndefinedFilterResponseCode> (), "ResponseCodes[0]");
+				Assert.That (((UndefinedFilterResponseCode) cex.ResponseCodes[0]).Name, Is.EqualTo ("MyUndefinedFilter"), "UndefinedFilter.Name");
+				Assert.That (cex.ResponseCodes[0].IsTagged, Is.True, "UndefinedFilter.IsTagged");
+				Assert.That (cex.ErrorType, Is.EqualTo (CommandErrorType.NotFound), "ErrorType");
+
+				// Now disable the SAVEDATE extension and try again...
+				client.Capabilities.Disable (ImapCapability.Filters);
+				Assert.ThrowsAsync<NotSupportedException> (() => inbox.SearchAsync (SearchQuery.Filter ("MyFilter")));
+
+				await client.DisconnectAsync (false);
+			}
+		}
+
+		static IList<ImapReplayCommand> CreateSearchFuzzyCommands ()
+		{
+			return new List<ImapReplayCommand> {
+				new ImapReplayCommand ("", "dovecot.greeting.txt"),
+				new ImapReplayCommand ("A00000000 LOGIN username password\r\n", "dovecot.authenticate+fuzzy.txt"),
+				new ImapReplayCommand ("A00000001 NAMESPACE\r\n", "dovecot.namespace.txt"),
+				new ImapReplayCommand ("A00000002 LIST \"\" \"INBOX\" RETURN (SUBSCRIBED CHILDREN)\r\n", "dovecot.list-inbox.txt"),
+				new ImapReplayCommand ("A00000003 LIST (SPECIAL-USE) \"\" \"*\" RETURN (SUBSCRIBED CHILDREN)\r\n", "dovecot.list-special-use.txt"),
+				new ImapReplayCommand ("A00000004 SELECT INBOX (CONDSTORE)\r\n", "common.select-inbox.txt"),
+				new ImapReplayCommand ("A00000005 UID SEARCH RETURN (ALL) FUZZY BODY fuzzy-match\r\n", "dovecot.search-all.txt"),
+			};
+		}
+
+		[Test]
+		public void TestSearchFuzzy ()
+		{
+			var commands = CreateSearchFuzzyCommands ();
+
+			using (var client = new ImapClient () { TagPrefix = 'A' }) {
+				var credentials = new NetworkCredential ("username", "password");
+
+				try {
+					client.Connect (new ImapReplayStream (commands, false), "localhost", 143, SecureSocketOptions.None);
+				} catch (Exception ex) {
+					Assert.Fail ($"Did not expect an exception in Connect: {ex}");
+				}
+
+				// Note: we do not want to use SASL at all...
+				client.AuthenticationMechanisms.Clear ();
+
+				try {
+					client.Authenticate (credentials);
+				} catch (Exception ex) {
+					Assert.Fail ($"Did not expect an exception in Authenticate: {ex}");
+				}
+
+				Assert.That (client.Capabilities.Contains (ImapCapability.FuzzySearch), Is.True, "ImapCapability.FuzzySearch");
+
+				var inbox = (ImapFolder) client.Inbox;
+				inbox.Open (FolderAccess.ReadWrite);
+
+				var uids = inbox.Search (SearchQuery.Fuzzy (SearchQuery.BodyContains ("fuzzy-match")));
+				Assert.That (uids, Has.Count.EqualTo (14), "Unexpected number of UIDs");
+				for (int i = 0; i < uids.Count; i++)
+					Assert.That (uids[i].Id, Is.EqualTo (i + 1), $"Unexpected value for uids[{i}]");
+
+				// Now disable the FUZZY extension and try again...
+				client.Capabilities.Disable (ImapCapability.FuzzySearch);
+				Assert.Throws<NotSupportedException> (() => inbox.Search (SearchQuery.Fuzzy (SearchQuery.BodyContains ("fuzzy-match"))));
+
+				client.Disconnect (false);
+			}
+		}
+
+		[Test]
+		public async Task TestSearchFuzzyAsync ()
+		{
+			var commands = CreateSearchFuzzyCommands ();
+
+			using (var client = new ImapClient () { TagPrefix = 'A' }) {
+				var credentials = new NetworkCredential ("username", "password");
+
+				try {
+					await client.ConnectAsync (new ImapReplayStream (commands, true), "localhost", 143, SecureSocketOptions.None);
+				} catch (Exception ex) {
+					Assert.Fail ($"Did not expect an exception in Connect: {ex}");
+				}
+
+				// Note: we do not want to use SASL at all...
+				client.AuthenticationMechanisms.Clear ();
+
+				try {
+					await client.AuthenticateAsync (credentials);
+				} catch (Exception ex) {
+					Assert.Fail ($"Did not expect an exception in Authenticate: {ex}");
+				}
+
+				Assert.That (client.Capabilities.Contains (ImapCapability.FuzzySearch), Is.True, "ImapCapability.FuzzySearch");
+
+				var inbox = (ImapFolder) client.Inbox;
+				await inbox.OpenAsync (FolderAccess.ReadWrite);
+
+				var uids = await inbox.SearchAsync (SearchQuery.Fuzzy (SearchQuery.BodyContains ("fuzzy-match")));
+				Assert.That (uids, Has.Count.EqualTo (14), "Unexpected number of UIDs");
+				for (int i = 0; i < uids.Count; i++)
+					Assert.That (uids[i].Id, Is.EqualTo (i + 1), $"Unexpected value for uids[{i}]");
+
+				// Now disable the FUZZY extension and try again...
+				client.Capabilities.Disable (ImapCapability.FuzzySearch);
+				Assert.ThrowsAsync<NotSupportedException> (() => inbox.SearchAsync (SearchQuery.Fuzzy (SearchQuery.BodyContains ("fuzzy-match"))));
+
+				await client.DisconnectAsync (false);
+			}
+		}
+
+		static IList<ImapReplayCommand> CreateSearchSaveDateCommands ()
+		{
+			return new List<ImapReplayCommand> {
+				new ImapReplayCommand ("", "dovecot.greeting.txt"),
+				new ImapReplayCommand ("A00000000 LOGIN username password\r\n", "dovecot.authenticate+savedate.txt"),
+				new ImapReplayCommand ("A00000001 NAMESPACE\r\n", "dovecot.namespace.txt"),
+				new ImapReplayCommand ("A00000002 LIST \"\" \"INBOX\" RETURN (SUBSCRIBED CHILDREN)\r\n", "dovecot.list-inbox.txt"),
+				new ImapReplayCommand ("A00000003 LIST (SPECIAL-USE) \"\" \"*\" RETURN (SUBSCRIBED CHILDREN)\r\n", "dovecot.list-special-use.txt"),
+				new ImapReplayCommand ("A00000004 SELECT INBOX (CONDSTORE)\r\n", "common.select-inbox.txt"),
+				new ImapReplayCommand ("A00000005 UID SEARCH RETURN (ALL) SAVEDATESUPPORTED\r\n", "dovecot.search-all.txt"),
+				new ImapReplayCommand ("A00000006 UID SEARCH RETURN (ALL) SAVEDBEFORE 12-Oct-2016\r\n", "dovecot.search-all.txt"),
+				new ImapReplayCommand ("A00000007 UID SEARCH RETURN (ALL) SAVEDON 12-Oct-2016\r\n", "dovecot.search-all.txt"),
+				new ImapReplayCommand ("A00000008 UID SEARCH RETURN (ALL) SAVEDSINCE 12-Oct-2016\r\n", "dovecot.search-all.txt"),
+			};
+		}
+
+		[Test]
+		public void TestSearchSaveDate ()
+		{
+			var commands = CreateSearchSaveDateCommands ();
+
+			using (var client = new ImapClient () { TagPrefix = 'A' }) {
+				var credentials = new NetworkCredential ("username", "password");
+
+				try {
+					client.Connect (new ImapReplayStream (commands, false), "localhost", 143, SecureSocketOptions.None);
+				} catch (Exception ex) {
+					Assert.Fail ($"Did not expect an exception in Connect: {ex}");
+				}
+
+				// Note: we do not want to use SASL at all...
+				client.AuthenticationMechanisms.Clear ();
+
+				try {
+					client.Authenticate (credentials);
+				} catch (Exception ex) {
+					Assert.Fail ($"Did not expect an exception in Authenticate: {ex}");
+				}
+
+				Assert.That (client.Capabilities.Contains (ImapCapability.SaveDate), Is.True, "ImapCapability.SaveDate");
+
+				var inbox = (ImapFolder) client.Inbox;
+				inbox.Open (FolderAccess.ReadWrite);
+
+				var uids = inbox.Search (SearchQuery.SaveDateSupported);
+				Assert.That (uids, Has.Count.EqualTo (14), "Unexpected number of UIDs");
+				for (int i = 0; i < uids.Count; i++)
+					Assert.That (uids[i].Id, Is.EqualTo (i + 1), $"Unexpected value for uids[{i}]");
+
+				uids = inbox.Search (SearchQuery.SavedBefore (new DateTime (2016, 10, 12)));
+				Assert.That (uids, Has.Count.EqualTo (14), "Unexpected number of UIDs");
+				for (int i = 0; i < uids.Count; i++)
+					Assert.That (uids[i].Id, Is.EqualTo (i + 1), $"Unexpected value for uids[{i}]");
+
+				uids = inbox.Search (SearchQuery.SavedOn (new DateTime (2016, 10, 12)));
+				Assert.That (uids, Has.Count.EqualTo (14), "Unexpected number of UIDs");
+				for (int i = 0; i < uids.Count; i++)
+					Assert.That (uids[i].Id, Is.EqualTo (i + 1), $"Unexpected value for uids[{i}]");
+
+				uids = inbox.Search (SearchQuery.SavedSince (new DateTime (2016, 10, 12)));
+				Assert.That (uids, Has.Count.EqualTo (14), "Unexpected number of UIDs");
+				for (int i = 0; i < uids.Count; i++)
+					Assert.That (uids[i].Id, Is.EqualTo (i + 1), $"Unexpected value for uids[{i}]");
+
+				// Now disable the SAVEDATE extension and try again...
+				client.Capabilities.Disable (ImapCapability.SaveDate);
+				Assert.Throws<NotSupportedException> (() => inbox.Search (SearchQuery.SaveDateSupported));
+				Assert.Throws<NotSupportedException> (() => inbox.Search (SearchQuery.SavedBefore (new DateTime (2016, 10, 12))));
+				Assert.Throws<NotSupportedException> (() => inbox.Search (SearchQuery.SavedOn (new DateTime (2016, 10, 12))));
+				Assert.Throws<NotSupportedException> (() => inbox.Search (SearchQuery.SavedSince (new DateTime (2016, 10, 12))));
+
+				client.Disconnect (false);
+			}
+		}
+
+		[Test]
+		public async Task TestSearchSaveDateAsync ()
+		{
+			var commands = CreateSearchSaveDateCommands ();
+
+			using (var client = new ImapClient () { TagPrefix = 'A' }) {
+				var credentials = new NetworkCredential ("username", "password");
+
+				try {
+					await client.ConnectAsync (new ImapReplayStream (commands, true), "localhost", 143, SecureSocketOptions.None);
+				} catch (Exception ex) {
+					Assert.Fail ($"Did not expect an exception in Connect: {ex}");
+				}
+
+				// Note: we do not want to use SASL at all...
+				client.AuthenticationMechanisms.Clear ();
+
+				try {
+					await client.AuthenticateAsync (credentials);
+				} catch (Exception ex) {
+					Assert.Fail ($"Did not expect an exception in Authenticate: {ex}");
+				}
+
+				Assert.That (client.Capabilities.Contains (ImapCapability.SaveDate), Is.True, "ImapCapability.SaveDate");
+
+				var inbox = (ImapFolder) client.Inbox;
+				await inbox.OpenAsync (FolderAccess.ReadWrite);
+
+				var uids = await inbox.SearchAsync (SearchQuery.SaveDateSupported);
+				Assert.That (uids, Has.Count.EqualTo (14), "Unexpected number of UIDs");
+				for (int i = 0; i < uids.Count; i++)
+					Assert.That (uids[i].Id, Is.EqualTo (i + 1), $"Unexpected value for uids[{i}]");
+
+				uids = await inbox.SearchAsync (SearchQuery.SavedBefore (new DateTime (2016, 10, 12)));
+				Assert.That (uids, Has.Count.EqualTo (14), "Unexpected number of UIDs");
+				for (int i = 0; i < uids.Count; i++)
+					Assert.That (uids[i].Id, Is.EqualTo (i + 1), $"Unexpected value for uids[{i}]");
+
+				uids = await inbox.SearchAsync (SearchQuery.SavedOn (new DateTime (2016, 10, 12)));
+				Assert.That (uids, Has.Count.EqualTo (14), "Unexpected number of UIDs");
+				for (int i = 0; i < uids.Count; i++)
+					Assert.That (uids[i].Id, Is.EqualTo (i + 1), $"Unexpected value for uids[{i}]");
+
+				uids = await inbox.SearchAsync (SearchQuery.SavedSince (new DateTime (2016, 10, 12)));
+				Assert.That (uids, Has.Count.EqualTo (14), "Unexpected number of UIDs");
+				for (int i = 0; i < uids.Count; i++)
+					Assert.That (uids[i].Id, Is.EqualTo (i + 1), $"Unexpected value for uids[{i}]");
+
+				// Now disable the SAVEDATE extension and try again...
+				client.Capabilities.Disable (ImapCapability.SaveDate);
+				Assert.ThrowsAsync<NotSupportedException> (() => inbox.SearchAsync (SearchQuery.SaveDateSupported));
+				Assert.ThrowsAsync<NotSupportedException> (() => inbox.SearchAsync (SearchQuery.SavedBefore (new DateTime (2016, 10, 12))));
+				Assert.ThrowsAsync<NotSupportedException> (() => inbox.SearchAsync (SearchQuery.SavedOn (new DateTime (2016, 10, 12))));
+				Assert.ThrowsAsync<NotSupportedException> (() => inbox.SearchAsync (SearchQuery.SavedSince (new DateTime (2016, 10, 12))));
+
+				await client.DisconnectAsync (false);
+			}
+		}
+
+		static IList<ImapReplayCommand> CreateSearchPartialCommands ()
+		{
+			return new List<ImapReplayCommand> {
+				new ImapReplayCommand ("", "dovecot.greeting.txt"),
+				new ImapReplayCommand ("A00000000 LOGIN username password\r\n", "dovecot.authenticate+partial.txt"),
+				new ImapReplayCommand ("A00000001 NAMESPACE\r\n", "dovecot.namespace.txt"),
+				new ImapReplayCommand ("A00000002 LIST \"\" \"INBOX\" RETURN (SUBSCRIBED CHILDREN)\r\n", "dovecot.list-inbox.txt"),
+				new ImapReplayCommand ("A00000003 LIST (SPECIAL-USE) \"\" \"*\" RETURN (SUBSCRIBED CHILDREN)\r\n", "dovecot.list-special-use.txt"),
+				new ImapReplayCommand ("A00000004 SELECT INBOX (CONDSTORE)\r\n", "common.select-inbox.txt"),
+				new ImapReplayCommand ("A00000005 UID SEARCH RETURN (PARTIAL 1:10) UNDELETED\r\n", "dovecot.search-partial.txt"),
+				new ImapReplayCommand ("A00000006 UID SEARCH RETURN (PARTIAL -1:-10) UNDELETED\r\n", "dovecot.search-partial-negative.txt"),
+				new ImapReplayCommand ("A00000007 UID SEARCH RETURN (COUNT MIN MAX PARTIAL 1:10) UNDELETED\r\n", "dovecot.search-partial-options.txt"),
+				new ImapReplayCommand ("A00000008 UID SEARCH RETURN (PARTIAL 100:110) UNDELETED\r\n", "dovecot.search-partial-nil.txt"),
+			};
+		}
+
+		[Test]
+		public void TestSearchPartial ()
+		{
+			var commands = CreateSearchPartialCommands ();
+
+			using (var client = new ImapClient () { TagPrefix = 'A' }) {
+				var credentials = new NetworkCredential ("username", "password");
+
+				try {
+					client.Connect (new ImapReplayStream (commands, false), "localhost", 143, SecureSocketOptions.None);
+				} catch (Exception ex) {
+					Assert.Fail ($"Did not expect an exception in Connect: {ex}");
+				}
+
+				// Note: we do not want to use SASL at all...
+				client.AuthenticationMechanisms.Clear ();
+
+				try {
+					client.Authenticate (credentials);
+				} catch (Exception ex) {
+					Assert.Fail ($"Did not expect an exception in Authenticate: {ex}");
+				}
+
+				Assert.That (client.Capabilities.Contains (ImapCapability.Partial), Is.True, "ImapCapability.Partial");
+
+				var inbox = (ImapFolder) client.Inbox;
+				inbox.Open (FolderAccess.ReadWrite);
+
+				// Search for the oldest 10 results. Note: the server only has 8 matches within the requested range.
+				var matches = inbox.Search (SearchOptions.None, SearchQuery.NotDeleted, new PartialRange (1, 10));
+				Assert.That (matches.Partial, Is.EqualTo (new PartialRange (1, 10)), "Partial");
+				Assert.That (matches.UniqueIds, Has.Count.EqualTo (8), "Unexpected number of UIDs");
+				Assert.That (matches.Count, Is.EqualTo (0), "Count should not be set by a PARTIAL result");
+				Assert.That (matches.Min, Is.Null, "Min");
+				Assert.That (matches.Max, Is.Null, "Max");
+
+				// Search for the newest 10 results.
+				matches = inbox.Search (SearchOptions.None, SearchQuery.NotDeleted, new PartialRange (-1, -10));
+				Assert.That (matches.Partial, Is.EqualTo (new PartialRange (-1, -10)), "Partial (negative)");
+				Assert.That (matches.UniqueIds, Has.Count.EqualTo (10), "Unexpected number of UIDs (negative)");
+				Assert.That (matches.UniqueIds[0].Id, Is.EqualTo (5), "Unexpected first UID (negative)");
+
+				// Combine PARTIAL with COUNT, MIN and MAX.
+				matches = inbox.Search (SearchOptions.Count | SearchOptions.Min | SearchOptions.Max, SearchQuery.NotDeleted, new PartialRange (1, 10));
+				Assert.That (matches.Partial, Is.EqualTo (new PartialRange (1, 10)), "Partial (options)");
+				Assert.That (matches.UniqueIds, Has.Count.EqualTo (10), "Unexpected number of UIDs (options)");
+				Assert.That (matches.Count, Is.EqualTo (14), "Count");
+				Assert.That (matches.Min.Value.Id, Is.EqualTo (1), "Min");
+				Assert.That (matches.Max.Value.Id, Is.EqualTo (14), "Max");
+
+				// Search for a range that is beyond the end of the results.
+				matches = inbox.Search (SearchOptions.None, SearchQuery.NotDeleted, new PartialRange (100, 110));
+				Assert.That (matches.Partial, Is.EqualTo (new PartialRange (100, 110)), "Partial (nil)");
+				Assert.That (matches.UniqueIds, Is.Empty, "UniqueIds (nil)");
+
+				// Now disable the PARTIAL extension. Negative ranges are RFC 9394-only, so they should
+				// no longer be supported even though CONTEXT=SEARCH is still advertised...
+				client.Capabilities.Disable (ImapCapability.Partial);
+				Assert.Throws<NotSupportedException> (() => inbox.Search (SearchOptions.None, SearchQuery.NotDeleted, new PartialRange (-1, -10)));
+
+				// Now disable the CONTEXT extension as well and try again...
+				client.Capabilities.Disable (ImapCapability.Context);
+				Assert.Throws<NotSupportedException> (() => inbox.Search (SearchOptions.None, SearchQuery.NotDeleted, new PartialRange (1, 10)));
+
+				client.Disconnect (false);
+			}
+		}
+
+		[Test]
+		public async Task TestSearchPartialAsync ()
+		{
+			var commands = CreateSearchPartialCommands ();
+
+			using (var client = new ImapClient () { TagPrefix = 'A' }) {
+				var credentials = new NetworkCredential ("username", "password");
+
+				try {
+					await client.ConnectAsync (new ImapReplayStream (commands, true), "localhost", 143, SecureSocketOptions.None);
+				} catch (Exception ex) {
+					Assert.Fail ($"Did not expect an exception in Connect: {ex}");
+				}
+
+				// Note: we do not want to use SASL at all...
+				client.AuthenticationMechanisms.Clear ();
+
+				try {
+					await client.AuthenticateAsync (credentials);
+				} catch (Exception ex) {
+					Assert.Fail ($"Did not expect an exception in Authenticate: {ex}");
+				}
+
+				Assert.That (client.Capabilities.Contains (ImapCapability.Partial), Is.True, "ImapCapability.Partial");
+
+				var inbox = (ImapFolder) client.Inbox;
+				await inbox.OpenAsync (FolderAccess.ReadWrite);
+
+				// Search for the oldest 10 results. Note: the server only has 8 matches within the requested range.
+				var matches = await inbox.SearchAsync (SearchOptions.None, SearchQuery.NotDeleted, new PartialRange (1, 10));
+				Assert.That (matches.Partial, Is.EqualTo (new PartialRange (1, 10)), "Partial");
+				Assert.That (matches.UniqueIds, Has.Count.EqualTo (8), "Unexpected number of UIDs");
+				Assert.That (matches.Count, Is.EqualTo (0), "Count should not be set by a PARTIAL result");
+				Assert.That (matches.Min, Is.Null, "Min");
+				Assert.That (matches.Max, Is.Null, "Max");
+
+				// Search for the newest 10 results.
+				matches = await inbox.SearchAsync (SearchOptions.None, SearchQuery.NotDeleted, new PartialRange (-1, -10));
+				Assert.That (matches.Partial, Is.EqualTo (new PartialRange (-1, -10)), "Partial (negative)");
+				Assert.That (matches.UniqueIds, Has.Count.EqualTo (10), "Unexpected number of UIDs (negative)");
+				Assert.That (matches.UniqueIds[0].Id, Is.EqualTo (5), "Unexpected first UID (negative)");
+
+				// Combine PARTIAL with COUNT, MIN and MAX.
+				matches = await inbox.SearchAsync (SearchOptions.Count | SearchOptions.Min | SearchOptions.Max, SearchQuery.NotDeleted, new PartialRange (1, 10));
+				Assert.That (matches.Partial, Is.EqualTo (new PartialRange (1, 10)), "Partial (options)");
+				Assert.That (matches.UniqueIds, Has.Count.EqualTo (10), "Unexpected number of UIDs (options)");
+				Assert.That (matches.Count, Is.EqualTo (14), "Count");
+				Assert.That (matches.Min.Value.Id, Is.EqualTo (1), "Min");
+				Assert.That (matches.Max.Value.Id, Is.EqualTo (14), "Max");
+
+				// Search for a range that is beyond the end of the results.
+				matches = await inbox.SearchAsync (SearchOptions.None, SearchQuery.NotDeleted, new PartialRange (100, 110));
+				Assert.That (matches.Partial, Is.EqualTo (new PartialRange (100, 110)), "Partial (nil)");
+				Assert.That (matches.UniqueIds, Is.Empty, "UniqueIds (nil)");
+
+				// Now disable the PARTIAL extension. Negative ranges are RFC 9394-only, so they should
+				// no longer be supported even though CONTEXT=SEARCH is still advertised...
+				client.Capabilities.Disable (ImapCapability.Partial);
+				Assert.ThrowsAsync<NotSupportedException> (() => inbox.SearchAsync (SearchOptions.None, SearchQuery.NotDeleted, new PartialRange (-1, -10)));
+
+				// Now disable the CONTEXT extension as well and try again...
+				client.Capabilities.Disable (ImapCapability.Context);
+				Assert.ThrowsAsync<NotSupportedException> (() => inbox.SearchAsync (SearchOptions.None, SearchQuery.NotDeleted, new PartialRange (1, 10)));
+
+				await client.DisconnectAsync (false);
+			}
+		}
+
+		static IList<ImapReplayCommand> CreateSortPartialCommands ()
+		{
+			return new List<ImapReplayCommand> {
+				new ImapReplayCommand ("", "dovecot.greeting.txt"),
+				new ImapReplayCommand ("A00000000 LOGIN username password\r\n", "dovecot.authenticate+partial.txt"),
+				new ImapReplayCommand ("A00000001 NAMESPACE\r\n", "dovecot.namespace.txt"),
+				new ImapReplayCommand ("A00000002 LIST \"\" \"INBOX\" RETURN (SUBSCRIBED CHILDREN)\r\n", "dovecot.list-inbox.txt"),
+				new ImapReplayCommand ("A00000003 LIST (SPECIAL-USE) \"\" \"*\" RETURN (SUBSCRIBED CHILDREN)\r\n", "dovecot.list-special-use.txt"),
+				new ImapReplayCommand ("A00000004 SELECT INBOX (CONDSTORE)\r\n", "common.select-inbox.txt"),
+				new ImapReplayCommand ("A00000005 UID SORT RETURN (PARTIAL 1:5) (REVERSE DATE) US-ASCII UNDELETED\r\n", "dovecot.sort-partial.txt"),
+				new ImapReplayCommand ("A00000006 UID SORT RETURN (COUNT PARTIAL 1:5) (REVERSE DATE) US-ASCII UNDELETED\r\n", "dovecot.sort-partial-count.txt"),
+			};
+		}
+
+		[Test]
+		public void TestSortPartial ()
+		{
+			var commands = CreateSortPartialCommands ();
+
+			using (var client = new ImapClient () { TagPrefix = 'A' }) {
+				var credentials = new NetworkCredential ("username", "password");
+
+				try {
+					client.Connect (new ImapReplayStream (commands, false), "localhost", 143, SecureSocketOptions.None);
+				} catch (Exception ex) {
+					Assert.Fail ($"Did not expect an exception in Connect: {ex}");
+				}
+
+				// Note: we do not want to use SASL at all...
+				client.AuthenticationMechanisms.Clear ();
+
+				try {
+					client.Authenticate (credentials);
+				} catch (Exception ex) {
+					Assert.Fail ($"Did not expect an exception in Authenticate: {ex}");
+				}
+
+				var orderBy = new OrderBy[] { OrderBy.ReverseDate };
+				var inbox = (ImapFolder) client.Inbox;
+				inbox.Open (FolderAccess.ReadWrite);
+
+				// Sort by reverse date, returning only the first 5 results.
+				var matches = inbox.Sort (SearchOptions.None, SearchQuery.NotDeleted, orderBy, new PartialRange (1, 5));
+				Assert.That (matches.Partial, Is.EqualTo (new PartialRange (1, 5)), "Partial");
+				Assert.That (matches.UniqueIds, Has.Count.EqualTo (5), "Unexpected number of UIDs");
+				Assert.That (matches.UniqueIds[0].Id, Is.EqualTo (14), "Unexpected first UID");
+				Assert.That (matches.UniqueIds[4].Id, Is.EqualTo (6), "Unexpected last UID");
+
+				// Combine PARTIAL with COUNT.
+				matches = inbox.Sort (SearchOptions.Count, SearchQuery.NotDeleted, orderBy, new PartialRange (1, 5));
+				Assert.That (matches.Partial, Is.EqualTo (new PartialRange (1, 5)), "Partial (count)");
+				Assert.That (matches.UniqueIds, Has.Count.EqualTo (5), "Unexpected number of UIDs (count)");
+				Assert.That (matches.Count, Is.EqualTo (14), "Count");
+
+				// Now disable the PARTIAL extension. Negative ranges are RFC 9394-only, so they should
+				// no longer be supported even though CONTEXT=SEARCH is still advertised...
+				client.Capabilities.Disable (ImapCapability.Partial);
+				Assert.Throws<NotSupportedException> (() => inbox.Sort (SearchOptions.None, SearchQuery.NotDeleted, orderBy, new PartialRange (-1, -5)));
+
+				// Now disable the CONTEXT extension as well and try again...
+				client.Capabilities.Disable (ImapCapability.Context);
+				Assert.Throws<NotSupportedException> (() => inbox.Sort (SearchOptions.None, SearchQuery.NotDeleted, orderBy, new PartialRange (1, 5)));
+
+				client.Disconnect (false);
+			}
+		}
+
+		[Test]
+		public async Task TestSortPartialAsync ()
+		{
+			var commands = CreateSortPartialCommands ();
+
+			using (var client = new ImapClient () { TagPrefix = 'A' }) {
+				var credentials = new NetworkCredential ("username", "password");
+
+				try {
+					await client.ConnectAsync (new ImapReplayStream (commands, true), "localhost", 143, SecureSocketOptions.None);
+				} catch (Exception ex) {
+					Assert.Fail ($"Did not expect an exception in Connect: {ex}");
+				}
+
+				// Note: we do not want to use SASL at all...
+				client.AuthenticationMechanisms.Clear ();
+
+				try {
+					await client.AuthenticateAsync (credentials);
+				} catch (Exception ex) {
+					Assert.Fail ($"Did not expect an exception in Authenticate: {ex}");
+				}
+
+				var orderBy = new OrderBy[] { OrderBy.ReverseDate };
+				var inbox = (ImapFolder) client.Inbox;
+				await inbox.OpenAsync (FolderAccess.ReadWrite);
+
+				// Sort by reverse date, returning only the first 5 results.
+				var matches = await inbox.SortAsync (SearchOptions.None, SearchQuery.NotDeleted, orderBy, new PartialRange (1, 5));
+				Assert.That (matches.Partial, Is.EqualTo (new PartialRange (1, 5)), "Partial");
+				Assert.That (matches.UniqueIds, Has.Count.EqualTo (5), "Unexpected number of UIDs");
+				Assert.That (matches.UniqueIds[0].Id, Is.EqualTo (14), "Unexpected first UID");
+				Assert.That (matches.UniqueIds[4].Id, Is.EqualTo (6), "Unexpected last UID");
+
+				// Combine PARTIAL with COUNT.
+				matches = await inbox.SortAsync (SearchOptions.Count, SearchQuery.NotDeleted, orderBy, new PartialRange (1, 5));
+				Assert.That (matches.Partial, Is.EqualTo (new PartialRange (1, 5)), "Partial (count)");
+				Assert.That (matches.UniqueIds, Has.Count.EqualTo (5), "Unexpected number of UIDs (count)");
+				Assert.That (matches.Count, Is.EqualTo (14), "Count");
+
+				// Now disable the PARTIAL extension. Negative ranges are RFC 9394-only, so they should
+				// no longer be supported even though CONTEXT=SEARCH is still advertised...
+				client.Capabilities.Disable (ImapCapability.Partial);
+				Assert.ThrowsAsync<NotSupportedException> (() => inbox.SortAsync (SearchOptions.None, SearchQuery.NotDeleted, orderBy, new PartialRange (-1, -5)));
+
+				// Now disable the CONTEXT extension as well and try again...
+				client.Capabilities.Disable (ImapCapability.Context);
+				Assert.ThrowsAsync<NotSupportedException> (() => inbox.SortAsync (SearchOptions.None, SearchQuery.NotDeleted, orderBy, new PartialRange (1, 5)));
+
+				await client.DisconnectAsync (false);
+			}
+		}
+
+		static IList<ImapReplayCommand> CreateSearchRawPartialResponseCommands ()
+		{
+			return new List<ImapReplayCommand> {
+				new ImapReplayCommand ("", "dovecot.greeting.txt"),
+				new ImapReplayCommand ("A00000000 LOGIN username password\r\n", "dovecot.authenticate+gmail-capabilities.txt"),
+				new ImapReplayCommand ("A00000001 NAMESPACE\r\n", "dovecot.namespace.txt"),
+				new ImapReplayCommand ("A00000002 LIST \"\" \"INBOX\" RETURN (SUBSCRIBED CHILDREN)\r\n", "dovecot.list-inbox.txt"),
+				new ImapReplayCommand ("A00000003 LIST (SPECIAL-USE) \"\" \"*\" RETURN (SUBSCRIBED CHILDREN)\r\n", "dovecot.list-special-use.txt"),
+				new ImapReplayCommand ("A00000004 SELECT INBOX (CONDSTORE)\r\n", "common.select-inbox.txt"),
+				new ImapReplayCommand ("A00000005 UID SEARCH RETURN (PARTIAL 1:10) ALL\r\n", "dovecot.search-partial.txt"),
+			};
+		}
+
+		[Test]
+		public void TestSearchRawPartialResponse ()
+		{
+			var commands = CreateSearchRawPartialResponseCommands ();
+
+			using (var client = new ImapClient () { TagPrefix = 'A' }) {
+				var credentials = new NetworkCredential ("username", "password");
+
+				try {
+					client.Connect (new ImapReplayStream (commands, false), "localhost", 143, SecureSocketOptions.None);
+				} catch (Exception ex) {
+					Assert.Fail ($"Did not expect an exception in Connect: {ex}");
+				}
+
+				// Note: we do not want to use SASL at all...
+				client.AuthenticationMechanisms.Clear ();
+
+				try {
+					client.Authenticate (credentials);
+				} catch (Exception ex) {
+					Assert.Fail ($"Did not expect an exception in Authenticate: {ex}");
+				}
+
+				var inbox = (ImapFolder) client.Inbox;
+				inbox.Open (FolderAccess.ReadWrite);
+
+				// Note: even though the server does not advertise the PARTIAL extension, the ESEARCH
+				// response parser should be able to handle a PARTIAL result for a raw search query.
+				var matches = inbox.Search ("RETURN (PARTIAL 1:10) ALL");
+				Assert.That (matches.Partial, Is.EqualTo (new PartialRange (1, 10)), "Partial");
+				Assert.That (matches.UniqueIds, Has.Count.EqualTo (8), "Unexpected number of UIDs");
+
+				client.Disconnect (false);
+			}
+		}
+
+		[Test]
+		public async Task TestSearchRawPartialResponseAsync ()
+		{
+			var commands = CreateSearchRawPartialResponseCommands ();
+
+			using (var client = new ImapClient () { TagPrefix = 'A' }) {
+				var credentials = new NetworkCredential ("username", "password");
+
+				try {
+					await client.ConnectAsync (new ImapReplayStream (commands, true), "localhost", 143, SecureSocketOptions.None);
+				} catch (Exception ex) {
+					Assert.Fail ($"Did not expect an exception in Connect: {ex}");
+				}
+
+				// Note: we do not want to use SASL at all...
+				client.AuthenticationMechanisms.Clear ();
+
+				try {
+					await client.AuthenticateAsync (credentials);
+				} catch (Exception ex) {
+					Assert.Fail ($"Did not expect an exception in Authenticate: {ex}");
+				}
+
+				var inbox = (ImapFolder) client.Inbox;
+				await inbox.OpenAsync (FolderAccess.ReadWrite);
+
+				// Note: even though the server does not advertise the PARTIAL extension, the ESEARCH
+				// response parser should be able to handle a PARTIAL result for a raw search query.
+				var matches = await inbox.SearchAsync ("RETURN (PARTIAL 1:10) ALL");
+				Assert.That (matches.Partial, Is.EqualTo (new PartialRange (1, 10)), "Partial");
+				Assert.That (matches.UniqueIds, Has.Count.EqualTo (8), "Unexpected number of UIDs");
+
+				await client.DisconnectAsync (false);
+			}
+		}
+
+		static List<ImapReplayCommand> CreateRawUnicodeSearchCommands ()
+		{
+			return new List<ImapReplayCommand> {
+				new ImapReplayCommand ("", "dovecot.greeting.txt"),
+				new ImapReplayCommand ("A00000000 LOGIN username password\r\n", "dovecot.authenticate+gmail-capabilities.txt"),
+				new ImapReplayCommand ("A00000001 NAMESPACE\r\n", "dovecot.namespace.txt"),
+				new ImapReplayCommand ("A00000002 LIST \"\" \"INBOX\" RETURN (SUBSCRIBED CHILDREN)\r\n", "dovecot.list-inbox.txt"),
+				new ImapReplayCommand ("A00000003 LIST (SPECIAL-USE) \"\" \"*\" RETURN (SUBSCRIBED CHILDREN)\r\n", "dovecot.list-special-use.txt"),
+				new ImapReplayCommand ("A00000004 SELECT INBOX (CONDSTORE)\r\n", "common.select-inbox.txt"),
+				new ImapReplayCommand (Encoding.UTF8, "A00000005 UID SEARCH SUBJECT {13+}\r\nComunicação\r\n", "dovecot.search-raw.txt")
+			};
+		}
+
+		[Test]
+		public void TestRawUnicodeSearch ()
+		{
+			var commands = CreateRawUnicodeSearchCommands ();
+
+			using (var client = new ImapClient () { TagPrefix = 'A' }) {
+				var credentials = new NetworkCredential ("username", "password");
+
+				try {
+					client.Connect (new ImapReplayStream (commands, false), "localhost", 143, SecureSocketOptions.None);
+				} catch (Exception ex) {
+					Assert.Fail ($"Did not expect an exception in Connect: {ex}");
+				}
+
+				// Note: we do not want to use SASL at all...
+				client.AuthenticationMechanisms.Clear ();
+
+				try {
+					client.Authenticate (credentials);
+				} catch (Exception ex) {
+					Assert.Fail ($"Did not expect an exception in Authenticate: {ex}");
+				}
+
+				Assert.That (client.Inbox.SyncRoot, Is.InstanceOf<ImapEngine> (), "SyncRoot");
 
 				var inbox = (ImapFolder) client.Inbox;
 				inbox.Open (FolderAccess.ReadWrite);
 
 				var matches = inbox.Search ("SUBJECT {13+}\r\nComunicação");
-				Assert.IsFalse (matches.Max.HasValue, "MAX should not be set");
-				Assert.IsFalse (matches.Min.HasValue, "MIN should not be set");
-				Assert.AreEqual (0, matches.Count, "COUNT should not be set");
-				Assert.AreEqual (14, matches.UniqueIds.Count);
+				Assert.That (matches.Max.HasValue, Is.True, "MAX should always be set");
+				Assert.That (matches.Max.Value.Id, Is.EqualTo (14), "Unexpected MAX value");
+				Assert.That (matches.Min.HasValue, Is.True, "MIN should always be set");
+				Assert.That (matches.Min.Value.Id, Is.EqualTo (1), "Unexpected MIN value");
+				Assert.That (matches.Count, Is.EqualTo (14), "COUNT should always be set");
+				Assert.That (matches.UniqueIds, Has.Count.EqualTo (14));
 				for (int i = 0; i < matches.UniqueIds.Count; i++)
-					Assert.AreEqual (i + 1, matches.UniqueIds[i].Id);
+					Assert.That (matches.UniqueIds[i].Id, Is.EqualTo (i + 1));
 
 				client.Disconnect (false);
 			}
+		}
+
+		[Test]
+		public async Task TestRawUnicodeSearchAsync ()
+		{
+			var commands = CreateRawUnicodeSearchCommands ();
+
+			using (var client = new ImapClient () { TagPrefix = 'A' }) {
+				var credentials = new NetworkCredential ("username", "password");
+
+				try {
+					await client.ConnectAsync (new ImapReplayStream (commands, true), "localhost", 143, SecureSocketOptions.None);
+				} catch (Exception ex) {
+					Assert.Fail ($"Did not expect an exception in Connect: {ex}");
+				}
+
+				// Note: we do not want to use SASL at all...
+				client.AuthenticationMechanisms.Clear ();
+
+				try {
+					await client.AuthenticateAsync (credentials);
+				} catch (Exception ex) {
+					Assert.Fail ($"Did not expect an exception in Authenticate: {ex}");
+				}
+
+				Assert.That (client.Inbox.SyncRoot, Is.InstanceOf<ImapEngine> (), "SyncRoot");
+
+				var inbox = (ImapFolder) client.Inbox;
+				await inbox.OpenAsync (FolderAccess.ReadWrite);
+
+				var matches = await inbox.SearchAsync ("SUBJECT {13+}\r\nComunicação");
+				Assert.That (matches.Max.HasValue, Is.True, "MAX should always be set");
+				Assert.That (matches.Max.Value.Id, Is.EqualTo (14), "Unexpected MAX value");
+				Assert.That (matches.Min.HasValue, Is.True, "MIN should always be set");
+				Assert.That (matches.Min.Value.Id, Is.EqualTo (1), "Unexpected MIN value");
+				Assert.That (matches.Count, Is.EqualTo (14), "COUNT should always be set");
+				Assert.That (matches.UniqueIds, Has.Count.EqualTo (14));
+				for (int i = 0; i < matches.UniqueIds.Count; i++)
+					Assert.That (matches.UniqueIds[i].Id, Is.EqualTo (i + 1));
+
+				await client.DisconnectAsync (false);
+			}
+		}
+
+		static List<ImapReplayCommand> CreateSearchStringWithSpacesCommands ()
+		{
+			return new List<ImapReplayCommand> {
+				new ImapReplayCommand ("", "yahoo.greeting.txt"),
+				new ImapReplayCommand ("A00000000 LOGIN username password\r\n", ImapReplayCommandResponse.OK),
+				new ImapReplayCommand ("A00000001 CAPABILITY\r\n", "yahoo.capabilities.txt"),
+				new ImapReplayCommand ("A00000002 NAMESPACE\r\n", "yahoo.namespace.txt"),
+				new ImapReplayCommand ("A00000003 LIST \"\" \"INBOX\"\r\n", "yahoo.list-inbox.txt"),
+				new ImapReplayCommand ("A00000004 EXAMINE Inbox\r\n", "yahoo.examine-inbox.txt"),
+				new ImapReplayCommand (Encoding.UTF8, "A00000005 UID SEARCH SUBJECT \"Yahoo Mail\"\r\n", "yahoo.search.txt")
+			};
 		}
 
 		[Test]
 		public void TestSearchStringWithSpaces ()
 		{
-			var commands = new List<ImapReplayCommand> ();
-			commands.Add (new ImapReplayCommand ("", "yahoo.greeting.txt"));
-			commands.Add (new ImapReplayCommand ("A00000000 LOGIN username password\r\n", ImapReplayCommandResponse.OK));
-			commands.Add (new ImapReplayCommand ("A00000001 CAPABILITY\r\n", "yahoo.capabilities.txt"));
-			commands.Add (new ImapReplayCommand ("A00000002 NAMESPACE\r\n", "yahoo.namespace.txt"));
-			commands.Add (new ImapReplayCommand ("A00000003 LIST \"\" \"INBOX\"\r\n", "yahoo.list-inbox.txt"));
-			commands.Add (new ImapReplayCommand ("A00000004 EXAMINE Inbox\r\n", "yahoo.examine-inbox.txt"));
-			commands.Add (new ImapReplayCommand (Encoding.UTF8, "A00000005 UID SEARCH SUBJECT \"Yahoo Mail\"\r\n", "yahoo.search.txt"));
+			var commands = CreateSearchStringWithSpacesCommands ();
 
-			using (var client = new ImapClient ()) {
+			using (var client = new ImapClient () { TagPrefix = 'A' }) {
 				var credentials = new NetworkCredential ("username", "password");
 
 				try {
-					client.ReplayConnect ("localhost", new ImapReplayStream (commands, false));
+					client.Connect (new ImapReplayStream (commands, false), "localhost", 143, SecureSocketOptions.None);
 				} catch (Exception ex) {
-					Assert.Fail ("Did not expect an exception in Connect: {0}", ex);
+					Assert.Fail ($"Did not expect an exception in Connect: {ex}");
 				}
 
 				// Note: we do not want to use SASL at all...
@@ -224,45 +1154,88 @@ namespace UnitTests.Net.Imap {
 				try {
 					client.Authenticate (credentials);
 				} catch (Exception ex) {
-					Assert.Fail ("Did not expect an exception in Authenticate: {0}", ex);
+					Assert.Fail ($"Did not expect an exception in Authenticate: {ex}");
 				}
 
-				Assert.IsInstanceOf<ImapEngine> (client.Inbox.SyncRoot, "SyncRoot");
+				Assert.That (client.Inbox.SyncRoot, Is.InstanceOf<ImapEngine> (), "SyncRoot");
 
 				var inbox = (ImapFolder) client.Inbox;
 				inbox.Open (FolderAccess.ReadOnly);
 
 				var uids = inbox.Search (SearchQuery.SubjectContains ("Yahoo Mail"));
-				Assert.AreEqual (14, uids.Count);
+				Assert.That (uids, Has.Count.EqualTo (14));
 				for (int i = 0; i < uids.Count; i++)
-					Assert.AreEqual (i + 1, uids[i].Id);
+					Assert.That (uids[i].Id, Is.EqualTo (i + 1));
 
 				client.Disconnect (false);
 			}
+		}
+
+		[Test]
+		public async Task TestSearchStringWithSpacesAsync ()
+		{
+			var commands = CreateSearchStringWithSpacesCommands ();
+
+			using (var client = new ImapClient () { TagPrefix = 'A' }) {
+				var credentials = new NetworkCredential ("username", "password");
+
+				try {
+					await client.ConnectAsync (new ImapReplayStream (commands, true), "localhost", 143, SecureSocketOptions.None);
+				} catch (Exception ex) {
+					Assert.Fail ($"Did not expect an exception in Connect: {ex}");
+				}
+
+				// Note: we do not want to use SASL at all...
+				client.AuthenticationMechanisms.Clear ();
+
+				try {
+					await client.AuthenticateAsync (credentials);
+				} catch (Exception ex) {
+					Assert.Fail ($"Did not expect an exception in Authenticate: {ex}");
+				}
+
+				Assert.That (client.Inbox.SyncRoot, Is.InstanceOf<ImapEngine> (), "SyncRoot");
+
+				var inbox = (ImapFolder) client.Inbox;
+				await inbox.OpenAsync (FolderAccess.ReadOnly);
+
+				var uids = await inbox.SearchAsync (SearchQuery.SubjectContains ("Yahoo Mail"));
+				Assert.That (uids, Has.Count.EqualTo (14));
+				for (int i = 0; i < uids.Count; i++)
+					Assert.That (uids[i].Id, Is.EqualTo (i + 1));
+
+				await client.DisconnectAsync (false);
+			}
+		}
+
+		static List<ImapReplayCommand> CreateSearchBadCharsetFallbackCommands ()
+		{
+			var badCharsetResponse = Encoding.ASCII.GetBytes ("A00000005 NO [BADCHARSET (US-ASCII)] The specified charset is not supported.\r\n");
+
+			return  new List<ImapReplayCommand> {
+				new ImapReplayCommand ("", "dovecot.greeting.txt"),
+				new ImapReplayCommand ("A00000000 LOGIN username password\r\n", "dovecot.authenticate+gmail-capabilities.txt"),
+				new ImapReplayCommand ("A00000001 NAMESPACE\r\n", "dovecot.namespace.txt"),
+				new ImapReplayCommand ("A00000002 LIST \"\" \"INBOX\" RETURN (SUBSCRIBED CHILDREN)\r\n", "dovecot.list-inbox.txt"),
+				new ImapReplayCommand ("A00000003 LIST (SPECIAL-USE) \"\" \"*\" RETURN (SUBSCRIBED CHILDREN)\r\n", "dovecot.list-special-use.txt"),
+				new ImapReplayCommand ("A00000004 SELECT INBOX (CONDSTORE)\r\n", "common.select-inbox.txt"),
+				new ImapReplayCommand (Encoding.UTF8, "A00000005 UID SEARCH RETURN (ALL) CHARSET UTF-8 SUBJECT {12+}\r\nпривет\r\n", badCharsetResponse),
+				new ImapReplayCommand ("A00000006 UID SEARCH RETURN (ALL) SUBJECT {6+}\r\n?@825B\r\n", "dovecot.search-raw.txt")
+			};
 		}
 
 		[Test]
 		public void TestSearchBadCharsetFallback ()
 		{
-			var badCharsetResponse = Encoding.ASCII.GetBytes ("A00000005 NO [BADCHARSET (US-ASCII)] The specified charset is not supported.\r\n");
+			var commands = CreateSearchBadCharsetFallbackCommands ();
 
-			var commands = new List<ImapReplayCommand> ();
-			commands.Add (new ImapReplayCommand ("", "dovecot.greeting.txt"));
-			commands.Add (new ImapReplayCommand ("A00000000 LOGIN username password\r\n", "dovecot.authenticate+gmail-capabilities.txt"));
-			commands.Add (new ImapReplayCommand ("A00000001 NAMESPACE\r\n", "dovecot.namespace.txt"));
-			commands.Add (new ImapReplayCommand ("A00000002 LIST \"\" \"INBOX\" RETURN (SUBSCRIBED CHILDREN)\r\n", "dovecot.list-inbox.txt"));
-			commands.Add (new ImapReplayCommand ("A00000003 LIST (SPECIAL-USE) \"\" \"*\" RETURN (SUBSCRIBED CHILDREN)\r\n", "dovecot.list-special-use.txt"));
-			commands.Add (new ImapReplayCommand ("A00000004 SELECT INBOX (CONDSTORE)\r\n", "common.select-inbox.txt"));
-			commands.Add (new ImapReplayCommand (Encoding.UTF8, "A00000005 UID SEARCH RETURN () CHARSET UTF-8 SUBJECT {12+}\r\nпривет\r\n", badCharsetResponse));
-			commands.Add (new ImapReplayCommand ("A00000006 UID SEARCH RETURN () SUBJECT {6+}\r\n?@825B\r\n", "dovecot.search-raw.txt"));
-
-			using (var client = new ImapClient ()) {
+			using (var client = new ImapClient () { TagPrefix = 'A' }) {
 				var credentials = new NetworkCredential ("username", "password");
 
 				try {
-					client.ReplayConnect ("localhost", new ImapReplayStream (commands, false));
+					client.Connect (new ImapReplayStream (commands, false), "localhost", 143, SecureSocketOptions.None);
 				} catch (Exception ex) {
-					Assert.Fail ("Did not expect an exception in Connect: {0}", ex);
+					Assert.Fail ($"Did not expect an exception in Connect: {ex}");
 				}
 
 				// Note: we do not want to use SASL at all...
@@ -271,45 +1244,88 @@ namespace UnitTests.Net.Imap {
 				try {
 					client.Authenticate (credentials);
 				} catch (Exception ex) {
-					Assert.Fail ("Did not expect an exception in Authenticate: {0}", ex);
+					Assert.Fail ($"Did not expect an exception in Authenticate: {ex}");
 				}
 
-				Assert.IsInstanceOf<ImapEngine> (client.Inbox.SyncRoot, "SyncRoot");
+				Assert.That (client.Inbox.SyncRoot, Is.InstanceOf<ImapEngine> (), "SyncRoot");
 
 				var inbox = (ImapFolder) client.Inbox;
 				inbox.Open (FolderAccess.ReadWrite);
 
 				var uids = inbox.Search (SearchQuery.SubjectContains ("привет"));
-				Assert.AreEqual (14, uids.Count);
+				Assert.That (uids, Has.Count.EqualTo (14));
 				for (int i = 0; i < uids.Count; i++)
-					Assert.AreEqual (i + 1, uids[i].Id);
+					Assert.That (uids[i].Id, Is.EqualTo (i + 1));
 
 				client.Disconnect (false);
 			}
 		}
 
 		[Test]
-		public void TestSearchWithOptionsBadCharsetFallback ()
+		public async Task TestSearchBadCharsetFallbackAsync ()
 		{
-			var badCharsetResponse = Encoding.ASCII.GetBytes ("A00000005 NO [BADCHARSET (US-ASCII)] The specified charset is not supported.\r\n");
+			var commands = CreateSearchBadCharsetFallbackCommands ();
 
-			var commands = new List<ImapReplayCommand> ();
-			commands.Add (new ImapReplayCommand ("", "dovecot.greeting.txt"));
-			commands.Add (new ImapReplayCommand ("A00000000 LOGIN username password\r\n", "dovecot.authenticate+gmail-capabilities.txt"));
-			commands.Add (new ImapReplayCommand ("A00000001 NAMESPACE\r\n", "dovecot.namespace.txt"));
-			commands.Add (new ImapReplayCommand ("A00000002 LIST \"\" \"INBOX\" RETURN (SUBSCRIBED CHILDREN)\r\n", "dovecot.list-inbox.txt"));
-			commands.Add (new ImapReplayCommand ("A00000003 LIST (SPECIAL-USE) \"\" \"*\" RETURN (SUBSCRIBED CHILDREN)\r\n", "dovecot.list-special-use.txt"));
-			commands.Add (new ImapReplayCommand ("A00000004 SELECT INBOX (CONDSTORE)\r\n", "common.select-inbox.txt"));
-			commands.Add (new ImapReplayCommand (Encoding.UTF8, "A00000005 UID SEARCH RETURN (ALL RELEVANCY COUNT MIN MAX) CHARSET UTF-8 SUBJECT {12+}\r\nпривет\r\n", badCharsetResponse));
-			commands.Add (new ImapReplayCommand ("A00000006 UID SEARCH RETURN (ALL RELEVANCY COUNT MIN MAX) SUBJECT {6+}\r\n?@825B\r\n", "dovecot.search-uids-options.txt"));
-
-			using (var client = new ImapClient ()) {
+			using (var client = new ImapClient () { TagPrefix = 'A' }) {
 				var credentials = new NetworkCredential ("username", "password");
 
 				try {
-					client.ReplayConnect ("localhost", new ImapReplayStream (commands, false));
+					await client.ConnectAsync (new ImapReplayStream (commands, true), "localhost", 143, SecureSocketOptions.None);
 				} catch (Exception ex) {
-					Assert.Fail ("Did not expect an exception in Connect: {0}", ex);
+					Assert.Fail ($"Did not expect an exception in Connect: {ex}");
+				}
+
+				// Note: we do not want to use SASL at all...
+				client.AuthenticationMechanisms.Clear ();
+
+				try {
+					await client.AuthenticateAsync (credentials);
+				} catch (Exception ex) {
+					Assert.Fail ($"Did not expect an exception in Authenticate: {ex}");
+				}
+
+				Assert.That (client.Inbox.SyncRoot, Is.InstanceOf<ImapEngine> (), "SyncRoot");
+
+				var inbox = (ImapFolder) client.Inbox;
+				await inbox.OpenAsync (FolderAccess.ReadWrite);
+
+				var uids = await inbox.SearchAsync (SearchQuery.SubjectContains ("привет"));
+				Assert.That (uids, Has.Count.EqualTo (14));
+				for (int i = 0; i < uids.Count; i++)
+					Assert.That (uids[i].Id, Is.EqualTo (i + 1));
+
+				await client.DisconnectAsync (false);
+			}
+		}
+
+		static List<ImapReplayCommand> CreateSearchWithOptionsBadCharsetFallbackCommands ()
+		{
+			var badCharsetResponse = Encoding.ASCII.GetBytes ("A00000005 NO [BADCHARSET (US-ASCII)] The specified charset is not supported.\r\n");
+
+			return new List<ImapReplayCommand> {
+				new ImapReplayCommand ("", "dovecot.greeting.txt"),
+				new ImapReplayCommand ("A00000000 LOGIN username password\r\n", "dovecot.authenticate+gmail-capabilities.txt"),
+				new ImapReplayCommand ("A00000001 NAMESPACE\r\n", "dovecot.namespace.txt"),
+				new ImapReplayCommand ("A00000002 LIST \"\" \"INBOX\" RETURN (SUBSCRIBED CHILDREN)\r\n", "dovecot.list-inbox.txt"),
+				new ImapReplayCommand ("A00000003 LIST (SPECIAL-USE) \"\" \"*\" RETURN (SUBSCRIBED CHILDREN)\r\n", "dovecot.list-special-use.txt"),
+				new ImapReplayCommand ("A00000004 SELECT INBOX (CONDSTORE)\r\n", "common.select-inbox.txt"),
+				new ImapReplayCommand (Encoding.UTF8, "A00000005 UID SEARCH RETURN (ALL RELEVANCY COUNT MIN MAX) CHARSET UTF-8 SUBJECT {12+}\r\nпривет\r\n", badCharsetResponse),
+				new ImapReplayCommand ("A00000006 UID SEARCH RETURN (ALL RELEVANCY COUNT MIN MAX) SUBJECT {6+}\r\n?@825B\r\n", "dovecot.search-uids-options.txt")
+			};
+		}
+
+		[Test]
+		public void TestSearchWithOptionsBadCharsetFallback ()
+		{
+			var commands = CreateSearchWithOptionsBadCharsetFallbackCommands ();
+
+			using (var client = new ImapClient () { TagPrefix = 'A' }) {
+				var credentials = new NetworkCredential ("username", "password");
+
+				try {
+					client.Connect (new ImapReplayStream (commands, false), "localhost", 143, SecureSocketOptions.None);
+				} catch (Exception ex) {
+					Assert.Fail ($"Did not expect an exception in Connect: {ex}");
 				}
 
 				// Note: we do not want to use SASL at all...
@@ -318,10 +1334,10 @@ namespace UnitTests.Net.Imap {
 				try {
 					client.Authenticate (credentials);
 				} catch (Exception ex) {
-					Assert.Fail ("Did not expect an exception in Authenticate: {0}", ex);
+					Assert.Fail ($"Did not expect an exception in Authenticate: {ex}");
 				}
 
-				Assert.IsInstanceOf<ImapEngine> (client.Inbox.SyncRoot, "SyncRoot");
+				Assert.That (client.Inbox.SyncRoot, Is.InstanceOf<ImapEngine> (), "SyncRoot");
 
 				var inbox = (ImapFolder) client.Inbox;
 				inbox.Open (FolderAccess.ReadWrite);
@@ -329,40 +1345,89 @@ namespace UnitTests.Net.Imap {
 				var searchOptions = SearchOptions.All | SearchOptions.Count | SearchOptions.Min | SearchOptions.Max | SearchOptions.Relevancy;
 				var matches = inbox.Search (searchOptions, SearchQuery.SubjectContains ("привет"));
 				var expectedMatchedUids = new uint[] { 2, 3, 4, 5, 6, 9, 10, 11, 12, 13 };
-				Assert.AreEqual (10, matches.Count, "Unexpected COUNT");
-				Assert.AreEqual (13, matches.Max.Value.Id, "Unexpected MAX");
-				Assert.AreEqual (2, matches.Min.Value.Id, "Unexpected MIN");
-				Assert.AreEqual (10, matches.UniqueIds.Count, "Unexpected number of UIDs");
+				Assert.That (matches.Count, Is.EqualTo (10), "Unexpected COUNT");
+				Assert.That (matches.Max.Value.Id, Is.EqualTo (13), "Unexpected MAX");
+				Assert.That (matches.Min.Value.Id, Is.EqualTo (2), "Unexpected MIN");
+				Assert.That (matches.UniqueIds, Has.Count.EqualTo (10), "Unexpected number of UIDs");
 				for (int i = 0; i < matches.UniqueIds.Count; i++)
-					Assert.AreEqual (expectedMatchedUids[i], matches.UniqueIds[i].Id);
-				Assert.AreEqual (matches.Count, matches.Relevancy.Count, "Unexpected number of relevancy scores");
+					Assert.That (matches.UniqueIds[i].Id, Is.EqualTo (expectedMatchedUids[i]));
+				Assert.That (matches.Relevancy, Has.Count.EqualTo (matches.Count), "Unexpected number of relevancy scores");
 
 				client.Disconnect (false);
 			}
 		}
 
 		[Test]
-		public void TestSortBadCharsetFallback ()
+		public async Task TestSearchWithOptionsBadCharsetFallbackAsync ()
 		{
-			var badCharsetResponse = Encoding.ASCII.GetBytes ("A00000005 NO [BADCHARSET (US-ASCII)] The specified charset is not supported.\r\n");
+			var commands = CreateSearchWithOptionsBadCharsetFallbackCommands ();
 
-			var commands = new List<ImapReplayCommand> ();
-			commands.Add (new ImapReplayCommand ("", "dovecot.greeting.txt"));
-			commands.Add (new ImapReplayCommand ("A00000000 LOGIN username password\r\n", "dovecot.authenticate+gmail-capabilities.txt"));
-			commands.Add (new ImapReplayCommand ("A00000001 NAMESPACE\r\n", "dovecot.namespace.txt"));
-			commands.Add (new ImapReplayCommand ("A00000002 LIST \"\" \"INBOX\" RETURN (SUBSCRIBED CHILDREN)\r\n", "dovecot.list-inbox.txt"));
-			commands.Add (new ImapReplayCommand ("A00000003 LIST (SPECIAL-USE) \"\" \"*\" RETURN (SUBSCRIBED CHILDREN)\r\n", "dovecot.list-special-use.txt"));
-			commands.Add (new ImapReplayCommand ("A00000004 SELECT INBOX (CONDSTORE)\r\n", "common.select-inbox.txt"));
-			commands.Add (new ImapReplayCommand (Encoding.UTF8, "A00000005 UID SORT RETURN () (SUBJECT) UTF-8 SUBJECT {12+}\r\nпривет\r\n", badCharsetResponse));
-			commands.Add (new ImapReplayCommand ("A00000006 UID SORT RETURN () (SUBJECT) US-ASCII SUBJECT {6+}\r\n?@825B\r\n", "dovecot.sort-raw.txt"));
-
-			using (var client = new ImapClient ()) {
+			using (var client = new ImapClient () { TagPrefix = 'A' }) {
 				var credentials = new NetworkCredential ("username", "password");
 
 				try {
-					client.ReplayConnect ("localhost", new ImapReplayStream (commands, false));
+					await client.ConnectAsync (new ImapReplayStream (commands, true), "localhost", 143, SecureSocketOptions.None);
 				} catch (Exception ex) {
-					Assert.Fail ("Did not expect an exception in Connect: {0}", ex);
+					Assert.Fail ($"Did not expect an exception in Connect: {ex}");
+				}
+
+				// Note: we do not want to use SASL at all...
+				client.AuthenticationMechanisms.Clear ();
+
+				try {
+					await client.AuthenticateAsync (credentials);
+				} catch (Exception ex) {
+					Assert.Fail ($"Did not expect an exception in Authenticate: {ex}");
+				}
+
+				Assert.That (client.Inbox.SyncRoot, Is.InstanceOf<ImapEngine> (), "SyncRoot");
+
+				var inbox = (ImapFolder) client.Inbox;
+				await inbox.OpenAsync (FolderAccess.ReadWrite);
+
+				var searchOptions = SearchOptions.All | SearchOptions.Count | SearchOptions.Min | SearchOptions.Max | SearchOptions.Relevancy;
+				var matches = await inbox.SearchAsync (searchOptions, SearchQuery.SubjectContains ("привет"));
+				var expectedMatchedUids = new uint[] { 2, 3, 4, 5, 6, 9, 10, 11, 12, 13 };
+				Assert.That (matches.Count, Is.EqualTo (10), "Unexpected COUNT");
+				Assert.That (matches.Max.Value.Id, Is.EqualTo (13), "Unexpected MAX");
+				Assert.That (matches.Min.Value.Id, Is.EqualTo (2), "Unexpected MIN");
+				Assert.That (matches.UniqueIds, Has.Count.EqualTo (10), "Unexpected number of UIDs");
+				for (int i = 0; i < matches.UniqueIds.Count; i++)
+					Assert.That (matches.UniqueIds[i].Id, Is.EqualTo (expectedMatchedUids[i]));
+				Assert.That (matches.Relevancy, Has.Count.EqualTo (matches.Count), "Unexpected number of relevancy scores");
+
+				await client.DisconnectAsync (false);
+			}
+		}
+
+		static List<ImapReplayCommand> CreateSortBadCharsetFallbackCommands ()
+		{
+			var badCharsetResponse = Encoding.ASCII.GetBytes ("A00000005 NO [BADCHARSET (US-ASCII)] The specified charset is not supported.\r\n");
+
+			return new List<ImapReplayCommand> {
+				new ImapReplayCommand ("", "dovecot.greeting.txt"),
+				new ImapReplayCommand ("A00000000 LOGIN username password\r\n", "dovecot.authenticate+gmail-capabilities.txt"),
+				new ImapReplayCommand ("A00000001 NAMESPACE\r\n", "dovecot.namespace.txt"),
+				new ImapReplayCommand ("A00000002 LIST \"\" \"INBOX\" RETURN (SUBSCRIBED CHILDREN)\r\n", "dovecot.list-inbox.txt"),
+				new ImapReplayCommand ("A00000003 LIST (SPECIAL-USE) \"\" \"*\" RETURN (SUBSCRIBED CHILDREN)\r\n", "dovecot.list-special-use.txt"),
+				new ImapReplayCommand ("A00000004 SELECT INBOX (CONDSTORE)\r\n", "common.select-inbox.txt"),
+				new ImapReplayCommand (Encoding.UTF8, "A00000005 UID SORT RETURN (ALL) (SUBJECT) UTF-8 SUBJECT {12+}\r\nпривет\r\n", badCharsetResponse),
+				new ImapReplayCommand ("A00000006 UID SORT RETURN (ALL) (SUBJECT) US-ASCII SUBJECT {6+}\r\n?@825B\r\n", "dovecot.sort-raw.txt")
+			};
+		}
+
+		[Test]
+		public void TestSortBadCharsetFallback ()
+		{
+			var commands = CreateSortBadCharsetFallbackCommands ();
+
+			using (var client = new ImapClient () { TagPrefix = 'A' }) {
+				var credentials = new NetworkCredential ("username", "password");
+
+				try {
+					client.Connect (new ImapReplayStream (commands, false), "localhost", 143, SecureSocketOptions.None);
+				} catch (Exception ex) {
+					Assert.Fail ($"Did not expect an exception in Connect: {ex}");
 				}
 
 				// Note: we do not want to use SASL at all...
@@ -371,10 +1436,10 @@ namespace UnitTests.Net.Imap {
 				try {
 					client.Authenticate (credentials);
 				} catch (Exception ex) {
-					Assert.Fail ("Did not expect an exception in Authenticate: {0}", ex);
+					Assert.Fail ($"Did not expect an exception in Authenticate: {ex}");
 				}
 
-				Assert.IsInstanceOf<ImapEngine> (client.Inbox.SyncRoot, "SyncRoot");
+				Assert.That (client.Inbox.SyncRoot, Is.InstanceOf<ImapEngine> (), "SyncRoot");
 
 				var inbox = (ImapFolder) client.Inbox;
 				inbox.Open (FolderAccess.ReadWrite);
@@ -382,34 +1447,77 @@ namespace UnitTests.Net.Imap {
 				var uids = inbox.Sort (SearchQuery.SubjectContains ("привет"), new OrderBy[] { OrderBy.Subject });
 				var expected = new uint[] { 7, 14, 6, 13, 5, 12, 4, 11, 3, 10, 2, 9, 1, 8 };
 				for (int i = 0; i < uids.Count; i++)
-					Assert.AreEqual (expected[i], uids[i].Id, "Unexpected value for UniqueId[{0}]", i);
+					Assert.That (uids[i].Id, Is.EqualTo (expected[i]), $"Unexpected value for UniqueId[{i}]");
 
 				client.Disconnect (false);
 			}
 		}
 
 		[Test]
-		public void TestSortWithOptionsBadCharsetFallback ()
+		public async Task TestSortBadCharsetFallbackAsync ()
 		{
-			var badCharsetResponse = Encoding.ASCII.GetBytes ("A00000005 NO [BADCHARSET (US-ASCII)] The specified charset is not supported.\r\n");
+			var commands = CreateSortBadCharsetFallbackCommands ();
 
-			var commands = new List<ImapReplayCommand> ();
-			commands.Add (new ImapReplayCommand ("", "dovecot.greeting.txt"));
-			commands.Add (new ImapReplayCommand ("A00000000 LOGIN username password\r\n", "dovecot.authenticate+gmail-capabilities.txt"));
-			commands.Add (new ImapReplayCommand ("A00000001 NAMESPACE\r\n", "dovecot.namespace.txt"));
-			commands.Add (new ImapReplayCommand ("A00000002 LIST \"\" \"INBOX\" RETURN (SUBSCRIBED CHILDREN)\r\n", "dovecot.list-inbox.txt"));
-			commands.Add (new ImapReplayCommand ("A00000003 LIST (SPECIAL-USE) \"\" \"*\" RETURN (SUBSCRIBED CHILDREN)\r\n", "dovecot.list-special-use.txt"));
-			commands.Add (new ImapReplayCommand ("A00000004 SELECT INBOX (CONDSTORE)\r\n", "common.select-inbox.txt"));
-			commands.Add (new ImapReplayCommand (Encoding.UTF8, "A00000005 UID SORT RETURN (ALL RELEVANCY COUNT MIN MAX) (ARRIVAL) UTF-8 SUBJECT {12+}\r\nпривет\r\n", badCharsetResponse));
-			commands.Add (new ImapReplayCommand ("A00000006 UID SORT RETURN (ALL RELEVANCY COUNT MIN MAX) (ARRIVAL) US-ASCII SUBJECT {6+}\r\n?@825B\r\n", "dovecot.sort-uids-options.txt"));
-
-			using (var client = new ImapClient ()) {
+			using (var client = new ImapClient () { TagPrefix = 'A' }) {
 				var credentials = new NetworkCredential ("username", "password");
 
 				try {
-					client.ReplayConnect ("localhost", new ImapReplayStream (commands, false));
+					await client.ConnectAsync (new ImapReplayStream (commands, true), "localhost", 143, SecureSocketOptions.None);
 				} catch (Exception ex) {
-					Assert.Fail ("Did not expect an exception in Connect: {0}", ex);
+					Assert.Fail ($"Did not expect an exception in Connect: {ex}");
+				}
+
+				// Note: we do not want to use SASL at all...
+				client.AuthenticationMechanisms.Clear ();
+
+				try {
+					await client.AuthenticateAsync (credentials);
+				} catch (Exception ex) {
+					Assert.Fail ($"Did not expect an exception in Authenticate: {ex}");
+				}
+
+				Assert.That (client.Inbox.SyncRoot, Is.InstanceOf<ImapEngine> (), "SyncRoot");
+
+				var inbox = (ImapFolder) client.Inbox;
+				await inbox.OpenAsync (FolderAccess.ReadWrite);
+
+				var uids = await inbox.SortAsync (SearchQuery.SubjectContains ("привет"), new OrderBy[] { OrderBy.Subject });
+				var expected = new uint[] { 7, 14, 6, 13, 5, 12, 4, 11, 3, 10, 2, 9, 1, 8 };
+				for (int i = 0; i < uids.Count; i++)
+					Assert.That (uids[i].Id, Is.EqualTo (expected[i]), $"Unexpected value for UniqueId[{i}]");
+
+				await client.DisconnectAsync (false);
+			}
+		}
+
+		static List<ImapReplayCommand> CreateSortWithOptionsBadCharsetFallbackCommands ()
+		{
+			var badCharsetResponse = Encoding.ASCII.GetBytes ("A00000005 NO [BADCHARSET (US-ASCII)] The specified charset is not supported.\r\n");
+
+			return new List<ImapReplayCommand> {
+				new ImapReplayCommand ("", "dovecot.greeting.txt"),
+				new ImapReplayCommand ("A00000000 LOGIN username password\r\n", "dovecot.authenticate+gmail-capabilities.txt"),
+				new ImapReplayCommand ("A00000001 NAMESPACE\r\n", "dovecot.namespace.txt"),
+				new ImapReplayCommand ("A00000002 LIST \"\" \"INBOX\" RETURN (SUBSCRIBED CHILDREN)\r\n", "dovecot.list-inbox.txt"),
+				new ImapReplayCommand ("A00000003 LIST (SPECIAL-USE) \"\" \"*\" RETURN (SUBSCRIBED CHILDREN)\r\n", "dovecot.list-special-use.txt"),
+				new ImapReplayCommand ("A00000004 SELECT INBOX (CONDSTORE)\r\n", "common.select-inbox.txt"),
+				new ImapReplayCommand (Encoding.UTF8, "A00000005 UID SORT RETURN (ALL RELEVANCY COUNT MIN MAX) (ARRIVAL) UTF-8 SUBJECT {12+}\r\nпривет\r\n", badCharsetResponse),
+				new ImapReplayCommand ("A00000006 UID SORT RETURN (ALL RELEVANCY COUNT MIN MAX) (ARRIVAL) US-ASCII SUBJECT {6+}\r\n?@825B\r\n", "dovecot.sort-uids-options.txt")
+			};
+		}
+
+		[Test]
+		public void TestSortWithOptionsBadCharsetFallback ()
+		{
+			var commands = CreateSortWithOptionsBadCharsetFallbackCommands ();
+
+			using (var client = new ImapClient () { TagPrefix = 'A' }) {
+				var credentials = new NetworkCredential ("username", "password");
+
+				try {
+					client.Connect (new ImapReplayStream (commands, false), "localhost", 143, SecureSocketOptions.None);
+				} catch (Exception ex) {
+					Assert.Fail ($"Did not expect an exception in Connect: {ex}");
 				}
 
 				// Note: we do not want to use SASL at all...
@@ -418,53 +1526,102 @@ namespace UnitTests.Net.Imap {
 				try {
 					client.Authenticate (credentials);
 				} catch (Exception ex) {
-					Assert.Fail ("Did not expect an exception in Authenticate: {0}", ex);
+					Assert.Fail ($"Did not expect an exception in Authenticate: {ex}");
 				}
 
-				Assert.IsInstanceOf<ImapEngine> (client.Inbox.SyncRoot, "SyncRoot");
+				Assert.That (client.Inbox.SyncRoot, Is.InstanceOf<ImapEngine> (), "SyncRoot");
 
 				var inbox = (ImapFolder) client.Inbox;
 				inbox.Open (FolderAccess.ReadWrite);
 
 				var searchOptions = SearchOptions.All | SearchOptions.Count | SearchOptions.Min | SearchOptions.Max | SearchOptions.Relevancy;
 				var sorted = inbox.Sort (searchOptions, SearchQuery.SubjectContains ("привет"), new OrderBy[] { OrderBy.Arrival });
-				Assert.AreEqual (14, sorted.UniqueIds.Count, "Unexpected number of UIDs");
-				Assert.AreEqual (sorted.Count, sorted.Relevancy.Count, "Unexpected number of relevancy scores");
+				Assert.That (sorted.UniqueIds, Has.Count.EqualTo (14), "Unexpected number of UIDs");
+				Assert.That (sorted.Relevancy, Has.Count.EqualTo (sorted.Count), "Unexpected number of relevancy scores");
 				for (int i = 0; i < sorted.UniqueIds.Count; i++)
-					Assert.AreEqual (i + 1, sorted.UniqueIds[i].Id, "Unexpected value for UniqueId[{0}]", i);
-				Assert.IsFalse (sorted.ModSeq.HasValue, "Expected the ModSeq property to be null");
-				Assert.AreEqual (1, sorted.Min.Value.Id, "Unexpected Min");
-				Assert.AreEqual (14, sorted.Max.Value.Id, "Unexpected Max");
-				Assert.AreEqual (14, sorted.Count, "Unexpected Count");
+					Assert.That (sorted.UniqueIds[i].Id, Is.EqualTo (i + 1), $"Unexpected value for UniqueId[{i}]");
+				Assert.That (sorted.ModSeq.HasValue, Is.False, "Expected the ModSeq property to be null");
+				Assert.That (sorted.Min.Value.Id, Is.EqualTo (1), "Unexpected Min");
+				Assert.That (sorted.Max.Value.Id, Is.EqualTo (14), "Unexpected Max");
+				Assert.That (sorted.Count, Is.EqualTo (14), "Unexpected Count");
 
 				client.Disconnect (false);
 			}
+		}
+
+		[Test]
+		public async Task TestSortWithOptionsBadCharsetFallbackAsync ()
+		{
+			var commands = CreateSortWithOptionsBadCharsetFallbackCommands ();
+
+			using (var client = new ImapClient () { TagPrefix = 'A' }) {
+				var credentials = new NetworkCredential ("username", "password");
+
+				try {
+					await client.ConnectAsync (new ImapReplayStream (commands, true), "localhost", 143, SecureSocketOptions.None);
+				} catch (Exception ex) {
+					Assert.Fail ($"Did not expect an exception in Connect: {ex}");
+				}
+
+				// Note: we do not want to use SASL at all...
+				client.AuthenticationMechanisms.Clear ();
+
+				try {
+					await client.AuthenticateAsync (credentials);
+				} catch (Exception ex) {
+					Assert.Fail ($"Did not expect an exception in Authenticate: {ex}");
+				}
+
+				Assert.That (client.Inbox.SyncRoot, Is.InstanceOf<ImapEngine> (), "SyncRoot");
+
+				var inbox = (ImapFolder) client.Inbox;
+				await inbox.OpenAsync (FolderAccess.ReadWrite);
+
+				var searchOptions = SearchOptions.All | SearchOptions.Count | SearchOptions.Min | SearchOptions.Max | SearchOptions.Relevancy;
+				var sorted = await inbox.SortAsync (searchOptions, SearchQuery.SubjectContains ("привет"), new OrderBy[] { OrderBy.Arrival });
+				Assert.That (sorted.UniqueIds, Has.Count.EqualTo (14), "Unexpected number of UIDs");
+				Assert.That (sorted.Relevancy, Has.Count.EqualTo (sorted.Count), "Unexpected number of relevancy scores");
+				for (int i = 0; i < sorted.UniqueIds.Count; i++)
+					Assert.That (sorted.UniqueIds[i].Id, Is.EqualTo (i + 1), $"Unexpected value for UniqueId[{i}]");
+				Assert.That (sorted.ModSeq.HasValue, Is.False, "Expected the ModSeq property to be null");
+				Assert.That (sorted.Min.Value.Id, Is.EqualTo (1), "Unexpected Min");
+				Assert.That (sorted.Max.Value.Id, Is.EqualTo (14), "Unexpected Max");
+				Assert.That (sorted.Count, Is.EqualTo (14), "Unexpected Count");
+
+				await client.DisconnectAsync (false);
+			}
+		}
+
+		static List<ImapReplayCommand> CreateThreadBadCharsetFallbackCommands ()
+		{
+			var badCharsetResponse = Encoding.ASCII.GetBytes ("A00000005 NO [BADCHARSET (US-ASCII)] The specified charset is not supported.\r\n");
+
+			return new List<ImapReplayCommand> {
+				new ImapReplayCommand ("", "dovecot.greeting.txt"),
+				new ImapReplayCommand ("A00000000 LOGIN username password\r\n", "dovecot.authenticate+gmail-capabilities.txt"),
+				new ImapReplayCommand ("A00000001 NAMESPACE\r\n", "dovecot.namespace.txt"),
+				new ImapReplayCommand ("A00000002 LIST \"\" \"INBOX\" RETURN (SUBSCRIBED CHILDREN)\r\n", "dovecot.list-inbox.txt"),
+				new ImapReplayCommand ("A00000003 LIST (SPECIAL-USE) \"\" \"*\" RETURN (SUBSCRIBED CHILDREN)\r\n", "dovecot.list-special-use.txt"),
+				new ImapReplayCommand ("A00000004 SELECT INBOX (CONDSTORE)\r\n", "common.select-inbox.txt"),
+				//new ImapReplayCommand ("A00000005 UID THREAD REFERENCES US-ASCII \r\n", "dovecot.thread-references.txt"),
+				//(new ImapReplayCommand ("A00000017 UID THREAD ORDEREDSUBJECT US-ASCII UID 1:* ALL\r\n", "dovecot.thread-orderedsubject.txt"),
+				new ImapReplayCommand (Encoding.UTF8, "A00000005 UID THREAD REFERENCES UTF-8 SUBJECT {12+}\r\nпривет\r\n", badCharsetResponse),
+				new ImapReplayCommand ("A00000006 UID THREAD REFERENCES US-ASCII SUBJECT {6+}\r\n?@825B\r\n", "dovecot.thread-references.txt")
+			};
 		}
 
 		[Test]
 		public void TestThreadBadCharsetFallback ()
 		{
-			var badCharsetResponse = Encoding.ASCII.GetBytes ("A00000005 NO [BADCHARSET (US-ASCII)] The specified charset is not supported.\r\n");
+			var commands = CreateThreadBadCharsetFallbackCommands ();
 
-			var commands = new List<ImapReplayCommand> ();
-			commands.Add (new ImapReplayCommand ("", "dovecot.greeting.txt"));
-			commands.Add (new ImapReplayCommand ("A00000000 LOGIN username password\r\n", "dovecot.authenticate+gmail-capabilities.txt"));
-			commands.Add (new ImapReplayCommand ("A00000001 NAMESPACE\r\n", "dovecot.namespace.txt"));
-			commands.Add (new ImapReplayCommand ("A00000002 LIST \"\" \"INBOX\" RETURN (SUBSCRIBED CHILDREN)\r\n", "dovecot.list-inbox.txt"));
-			commands.Add (new ImapReplayCommand ("A00000003 LIST (SPECIAL-USE) \"\" \"*\" RETURN (SUBSCRIBED CHILDREN)\r\n", "dovecot.list-special-use.txt"));
-			commands.Add (new ImapReplayCommand ("A00000004 SELECT INBOX (CONDSTORE)\r\n", "common.select-inbox.txt"));
-			//commands.Add (new ImapReplayCommand ("A00000005 UID THREAD REFERENCES US-ASCII \r\n", "dovecot.thread-references.txt"));
-			//commands.Add (new ImapReplayCommand ("A00000017 UID THREAD ORDEREDSUBJECT US-ASCII UID 1:* ALL\r\n", "dovecot.thread-orderedsubject.txt"));
-			commands.Add (new ImapReplayCommand (Encoding.UTF8, "A00000005 UID THREAD REFERENCES UTF-8 SUBJECT {12+}\r\nпривет\r\n", badCharsetResponse));
-			commands.Add (new ImapReplayCommand ("A00000006 UID THREAD REFERENCES US-ASCII SUBJECT {6+}\r\n?@825B\r\n", "dovecot.thread-references.txt"));
-
-			using (var client = new ImapClient ()) {
+			using (var client = new ImapClient () { TagPrefix = 'A' }) {
 				var credentials = new NetworkCredential ("username", "password");
 
 				try {
-					client.ReplayConnect ("localhost", new ImapReplayStream (commands, false));
+					client.Connect (new ImapReplayStream (commands, false), "localhost", 143, SecureSocketOptions.None);
 				} catch (Exception ex) {
-					Assert.Fail ("Did not expect an exception in Connect: {0}", ex);
+					Assert.Fail ($"Did not expect an exception in Connect: {ex}");
 				}
 
 				// Note: we do not want to use SASL at all...
@@ -473,46 +1630,90 @@ namespace UnitTests.Net.Imap {
 				try {
 					client.Authenticate (credentials);
 				} catch (Exception ex) {
-					Assert.Fail ("Did not expect an exception in Authenticate: {0}", ex);
+					Assert.Fail ($"Did not expect an exception in Authenticate: {ex}");
 				}
 
-				Assert.IsInstanceOf<ImapEngine> (client.Inbox.SyncRoot, "SyncRoot");
+				Assert.That (client.Inbox.SyncRoot, Is.InstanceOf<ImapEngine> (), "SyncRoot");
 
 				var inbox = (ImapFolder) client.Inbox;
 				inbox.Open (FolderAccess.ReadWrite);
 
-				Assert.IsTrue (inbox.Supports (FolderFeature.Threading), "Supports threading");
-				Assert.IsTrue (inbox.ThreadingAlgorithms.Contains (ThreadingAlgorithm.References), "Supports threading by References");
+				Assert.That (inbox.Supports (FolderFeature.Threading), Is.True, "Supports threading");
+				Assert.That (inbox.ThreadingAlgorithms, Does.Contain (ThreadingAlgorithm.References), "Supports threading by References");
 
 				var threaded = inbox.Thread (ThreadingAlgorithm.References, SearchQuery.SubjectContains ("привет"));
-				Assert.AreEqual (2, threaded.Count, "Unexpected number of root nodes in threaded results");
+				Assert.That (threaded, Has.Count.EqualTo (2), "Unexpected number of root nodes in threaded results");
 
 				client.Disconnect (false);
 			}
 		}
 
 		[Test]
-		public void TestThreadUidsBadCharsetFallback ()
+		public async Task TestThreadBadCharsetFallbackAsync ()
 		{
-			var badCharsetResponse = Encoding.ASCII.GetBytes ("A00000005 NO [BADCHARSET (US-ASCII)] The specified charset is not supported.\r\n");
+			var commands = CreateThreadBadCharsetFallbackCommands ();
 
-			var commands = new List<ImapReplayCommand> ();
-			commands.Add (new ImapReplayCommand ("", "dovecot.greeting.txt"));
-			commands.Add (new ImapReplayCommand ("A00000000 LOGIN username password\r\n", "dovecot.authenticate+gmail-capabilities.txt"));
-			commands.Add (new ImapReplayCommand ("A00000001 NAMESPACE\r\n", "dovecot.namespace.txt"));
-			commands.Add (new ImapReplayCommand ("A00000002 LIST \"\" \"INBOX\" RETURN (SUBSCRIBED CHILDREN)\r\n", "dovecot.list-inbox.txt"));
-			commands.Add (new ImapReplayCommand ("A00000003 LIST (SPECIAL-USE) \"\" \"*\" RETURN (SUBSCRIBED CHILDREN)\r\n", "dovecot.list-special-use.txt"));
-			commands.Add (new ImapReplayCommand ("A00000004 SELECT INBOX (CONDSTORE)\r\n", "common.select-inbox.txt"));
-			commands.Add (new ImapReplayCommand (Encoding.UTF8, "A00000005 UID THREAD REFERENCES UTF-8 UID 1:* SUBJECT {12+}\r\nпривет\r\n", badCharsetResponse));
-			commands.Add (new ImapReplayCommand ("A00000006 UID THREAD REFERENCES US-ASCII UID 1:* SUBJECT {6+}\r\n?@825B\r\n", "dovecot.thread-references.txt"));
-
-			using (var client = new ImapClient ()) {
+			using (var client = new ImapClient () { TagPrefix = 'A' }) {
 				var credentials = new NetworkCredential ("username", "password");
 
 				try {
-					client.ReplayConnect ("localhost", new ImapReplayStream (commands, false));
+					await client.ConnectAsync (new ImapReplayStream (commands, true), "localhost", 143, SecureSocketOptions.None);
 				} catch (Exception ex) {
-					Assert.Fail ("Did not expect an exception in Connect: {0}", ex);
+					Assert.Fail ($"Did not expect an exception in Connect: {ex}");
+				}
+
+				// Note: we do not want to use SASL at all...
+				client.AuthenticationMechanisms.Clear ();
+
+				try {
+					await client.AuthenticateAsync (credentials);
+				} catch (Exception ex) {
+					Assert.Fail ($"Did not expect an exception in Authenticate: {ex}");
+				}
+
+				Assert.That (client.Inbox.SyncRoot, Is.InstanceOf<ImapEngine> (), "SyncRoot");
+
+				var inbox = (ImapFolder) client.Inbox;
+				await inbox.OpenAsync (FolderAccess.ReadWrite);
+
+				Assert.That (inbox.Supports (FolderFeature.Threading), Is.True, "Supports threading");
+				Assert.That (inbox.ThreadingAlgorithms, Does.Contain (ThreadingAlgorithm.References), "Supports threading by References");
+
+				var threaded = await inbox.ThreadAsync (ThreadingAlgorithm.References, SearchQuery.SubjectContains ("привет"));
+				Assert.That (threaded, Has.Count.EqualTo (2), "Unexpected number of root nodes in threaded results");
+
+				await client.DisconnectAsync (false);
+			}
+		}
+
+		static List<ImapReplayCommand> CreateThreadUidsBadCharsetFallbackCommands ()
+		{
+			var badCharsetResponse = Encoding.ASCII.GetBytes ("A00000005 NO [BADCHARSET (US-ASCII)] The specified charset is not supported.\r\n");
+
+			return new List<ImapReplayCommand> {
+				new ImapReplayCommand ("", "dovecot.greeting.txt"),
+				new ImapReplayCommand ("A00000000 LOGIN username password\r\n", "dovecot.authenticate+gmail-capabilities.txt"),
+				new ImapReplayCommand ("A00000001 NAMESPACE\r\n", "dovecot.namespace.txt"),
+				new ImapReplayCommand ("A00000002 LIST \"\" \"INBOX\" RETURN (SUBSCRIBED CHILDREN)\r\n", "dovecot.list-inbox.txt"),
+				new ImapReplayCommand ("A00000003 LIST (SPECIAL-USE) \"\" \"*\" RETURN (SUBSCRIBED CHILDREN)\r\n", "dovecot.list-special-use.txt"),
+				new ImapReplayCommand ("A00000004 SELECT INBOX (CONDSTORE)\r\n", "common.select-inbox.txt"),
+				new ImapReplayCommand (Encoding.UTF8, "A00000005 UID THREAD REFERENCES UTF-8 UID 1:* SUBJECT {12+}\r\nпривет\r\n", badCharsetResponse),
+				new ImapReplayCommand ("A00000006 UID THREAD REFERENCES US-ASCII UID 1:* SUBJECT {6+}\r\n?@825B\r\n", "dovecot.thread-references.txt")
+			};
+		}
+
+		[Test]
+		public void TestThreadUidsBadCharsetFallback ()
+		{
+			var commands = CreateThreadUidsBadCharsetFallbackCommands ();
+
+			using (var client = new ImapClient () { TagPrefix = 'A' }) {
+				var credentials = new NetworkCredential ("username", "password");
+
+				try {
+					client.Connect (new ImapReplayStream (commands, false), "localhost", 143, SecureSocketOptions.None);
+				} catch (Exception ex) {
+					Assert.Fail ($"Did not expect an exception in Connect: {ex}");
 				}
 
 				// Note: we do not want to use SASL at all...
@@ -521,21 +1722,59 @@ namespace UnitTests.Net.Imap {
 				try {
 					client.Authenticate (credentials);
 				} catch (Exception ex) {
-					Assert.Fail ("Did not expect an exception in Authenticate: {0}", ex);
+					Assert.Fail ($"Did not expect an exception in Authenticate: {ex}");
 				}
 
-				Assert.IsInstanceOf<ImapEngine> (client.Inbox.SyncRoot, "SyncRoot");
+				Assert.That (client.Inbox.SyncRoot, Is.InstanceOf<ImapEngine> (), "SyncRoot");
 
 				var inbox = (ImapFolder) client.Inbox;
 				inbox.Open (FolderAccess.ReadWrite);
 
-				Assert.IsTrue (inbox.Supports (FolderFeature.Threading), "Supports threading");
-				Assert.IsTrue (inbox.ThreadingAlgorithms.Contains (ThreadingAlgorithm.References), "Supports threading by References");
+				Assert.That (inbox.Supports (FolderFeature.Threading), Is.True, "Supports threading");
+				Assert.That (inbox.ThreadingAlgorithms, Does.Contain (ThreadingAlgorithm.References), "Supports threading by References");
 
 				var threaded = inbox.Thread (UniqueIdRange.All, ThreadingAlgorithm.References, SearchQuery.SubjectContains ("привет"));
-				Assert.AreEqual (2, threaded.Count, "Unexpected number of root nodes in threaded results");
+				Assert.That (threaded, Has.Count.EqualTo (2), "Unexpected number of root nodes in threaded results");
 
 				client.Disconnect (false);
+			}
+		}
+
+		[Test]
+		public async Task TestThreadUidsBadCharsetFallbackAsync ()
+		{
+			var commands = CreateThreadUidsBadCharsetFallbackCommands ();
+
+			using (var client = new ImapClient () { TagPrefix = 'A' }) {
+				var credentials = new NetworkCredential ("username", "password");
+
+				try {
+					await client.ConnectAsync (new ImapReplayStream (commands, true), "localhost", 143, SecureSocketOptions.None);
+				} catch (Exception ex) {
+					Assert.Fail ($"Did not expect an exception in Connect: {ex}");
+				}
+
+				// Note: we do not want to use SASL at all...
+				client.AuthenticationMechanisms.Clear ();
+
+				try {
+					await client.AuthenticateAsync (credentials);
+				} catch (Exception ex) {
+					Assert.Fail ($"Did not expect an exception in Authenticate: {ex}");
+				}
+
+				Assert.That (client.Inbox.SyncRoot, Is.InstanceOf<ImapEngine> (), "SyncRoot");
+
+				var inbox = (ImapFolder) client.Inbox;
+				await inbox.OpenAsync (FolderAccess.ReadWrite);
+
+				Assert.That (inbox.Supports (FolderFeature.Threading), Is.True, "Supports threading");
+				Assert.That (inbox.ThreadingAlgorithms, Does.Contain (ThreadingAlgorithm.References), "Supports threading by References");
+
+				var threaded = await inbox.ThreadAsync (UniqueIdRange.All, ThreadingAlgorithm.References, SearchQuery.SubjectContains ("привет"));
+				Assert.That (threaded, Has.Count.EqualTo (2), "Unexpected number of root nodes in threaded results");
+
+				await client.DisconnectAsync (false);
 			}
 		}
 	}

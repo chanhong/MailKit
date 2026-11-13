@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -27,11 +27,18 @@
 using System;
 using System.Text;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 
 using MimeKit;
 using MimeKit.Utils;
 
 using MailKit.Search;
+
+#if NET5_0_OR_GREATER
+using IReadOnlySetOfStrings = System.Collections.Generic.IReadOnlySet<string>;
+#else
+using IReadOnlySetOfStrings = System.Collections.Generic.ISet<string>;
+#endif
 
 namespace MailKit {
 	/// <summary>
@@ -45,14 +52,15 @@ namespace MailKit {
 		internal class ThreadableNode : IMessageSummary
 		{
 			public readonly List<ThreadableNode> Children = new List<ThreadableNode> ();
-			public IMessageSummary Message;
-			public ThreadableNode Parent;
+			public IMessageSummary? Message;
+			public ThreadableNode? Parent;
 
-			public ThreadableNode (IMessageSummary message)
+			public ThreadableNode (IMessageSummary? message)
 			{
 				Message = message;
 			}
 
+			[MemberNotNullWhen (true, nameof (Parent))]
 			public bool HasParent {
 				get { return Parent != null; }
 			}
@@ -61,25 +69,23 @@ namespace MailKit {
 				get { return Children.Count > 0; }
 			}
 
-			public IMailFolder Folder => null;
-
 			public MessageSummaryItems Fields {
 				get { return MessageSummaryItems.UniqueId | MessageSummaryItems.Envelope | MessageSummaryItems.ModSeq | MessageSummaryItems.Size; }
 			}
 
-			public BodyPart Body => null;
+			public BodyPart? Body => null;
 
-			public BodyPartText TextBody => null;
+			public BodyPartText? TextBody => null;
 
-			public BodyPartText HtmlBody => null;
+			public BodyPartText? HtmlBody => null;
 
-			public IEnumerable<BodyPartBasic> BodyParts => null;
+			public IEnumerable<BodyPartBasic> BodyParts => Array.Empty<BodyPartBasic> ();
 
-			public IEnumerable<BodyPartBasic> Attachments => null;
+			public IEnumerable<BodyPartBasic> Attachments => Array.Empty<BodyPartBasic> ();
 
-			public string PreviewText => null;
+			public string? PreviewText => null;
 
-			public Envelope Envelope {
+			public Envelope? Envelope {
 				get { return Message != null ? Message.Envelope : Children[0].Envelope; }
 			}
 
@@ -97,22 +103,21 @@ namespace MailKit {
 
 			public MessageFlags? Flags => null;
 
-			public HashSet<string> Keywords => null;
+			public IReadOnlySetOfStrings Keywords {
+				get { return new HashSet<string> (); }
+			}
 
-			[Obsolete]
-			public HashSet<string> UserFlags => null;
-
-			public IList<Annotation> Annotations {
+			public IReadOnlyList<Annotation>? Annotations {
 				get { return Message != null ? Message.Annotations : Children[0].Annotations; }
 			}
 
-			public HeaderList Headers => null;
+			public HeaderList? Headers => null;
 
 			public DateTimeOffset? InternalDate => null;
 
 			public DateTimeOffset? SaveDate => null;
 
-			public uint? Size {
+			public long? Size {
 				get { return Message != null ? Message.Size : Children[0].Size; }
 			}
 
@@ -120,16 +125,13 @@ namespace MailKit {
 				get { return Message != null ? Message.ModSeq : Children[0].ModSeq; }
 			}
 
-			public MessageIdList References {
+			public MessageIdList? References {
 				get { return Message != null ? Message.References : Children[0].References; }
 			}
 
-			public string EmailId => null;
+			public string? EmailId => null;
 
-			[Obsolete]
-			public string Id => null;
-
-			public string ThreadId => null;
+			public string? ThreadId => null;
 
 			public UniqueId UniqueId {
 				get { return Message != null ? Message.UniqueId : Children[0].UniqueId; }
@@ -143,13 +145,12 @@ namespace MailKit {
 
 			public ulong? GMailThreadId => null;
 
-			public IList<string> GMailLabels => null;
+			public IList<string>? GMailLabels => null;
 		}
 
-		static IDictionary<string, ThreadableNode> CreateIdTable (IEnumerable<IMessageSummary> messages)
+		static Dictionary<string, ThreadableNode> CreateIdTable (IEnumerable<IMessageSummary> messages)
 		{
 			var ids = new Dictionary<string, ThreadableNode> (StringComparer.OrdinalIgnoreCase);
-			ThreadableNode node;
 
 			foreach (var message in messages) {
 				if (message.Envelope == null)
@@ -160,7 +161,7 @@ namespace MailKit {
 				if (string.IsNullOrEmpty (id))
 					id = MimeUtils.GenerateMessageId ();
 
-				if (ids.TryGetValue (id, out node)) {
+				if (ids.TryGetValue (id!, out var node)) {
 					if (node.Message == null) {
 						// a previously processed message referenced this message
 						node.Message = message;
@@ -174,26 +175,27 @@ namespace MailKit {
 				if (node == null) {
 					// create a new ThreadContainer for this message and add it to ids
 					node = new ThreadableNode (message);
-					ids.Add (id, node);
+					ids.Add (id!, node);
 				}
 
-				ThreadableNode parent = null;
-				foreach (var reference in message.References) {
-					ThreadableNode referenced;
+				ThreadableNode? parent = null;
 
-					if (!ids.TryGetValue (reference, out referenced)) {
-						// create a dummy container for the referenced message
-						referenced = new ThreadableNode (null);
-						ids.Add (reference, referenced);
+				if (message.References != null) {
+					foreach (var reference in message.References) {
+						if (!ids.TryGetValue (reference, out var referenced)) {
+							// create a dummy container for the referenced message
+							referenced = new ThreadableNode (null);
+							ids.Add (reference, referenced);
+						}
+
+						// chain up the references, disallowing loops
+						if (parent != null && referenced.Parent == null && parent != referenced && !parent.Children.Contains (referenced)) {
+							parent.Children.Add (referenced);
+							referenced.Parent = parent;
+						}
+
+						parent = referenced;
 					}
-
-					// chain up the references, disallowing loops
-					if (parent != null && referenced.Parent == null && parent != referenced && !parent.Children.Contains (referenced)) {
-						parent.Children.Add (referenced);
-						referenced.Parent = parent;
-					}
-
-					parent = referenced;
 				}
 
 				// don't allow loops
@@ -230,13 +232,24 @@ namespace MailKit {
 
 		static void PruneEmptyContainers (ThreadableNode root)
 		{
-			for (int i = 0; i < root.Children.Count; i++) {
+			var parents = new Stack<(ThreadableNode Root, int Index)> ();
+			int i = 0;
+
+			while (true) {
+				if (i == root.Children.Count) {
+					if (parents.Count == 0)
+						return;
+
+					(root, i) = parents.Pop ();
+					continue;
+				}
+
 				var node = root.Children[i];
 
 				if (node.Message == null && node.Children.Count == 0) {
 					// this is an empty container with no children, nuke it.
 					root.Children.RemoveAt (i);
-					i--;
+					continue;
 				} else if (node.Message == null && node.HasChildren && (node.HasParent || node.Children.Count == 1)) {
 					// If the Container has no Message, but does have children, remove this container but promote
 					// its children to this level (that is, splice them in to the current child list.)
@@ -251,17 +264,22 @@ namespace MailKit {
 					}
 
 					node.Children.Clear ();
-					i--;
+					continue;
 				} else if (node.HasChildren) {
-					PruneEmptyContainers (node);
+					parents.Push ((root, i + 1));
+					root = node;
+					i = 0;
+					continue;
 				}
+
+				i++;
 			}
 		}
 
 		static void GroupBySubject (ThreadableNode root)
 		{
 			var subjects = new Dictionary<string, ThreadableNode> (StringComparer.OrdinalIgnoreCase);
-			ThreadableNode match;
+			ThreadableNode? match;
 			int count = 0;
 
 			for (int i = 0; i < root.Children.Count; i++) {
@@ -311,7 +329,7 @@ namespace MailKit {
 					// is not, make the current message a child of the message in the subject
 					// table (a sibling of its children).
 					match.Children.Add (current);
-				} else if (current.Message.IsReply && !match.Message.IsReply) {
+				} else if (current.IsReply && !match.IsReply) {
 					// If the current message is a reply or forward and the message in the
 					// subject table is not, make the current message a child of the message
 					// in the subject table (a sibling of its children).
@@ -342,18 +360,33 @@ namespace MailKit {
 
 		static void GetThreads (ThreadableNode root, IList<MessageThread> threads, IList<OrderBy> orderBy)
 		{
+			var parents = new Stack<(ThreadableNode Root, IList<MessageThread> Threads, int Index)> ();
+			int i = 0;
+
 			root.Children.Sort (orderBy);
 
-			for (int i = 0; i < root.Children.Count; i++) {
-				var message = root.Children[i].Message;
-				var thread = new MessageThread (message);
+			while (true) {
+				if (i == root.Children.Count) {
+					if (parents.Count == 0)
+						return;
 
-				GetThreads (root.Children[i], thread.Children, orderBy);
+					(root, threads, i) = parents.Pop ();
+					continue;
+				}
+
+				var node = root.Children[i++];
+				var thread = new MessageThread (node.Message);
+
 				threads.Add (thread);
+				parents.Push ((root, threads, i));
+				root = node;
+				threads = thread.Children;
+				i = 0;
+				root.Children.Sort (orderBy);
 			}
 		}
 
-		static IList<MessageThread> ThreadByReferences (IEnumerable<IMessageSummary> messages, IList<OrderBy> orderBy)
+		static List<MessageThread> ThreadByReferences (IEnumerable<IMessageSummary> messages, IList<OrderBy> orderBy)
 		{
 			var threads = new List<MessageThread> ();
 			var ids = CreateIdTable (messages);
@@ -367,7 +400,7 @@ namespace MailKit {
 			return threads;
 		}
 
-		static IList<MessageThread> ThreadBySubject (IEnumerable<IMessageSummary> messages, IList<OrderBy> orderBy)
+		static List<MessageThread> ThreadBySubject (IEnumerable<IMessageSummary> messages, IList<OrderBy> orderBy)
 		{
 			var threads = new List<MessageThread> ();
 			var root = new ThreadableNode (null);
@@ -398,7 +431,7 @@ namespace MailKit {
 		/// <param name="messages">The messages.</param>
 		/// <param name="algorithm">The threading algorithm.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="messages"/> is <c>null</c>.
+		/// <paramref name="messages"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <paramref name="algorithm"/> is not a valid threading algorithm.
@@ -424,9 +457,9 @@ namespace MailKit {
 		/// <param name="algorithm">The threading algorithm.</param>
 		/// <param name="orderBy">The requested sort ordering.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <para><paramref name="messages"/> is <c>null</c>.</para>
+		/// <para><paramref name="messages"/> is <see langword="null" />.</para>
 		/// <para>-or-</para>
-		/// <para><paramref name="orderBy"/> is <c>null</c>.</para>
+		/// <para><paramref name="orderBy"/> is <see langword="null" />.</para>
 		/// </exception>
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <paramref name="algorithm"/> is not a valid threading algorithm.
@@ -509,7 +542,7 @@ namespace MailKit {
 		/// <param name="subject">The Subject header value.</param>
 		/// <param name="replyDepth">The reply depth.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="subject"/> is <c>null</c>.
+		/// <paramref name="subject"/> is <see langword="null" />.
 		/// </exception>
 		public static string GetThreadableSubject (string subject, out int replyDepth)
 		{
@@ -520,8 +553,7 @@ namespace MailKit {
 
 			int endIndex = subject.Length;
 			int startIndex = 0;
-			int index, count;
-			int left;
+			int index, left;
 
 			do {
 				SkipWhiteSpace (subject, ref startIndex);
@@ -552,7 +584,7 @@ namespace MailKit {
 						index += 3;
 
 						// if this is followed by "###]:" or "###):", then it's a condensed "Re:"
-						if (SkipDigits (subject, ref index, out count) && (endIndex - index) >= 2 &&
+						if (SkipDigits (subject, ref index, out int count) && (endIndex - index) >= 2 &&
 							subject[index] == close && subject[index + 1] == ':') {
 							startIndex = index + 2;
 							replyDepth += count;

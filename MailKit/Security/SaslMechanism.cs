@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -27,11 +27,14 @@
 using System;
 using System.Net;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Collections.Generic;
 using System.Security.Cryptography;
+using System.Diagnostics.CodeAnalysis;
+using System.Security.Authentication.ExtendedProtection;
 
-#if NETSTANDARD1_3 || NETSTANDARD1_6
-using MD5 = MimeKit.Cryptography.MD5;
-#endif
+using MailKit.Net;
 
 namespace MailKit.Security {
 	/// <summary>
@@ -41,7 +44,7 @@ namespace MailKit.Security {
 	/// Authenticating via a SASL mechanism may be a multi-step process.
 	/// To determine if the mechanism has completed the necessary steps
 	/// to authentication, check the <see cref="IsAuthenticated"/> after
-	/// each call to <see cref="Challenge(string)"/>.
+	/// each call to <see cref="Challenge(string,CancellationToken)"/>.
 	/// </remarks>
 	public abstract class SaslMechanism
 	{
@@ -49,22 +52,85 @@ namespace MailKit.Security {
 		/// The supported authentication mechanisms in order of strongest to weakest.
 		/// </summary>
 		/// <remarks>
-		/// Used by the various clients when authenticating via SASL to determine
-		/// which order the SASL mechanisms supported by the server should be tried.
+		/// <para>Used by the various clients when authenticating via SASL to determine
+		/// which order the SASL mechanisms supported by the server should be tried.</para>
 		/// </remarks>
-		public static readonly string[] AuthMechanismRank = {
-			"SCRAM-SHA-512", "SCRAM-SHA-256", "SCRAM-SHA-1", "CRAM-MD5", "DIGEST-MD5", "PLAIN", "LOGIN"
-		};
-		static readonly bool md5supported;
+		static readonly string[] RankedAuthenticationMechanisms;
+
+#if NET7_0_OR_GREATER
+		static readonly Lazy<bool> NativeNtlmSupported = new Lazy<bool> (CheckNativeNtlmSupported, LazyThreadSafetyMode.ExecutionAndPublication);
+		static readonly Lazy<bool> GssapiSupported = new Lazy<bool> (CheckGssapiSupported, LazyThreadSafetyMode.ExecutionAndPublication);
+#endif
+		static readonly bool Md5Supported;
 
 		static SaslMechanism ()
 		{
 			try {
 				using (var md5 = MD5.Create ())
-					md5supported = true;
+					Md5Supported = true;
 			} catch {
-				md5supported = false;
+				Md5Supported = false;
 			}
+
+			var supported = new List<string> {
+				"SCRAM-SHA-512",
+				"SCRAM-SHA-256",
+				"SCRAM-SHA-1",
+
+				// Note: NTLM is considered less secure than even SCRAM-SHA-1 (even though SHA-1 is considered weak)
+				// because it is vulnerable to replay and MitM attacks. The cryptography used by NTLM is also very
+				// weak at this point (DES for NTLMv1 and HMAC-MD5 for NTLMv2).
+				"NTLM"
+			};
+
+			if (Md5Supported) {
+				supported.Add ("DIGEST-MD5");
+				supported.Add ("CRAM-MD5");
+			}
+			supported.Add ("PLAIN");
+			supported.Add ("LOGIN");
+
+			RankedAuthenticationMechanisms = supported.ToArray ();
+		}
+
+#if NET7_0_OR_GREATER
+		static bool CheckNativeNtlmSupported ()
+		{
+			return SaslMechanismNegotiateBase.CheckSupported ("NTLM");
+		}
+
+		static bool CheckGssapiSupported ()
+		{
+			return SaslMechanismNegotiateBase.CheckSupported ("GSSAPI");
+		}
+#endif
+
+		/// <summary>
+		/// Rank authentication mechanisms in order of security.
+		/// </summary>
+		/// <remarks>
+		/// <para>Ranks authentication mechanisms in order of security.</para>
+		/// </remarks>
+		/// <param name="authenticationMechanisms">The authentication mechanisms supported by the server.</param>
+		/// <returns>The supported authentication mechanisms in ranked order.</returns>
+		internal static IEnumerable<string> Rank (HashSet<string> authenticationMechanisms)
+		{
+			foreach (var mechanism in RankedAuthenticationMechanisms) {
+				if (mechanism.StartsWith ("SCRAM-SHA", StringComparison.Ordinal)) {
+					var plus = mechanism + "-PLUS";
+
+					if (authenticationMechanisms.Contains (plus)) {
+						// Note: If the server supports SCRAM-SHA-#-PLUS, we opt for the -PLUS variant and do not include the non-PLUS variant.
+						yield return plus;
+						continue;
+					}
+				}
+
+				if (authenticationMechanisms.Contains (mechanism))
+					yield return mechanism;
+			}
+
+			yield break;
 		}
 
 		/// <summary>
@@ -73,67 +139,9 @@ namespace MailKit.Security {
 		/// <remarks>
 		/// Creates a new SASL context.
 		/// </remarks>
-		/// <param name="uri">The URI of the service.</param>
 		/// <param name="credentials">The user's credentials.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <para><paramref name="uri"/> is <c>null</c>.</para>
-		/// <para>-or-</para>
-		/// <para><paramref name="credentials"/> is <c>null</c>.</para>
-		/// </exception>
-		[Obsolete ("Use SaslMechanism(NetworkCredential) instead.")]
-		protected SaslMechanism (Uri uri, ICredentials credentials)
-		{
-			if (uri == null)
-				throw new ArgumentNullException (nameof (uri));
-
-			if (credentials == null)
-				throw new ArgumentNullException (nameof (credentials));
-
-			Credentials = credentials.GetCredential (uri, MechanismName);
-			Uri = uri;
-		}
-
-		/// <summary>
-		/// Initializes a new instance of the <see cref="MailKit.Security.SaslMechanism"/> class.
-		/// </summary>
-		/// <remarks>
-		/// Creates a new SASL context.
-		/// </remarks>
-		/// <param name="uri">The URI of the service.</param>
-		/// <param name="userName">The user name.</param>
-		/// <param name="password">The password.</param>
-		/// <exception cref="System.ArgumentNullException">
-		/// <para><paramref name="uri"/> is <c>null</c>.</para>
-		/// <para>-or-</para>
-		/// <para><paramref name="userName"/> is <c>null</c>.</para>
-		/// <para>-or-</para>
-		/// <para><paramref name="password"/> is <c>null</c>.</para>
-		/// </exception>
-		[Obsolete ("Use SaslMechanism(string, string) instead.")]
-		protected SaslMechanism (Uri uri, string userName, string password)
-		{
-			if (uri == null)
-				throw new ArgumentNullException (nameof (uri));
-
-			if (userName == null)
-				throw new ArgumentNullException (nameof (userName));
-
-			if (password == null)
-				throw new ArgumentNullException (nameof (password));
-
-			Credentials = new NetworkCredential (userName, password);
-			Uri = uri;
-		}
-
-		/// <summary>
-		/// Initializes a new instance of the <see cref="MailKit.Security.SaslMechanism"/> class.
-		/// </summary>
-		/// <remarks>
-		/// Creates a new SASL context.
-		/// </remarks>
-		/// <param name="credentials">The user's credentials.</param>
-		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="credentials"/> is <c>null</c>.
+		/// <paramref name="credentials"/> is <see langword="null" />.
 		/// </exception>
 		protected SaslMechanism (NetworkCredential credentials)
 		{
@@ -152,9 +160,9 @@ namespace MailKit.Security {
 		/// <param name="userName">The user name.</param>
 		/// <param name="password">The password.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <para><paramref name="userName"/> is <c>null</c>.</para>
+		/// <para><paramref name="userName"/> is <see langword="null" />.</para>
 		/// <para>-or-</para>
-		/// <para><paramref name="password"/> is <c>null</c>.</para>
+		/// <para><paramref name="password"/> is <see langword="null" />.</para>
 		/// </exception>
 		protected SaslMechanism (string userName, string password)
 		{
@@ -168,10 +176,10 @@ namespace MailKit.Security {
 		}
 
 		/// <summary>
-		/// Gets the name of the mechanism.
+		/// Get the name of the SASL mechanism.
 		/// </summary>
 		/// <remarks>
-		/// Gets the name of the mechanism.
+		/// Gets the name of the SASL mechanism.
 		/// </remarks>
 		/// <value>The name of the mechanism.</value>
 		public abstract string MechanismName {
@@ -179,7 +187,7 @@ namespace MailKit.Security {
 		}
 
 		/// <summary>
-		/// Gets the user's credentials.
+		/// Get the user's credentials.
 		/// </summary>
 		/// <remarks>
 		/// Gets the user's credentials.
@@ -190,54 +198,156 @@ namespace MailKit.Security {
 		}
 
 		/// <summary>
-		/// Gets whether or not the mechanism supports an initial response (SASL-IR).
+		/// Get whether or not the SASL mechanism supports channel binding.
 		/// </summary>
 		/// <remarks>
-		/// SASL mechanisms that support sending an initial client response to the server
-		/// should return <value>true</value>.
+		/// Gets whether or not the SASL mechanism supports channel binding.
 		/// </remarks>
-		/// <value><c>true</c> if the mechanism supports an initial response; otherwise, <c>false</c>.</value>
+		/// <value><see langword="true" /> if the SASL mechanism supports channel binding; otherwise, <see langword="false" />.</value>
+		public virtual bool SupportsChannelBinding {
+			get { return false; }
+		}
+
+		/// <summary>
+		/// Get whether or not the SASL mechanism supports an initial response (SASL-IR).
+		/// </summary>
+		/// <remarks>
+		/// <para>Gets whether or not the SASL mechanism supports an initial response (SASL-IR).</para>
+		/// <para>SASL mechanisms that support sending an initial client response to the server
+		/// should return <see langword="true" />.</para>
+		/// </remarks>
+		/// <value><see langword="true" /> if the SASL mechanism supports an initial response; otherwise, <see langword="false" />.</value>
 		public virtual bool SupportsInitialResponse {
 			get { return false; }
 		}
 
 		/// <summary>
-		/// Gets or sets whether the SASL mechanism has finished authenticating.
+		/// Get or set whether the SASL mechanism has finished authenticating.
 		/// </summary>
 		/// <remarks>
 		/// Gets or sets whether the SASL mechanism has finished authenticating.
 		/// </remarks>
-		/// <value><c>true</c> if the SASL mechanism has finished authenticating; otherwise, <c>false</c>.</value>
+		/// <value><see langword="true" /> if the SASL mechanism has finished authenticating; otherwise, <see langword="false" />.</value>
 		public bool IsAuthenticated {
 			get; protected set;
 		}
 
 		/// <summary>
-		/// Gets whether or not a security layer was negotiated.
+		/// Get whether or not channel-binding was negotiated by the SASL mechanism.
+		/// </summary>
+		/// <remarks>
+		/// <para>Gets whether or not channel-binding has been negotiated by the SASL mechanism.</para>
+		/// <note type="note">Some SASL mechanisms, such as SCRAM-SHA1-PLUS and NTLM, are able to negotiate
+		/// channel-bindings.</note>
+		/// </remarks>
+		/// <value><see langword="true" /> if channel-binding was negotiated; otherwise, <see langword="false" />.</value>
+		public virtual bool NegotiatedChannelBinding {
+			get { return false; }
+		}
+
+		/// <summary>
+		/// Get whether or not a security layer was negotiated by the SASL mechanism.
 		/// </summary>
 		/// <remarks>
 		/// <para>Gets whether or not a security layer has been negotiated by the SASL mechanism.</para>
 		/// <note type="note">Some SASL mechanisms, such as GSSAPI, are able to negotiate security layers
 		/// such as integrity and confidentiality protection.</note>
 		/// </remarks>
-		/// <value><c>true</c> if a security layer was negotiated; otherwise, <c>false</c>.</value>
+		/// <value><see langword="true" /> if a security layer was negotiated; otherwise, <see langword="false" />.</value>
 		public virtual bool NegotiatedSecurityLayer {
 			get { return false; }
 		}
 
 		/// <summary>
-		/// Gets or sets the URI of the service.
+		/// Get or set the channel-binding context.
+		/// </summary>
+		/// <remarks>
+		/// Gets or sets the channel-binding context.
+		/// </remarks>
+		/// <value>The channel-binding context.</value>
+		internal IChannelBindingContext? ChannelBindingContext {
+			get; set;
+		}
+
+		/// <summary>
+		/// Get or set the URI of the service.
 		/// </summary>
 		/// <remarks>
 		/// Gets or sets the URI of the service.
 		/// </remarks>
 		/// <value>The URI of the service.</value>
-		internal Uri Uri {
+		internal Uri? Uri {
 			get; set;
 		}
 
+#if NET8_0_OR_GREATER
 		/// <summary>
-		/// Parses the server's challenge token and returns the next challenge response.
+		/// Try to get a channel-binding.
+		/// </summary>
+		/// <remarks>
+		/// Tries to get the specified channel-binding.
+		/// <note type="note">This method is only available on .NET 8.0 and later.</note>
+		/// </remarks>
+		/// <param name="kind">The kind of channel-binding desired.</param>
+		/// <param name="channelBinding">A buffer containing the channel-binding.</param>
+		/// <returns><see langword="true" /> if the channel-binding token was acquired; otherwise, <see langword="false" />.</returns>
+		protected bool TryGetChannelBinding (ChannelBindingKind kind, [NotNullWhen (true)] out ChannelBinding? channelBinding)
+		{
+			if (ChannelBindingContext == null) {
+				channelBinding = null;
+				return false;
+			}
+
+			return ChannelBindingContext.TryGetChannelBinding (kind, out channelBinding);
+		}
+#endif
+
+		/// <summary>
+		/// Try to get a channel-binding token.
+		/// </summary>
+		/// <remarks>
+		/// Tries to get the specified channel-binding.
+		/// </remarks>
+		/// <param name="kind">The kind of channel-binding desired.</param>
+		/// <param name="token">A buffer containing the channel-binding token.</param>
+		/// <returns><see langword="true" /> if the channel-binding token was acquired; otherwise, <see langword="false" />.</returns>
+		protected bool TryGetChannelBindingToken (ChannelBindingKind kind, [NotNullWhen (true)] out byte[]? token)
+		{
+			if (ChannelBindingContext == null) {
+				token = null;
+				return false;
+			}
+
+			return ChannelBindingContext.TryGetChannelBindingToken (kind, out token);
+		}
+
+		static byte[]? Base64Decode (string? token, out int length)
+		{
+			byte[]? decoded = null;
+
+			length = 0;
+
+			if (token != null) {
+				try {
+					decoded = Convert.FromBase64String (token);
+					length = decoded.Length;
+				} catch (FormatException) {
+				}
+			}
+
+			return decoded;
+		}
+
+		static string Base64Encode (byte[]? challenge)
+		{
+			if (challenge == null || challenge.Length == 0)
+				return string.Empty;
+
+			return Convert.ToBase64String (challenge);
+		}
+
+		/// <summary>
+		/// Parse the server's challenge token and return the next challenge response.
 		/// </summary>
 		/// <remarks>
 		/// Parses the server's challenge token and returns the next challenge response.
@@ -246,57 +356,103 @@ namespace MailKit.Security {
 		/// <param name="token">The server's challenge token.</param>
 		/// <param name="startIndex">The index into the token specifying where the server's challenge begins.</param>
 		/// <param name="length">The length of the server's challenge.</param>
-		/// <exception cref="System.InvalidOperationException">
-		/// The SASL mechanism is already authenticated.
-		/// </exception>
+		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.NotSupportedException">
-		/// THe SASL mechanism does not support SASL-IR.
+		/// The SASL mechanism does not support SASL-IR.
+		/// </exception>
+		/// <exception cref="System.OperationCanceledException">
+		/// The operation was canceled via the cancellation token.
 		/// </exception>
 		/// <exception cref="SaslException">
 		/// An error has occurred while parsing the server's challenge token.
 		/// </exception>
-		protected abstract byte[] Challenge (byte[] token, int startIndex, int length);
+		protected abstract byte[]? Challenge (byte[]? token, int startIndex, int length, CancellationToken cancellationToken);
 
 		/// <summary>
-		/// Decodes the base64-encoded server challenge and returns the next challenge response encoded in base64.
+		/// Decode the base64-encoded server challenge and return the next challenge response encoded in base64.
 		/// </summary>
 		/// <remarks>
 		/// Decodes the base64-encoded server challenge and returns the next challenge response encoded in base64.
 		/// </remarks>
 		/// <returns>The next base64-encoded challenge response.</returns>
 		/// <param name="token">The server's base64-encoded challenge token.</param>
-		/// <exception cref="System.InvalidOperationException">
-		/// The SASL mechanism is already authenticated.
-		/// </exception>
+		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.NotSupportedException">
-		/// THe SASL mechanism does not support SASL-IR.
+		/// The SASL mechanism does not support SASL-IR.
+		/// </exception>
+		/// <exception cref="System.OperationCanceledException">
+		/// The operation was canceled via the cancellation token.
 		/// </exception>
 		/// <exception cref="SaslException">
 		/// An error has occurred while parsing the server's challenge token.
 		/// </exception>
-		public string Challenge (string token)
+		public string Challenge (string? token, CancellationToken cancellationToken = default)
 		{
-			byte[] decoded = null;
-			int length = 0;
+			cancellationToken.ThrowIfCancellationRequested ();
 
-			if (token != null) {
-				try {
-					decoded = Convert.FromBase64String (token.Trim ());
-					length = decoded.Length;
-				} catch (FormatException) {
-				}
-			}
+			byte[]? decoded = Base64Decode (token?.Trim (), out int length);
 
-			var challenge = Challenge (decoded, 0, length);
+			var challenge = Challenge (decoded, 0, length, cancellationToken);
 
-			if (challenge == null || challenge.Length == 0)
-				return string.Empty;
-
-			return Convert.ToBase64String (challenge);
+			return Base64Encode (challenge);
 		}
 
 		/// <summary>
-		/// Resets the state of the SASL mechanism.
+		/// Asynchronously parse the server's challenge token and return the next challenge response.
+		/// </summary>
+		/// <remarks>
+		/// Asynchronously parses the server's challenge token and returns the next challenge response.
+		/// </remarks>
+		/// <returns>The next challenge response.</returns>
+		/// <param name="token">The server's challenge token.</param>
+		/// <param name="startIndex">The index into the token specifying where the server's challenge begins.</param>
+		/// <param name="length">The length of the server's challenge.</param>
+		/// <param name="cancellationToken">The cancellation token.</param>
+		/// <exception cref="System.NotSupportedException">
+		/// The SASL mechanism does not support SASL-IR.
+		/// </exception>
+		/// <exception cref="System.OperationCanceledException">
+		/// The operation was canceled via the cancellation token.
+		/// </exception>
+		/// <exception cref="SaslException">
+		/// An error has occurred while parsing the server's challenge token.
+		/// </exception>
+		protected virtual Task<byte[]?> ChallengeAsync (byte[]? token, int startIndex, int length, CancellationToken cancellationToken)
+		{
+			return Task.FromResult (Challenge (token, startIndex, length, cancellationToken));
+		}
+
+		/// <summary>
+		/// Asynchronously decode the base64-encoded server challenge and return the next challenge response encoded in base64.
+		/// </summary>
+		/// <remarks>
+		/// Asynchronously decodes the base64-encoded server challenge and returns the next challenge response encoded in base64.
+		/// </remarks>
+		/// <returns>The next base64-encoded challenge response.</returns>
+		/// <param name="token">The server's base64-encoded challenge token.</param>
+		/// <param name="cancellationToken">The cancellation token.</param>
+		/// <exception cref="System.NotSupportedException">
+		/// The SASL mechanism does not support SASL-IR.
+		/// </exception>
+		/// <exception cref="System.OperationCanceledException">
+		/// The operation was canceled via the cancellation token.
+		/// </exception>
+		/// <exception cref="SaslException">
+		/// An error has occurred while parsing the server's challenge token.
+		/// </exception>
+		public async Task<string> ChallengeAsync (string? token, CancellationToken cancellationToken = default)
+		{
+			cancellationToken.ThrowIfCancellationRequested ();
+
+			byte[]? decoded = Base64Decode (token?.Trim (), out int length);
+
+			var challenge = await ChallengeAsync (decoded, 0, length, cancellationToken).ConfigureAwait (false);
+
+			return Base64Encode (challenge);
+		}
+
+		/// <summary>
+		/// Reset the state of the SASL mechanism.
 		/// </summary>
 		/// <remarks>
 		/// Resets the state of the SASL mechanism.
@@ -307,16 +463,16 @@ namespace MailKit.Security {
 		}
 
 		/// <summary>
-		/// Determines if the specified SASL mechanism is supported by MailKit.
+		/// Determine if the specified SASL mechanism is supported by MailKit.
 		/// </summary>
 		/// <remarks>
 		/// Use this method to make sure that a SASL mechanism is supported before calling
-		/// <see cref="Create(string,Uri,ICredentials)"/>.
+		/// <see cref="Create(string,NetworkCredential)"/>.
 		/// </remarks>
-		/// <returns><c>true</c> if the specified SASL mechanism is supported; otherwise, <c>false</c>.</returns>
+		/// <returns><see langword="true" /> if the specified SASL mechanism is supported; otherwise, <see langword="false" />.</returns>
 		/// <param name="mechanism">The name of the SASL mechanism.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="mechanism"/> is <c>null</c>.
+		/// <paramref name="mechanism"/> is <see langword="null" />.
 		/// </exception>
 		public static bool IsSupported (string mechanism)
 		{
@@ -324,48 +480,49 @@ namespace MailKit.Security {
 				throw new ArgumentNullException (nameof (mechanism));
 
 			switch (mechanism) {
-			case "SCRAM-SHA-512": return true;
-			case "SCRAM-SHA-256": return true;
-			case "SCRAM-SHA-1":   return true;
-			case "DIGEST-MD5":    return md5supported;
-			case "CRAM-MD5":      return md5supported;
-			case "OAUTHBEARER":   return true;
-			case "XOAUTH2":       return true;
-			case "PLAIN":         return true;
-			case "LOGIN":         return true;
-			case "NTLM":          return true;
-			default:              return false;
+			case "SCRAM-SHA-512-PLUS": return true;
+			case "SCRAM-SHA-512":      return true;
+			case "SCRAM-SHA-256-PLUS": return true;
+			case "SCRAM-SHA-256":      return true;
+			case "SCRAM-SHA-1-PLUS":   return true;
+			case "SCRAM-SHA-1":        return true;
+			case "DIGEST-MD5":         return Md5Supported;
+			case "CRAM-MD5":           return Md5Supported;
+			case "OAUTHBEARER":        return true;
+			case "XOAUTH2":            return true;
+			case "PLAIN":              return true;
+			case "LOGIN":              return true;
+			case "NTLM":               return true;
+			case "ANONYMOUS":          return true;
+#if NET7_0_OR_GREATER
+			case "GSSAPI":             return GssapiSupported.Value;
+#endif
+			default:                   return false;
 			}
 		}
 
 		/// <summary>
-		/// Create an instance of the specified SASL mechanism using the uri and credentials.
+		/// Try to create an instance of the specified SASL mechanism using the supplied credentials.
 		/// </summary>
 		/// <remarks>
-		/// If unsure that a particular SASL mechanism is supported, you should first call
-		/// <see cref="IsSupported"/>.
+		/// Tries to create an instance of the specified SASL mechanism using the supplied credentials.
 		/// </remarks>
-		/// <returns>An instance of the requested SASL mechanism if supported; otherwise <c>null</c>.</returns>
+		/// <returns><see langword="true" /> if the SASL mechanism is supported; otherwise, <see langword="false" />.</returns>
 		/// <param name="mechanism">The name of the SASL mechanism.</param>
-		/// <param name="uri">The URI of the service to authenticate against.</param>
 		/// <param name="encoding">The text encoding to use for the credentials.</param>
 		/// <param name="credentials">The user's credentials.</param>
+		/// <param name="sasl">The SASL mechanism if supported; otherwise, <see langword="null" />.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <para><paramref name="mechanism"/> is <c>null</c>.</para>
+		/// <para><paramref name="mechanism"/> is <see langword="null" />.</para>
 		/// <para>-or-</para>
-		/// <para><paramref name="uri"/> is <c>null</c>.</para>
+		/// <para><paramref name="encoding"/> is <see langword="null" />.</para>
 		/// <para>-or-</para>
-		/// <para><paramref name="encoding"/> is <c>null</c>.</para>
-		/// <para>-or-</para>
-		/// <para><paramref name="credentials"/> is <c>null</c>.</para>
+		/// <para><paramref name="credentials"/> is <see langword="null" />.</para>
 		/// </exception>
-		public static SaslMechanism Create (string mechanism, Uri uri, Encoding encoding, ICredentials credentials)
+		public static bool TryCreate (string mechanism, Encoding encoding, NetworkCredential credentials, [NotNullWhen (true)] out SaslMechanism? sasl)
 		{
 			if (mechanism == null)
 				throw new ArgumentNullException (nameof (mechanism));
-
-			if (uri == null)
-				throw new ArgumentNullException (nameof (uri));
 
 			if (encoding == null)
 				throw new ArgumentNullException (nameof (encoding));
@@ -373,55 +530,122 @@ namespace MailKit.Security {
 			if (credentials == null)
 				throw new ArgumentNullException (nameof (credentials));
 
-			var cred = credentials.GetCredential (uri, mechanism);
+			switch (mechanism) {
+			//case "KERBEROS_V4":      sasl = null; break;
+			case "SCRAM-SHA-512-PLUS": sasl = new SaslMechanismScramSha512Plus (credentials); break;
+			case "SCRAM-SHA-512":      sasl = new SaslMechanismScramSha512 (credentials); break;
+			case "SCRAM-SHA-256-PLUS": sasl = new SaslMechanismScramSha256Plus (credentials); break;
+			case "SCRAM-SHA-256":      sasl = new SaslMechanismScramSha256 (credentials); break;
+			case "SCRAM-SHA-1-PLUS":   sasl = new SaslMechanismScramSha1Plus (credentials); break;
+			case "SCRAM-SHA-1":        sasl = new SaslMechanismScramSha1 (credentials); break;
+			case "DIGEST-MD5":         sasl = Md5Supported ? new SaslMechanismDigestMd5 (credentials) : null; break;
+			case "CRAM-MD5":           sasl = Md5Supported ? new SaslMechanismCramMd5 (credentials) : null; break;
+			case "OAUTHBEARER":        sasl = new SaslMechanismOAuthBearer (credentials); break;
+			case "XOAUTH2":            sasl = new SaslMechanismOAuth2 (credentials); break;
+			case "PLAIN":              sasl = new SaslMechanismPlain (encoding, credentials); break;
+			case "LOGIN":              sasl = new SaslMechanismLogin (encoding, credentials); break;
+#if NET7_0_OR_GREATER
+			case "GSSAPI":             sasl = GssapiSupported.Value ? new SaslMechanismGssapi (credentials) : null; break;
+			case "NTLM":               sasl = NativeNtlmSupported.Value ? new SaslMechanismNtlmNative (credentials) : new SaslMechanismNtlm (credentials); break;
+#else
+			case "NTLM":               sasl = new SaslMechanismNtlm (credentials); break;
+#endif
+			case "ANONYMOUS":          sasl = new SaslMechanismAnonymous (encoding, credentials); break;
+			default:                   sasl = null; break;
+			}
+
+			return sasl != null;
+		}
+
+		/// <summary>
+		/// Try to create an instance of the specified SASL mechanism using the supplied credentials.
+		/// </summary>
+		/// <remarks>
+		/// Tries to create an instance of the specified SASL mechanism using the supplied credentials.
+		/// </remarks>
+		/// <returns><see langword="true" /> if the SASL mechanism is supported; otherwise, <see langword="false" />.</returns>
+		/// <param name="mechanism">The name of the SASL mechanism.</param>
+		/// <param name="credentials">The user's credentials.</param>
+		/// <param name="sasl">The SASL mechanism if supported; otherwise, <see langword="null" />.</param>
+		/// <exception cref="System.ArgumentNullException">
+		/// <para><paramref name="mechanism"/> is <see langword="null" />.</para>
+		/// <para>-or-</para>
+		/// <para><paramref name="credentials"/> is <see langword="null" />.</para>
+		/// </exception>
+		public static bool TryCreate (string mechanism, NetworkCredential credentials, [NotNullWhen (true)] out SaslMechanism? sasl)
+		{
+			return TryCreate (mechanism, Encoding.UTF8, credentials, out sasl);
+		}
+
+		/// <summary>
+		/// Create an instance of the specified SASL mechanism using the supplied credentials.
+		/// </summary>
+		/// <remarks>
+		/// If unsure that a particular SASL mechanism is supported, you should first call
+		/// <see cref="IsSupported"/> or use
+		/// <see cref="TryCreate(string,Encoding,NetworkCredential,out SaslMechanism)"/> instead.
+		/// </remarks>
+		/// <returns>An instance of the requested SASL mechanism.</returns>
+		/// <param name="mechanism">The name of the SASL mechanism.</param>
+		/// <param name="encoding">The text encoding to use for the credentials.</param>
+		/// <param name="credentials">The user's credentials.</param>
+		/// <exception cref="System.ArgumentNullException">
+		/// <para><paramref name="mechanism"/> is <see langword="null" />.</para>
+		/// <para>-or-</para>
+		/// <para><paramref name="encoding"/> is <see langword="null" />.</para>
+		/// <para>-or-</para>
+		/// <para><paramref name="credentials"/> is <see langword="null" />.</para>
+		/// </exception>
+		/// <exception cref="System.NotSupportedException">
+		/// The specified SASL mechanism is not supported.
+		/// </exception>
+		public static SaslMechanism Create (string mechanism, Encoding encoding, NetworkCredential credentials)
+		{
+			if (TryCreate (mechanism, encoding, credentials, out var sasl))
+				return sasl;
 
 			switch (mechanism) {
-			//case "KERBEROS_V4":   return null;
-			case "SCRAM-SHA-512": return new SaslMechanismScramSha512 (cred) { Uri = uri };
-			case "SCRAM-SHA-256": return new SaslMechanismScramSha256 (cred) { Uri = uri };
-			case "SCRAM-SHA-1":   return new SaslMechanismScramSha1 (cred) { Uri = uri };
-			case "DIGEST-MD5":    return md5supported ? new SaslMechanismDigestMd5 (cred) { Uri = uri } : null;
-			case "CRAM-MD5":      return md5supported ? new SaslMechanismCramMd5 (cred) { Uri = uri } : null;
-			//case "GSSAPI":        return null;
-			case "OAUTHBEARER":   return new SaslMechanismOAuthBearer (cred) { Uri = uri };
-			case "XOAUTH2":       return new SaslMechanismOAuth2 (cred) { Uri = uri };
-			case "PLAIN":         return new SaslMechanismPlain (encoding, cred) { Uri = uri };
-			case "LOGIN":         return new SaslMechanismLogin (encoding, cred) { Uri = uri };
-			case "NTLM":          return new SaslMechanismNtlm (cred) { Uri = uri };
-			default:              return null;
+			case "DIGEST-MD5":
+			case "CRAM-MD5":
+				throw new NotSupportedException ($"The {mechanism} SASL mechanism is not supported because MD5 is not available (e.g. because FIPS mode is enabled).");
+			case "GSSAPI":
+				throw new NotSupportedException ("The GSSAPI SASL mechanism is not supported on this platform.");
+			default:
+				throw new NotSupportedException ($"The {mechanism} SASL mechanism is not supported.");
 			}
 		}
 
 		/// <summary>
-		/// Create an instance of the specified SASL mechanism using the uri and credentials.
+		/// Create an instance of the specified SASL mechanism using the supplied credentials.
 		/// </summary>
 		/// <remarks>
 		/// If unsure that a particular SASL mechanism is supported, you should first call
-		/// <see cref="IsSupported"/>.
+		/// <see cref="IsSupported"/> or use
+		/// <see cref="TryCreate(string,NetworkCredential,out SaslMechanism)"/> instead.
 		/// </remarks>
-		/// <returns>An instance of the requested SASL mechanism if supported; otherwise <c>null</c>.</returns>
+		/// <returns>An instance of the requested SASL mechanism.</returns>
 		/// <param name="mechanism">The name of the SASL mechanism.</param>
-		/// <param name="uri">The URI of the service to authenticate against.</param>
 		/// <param name="credentials">The user's credentials.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <para><paramref name="mechanism"/> is <c>null</c>.</para>
+		/// <para><paramref name="mechanism"/> is <see langword="null" />.</para>
 		/// <para>-or-</para>
-		/// <para><paramref name="uri"/> is <c>null</c>.</para>
-		/// <para>-or-</para>
-		/// <para><paramref name="credentials"/> is <c>null</c>.</para>
+		/// <para><paramref name="credentials"/> is <see langword="null" />.</para>
 		/// </exception>
-		public static SaslMechanism Create (string mechanism, Uri uri, ICredentials credentials)
+		/// <exception cref="System.NotSupportedException">
+		/// The specified SASL mechanism is not supported.
+		/// </exception>
+		public static SaslMechanism Create (string mechanism, NetworkCredential credentials)
 		{
-			return Create (mechanism, uri, Encoding.UTF8, credentials);
+			return Create (mechanism, Encoding.UTF8, credentials);
 		}
 
 		/// <summary>
-		/// Determines if the character is a non-ASCII space.
+		/// Determine if the character is a non-ASCII space.
 		/// </summary>
 		/// <remarks>
 		/// This list was obtained from http://tools.ietf.org/html/rfc3454#appendix-C.1.2
 		/// </remarks>
-		/// <returns><c>true</c> if the character is a non-ASCII space; otherwise, <c>false</c>.</returns>
+		/// <returns><see langword="true" /> if the character is a non-ASCII space; otherwise, <see langword="false" />.</returns>
 		/// <param name="c">The character.</param>
 		static bool IsNonAsciiSpace (char c)
 		{
@@ -450,12 +674,12 @@ namespace MailKit.Security {
 		}
 
 		/// <summary>
-		/// Determines if the character is commonly mapped to nothing.
+		/// Determine if the character is commonly mapped to nothing.
 		/// </summary>
 		/// <remarks>
 		/// This list was obtained from http://tools.ietf.org/html/rfc3454#appendix-B.1
 		/// </remarks>
-		/// <returns><c>true</c> if the character is commonly mapped to nothing; otherwise, <c>false</c>.</returns>
+		/// <returns><see langword="true" /> if the character is commonly mapped to nothing; otherwise, <see langword="false" />.</returns>
 		/// <param name="c">The character.</param>
 		static bool IsCommonlyMappedToNothing (char c)
 		{
@@ -476,12 +700,12 @@ namespace MailKit.Security {
 		}
 
 		/// <summary>
-		/// Determines if the character is prohibited.
+		/// Determine if the character is prohibited.
 		/// </summary>
 		/// <remarks>
 		/// This list was obtained from http://tools.ietf.org/html/rfc3454#appendix-C.3
 		/// </remarks>
-		/// <returns><c>true</c> if the character is prohibited; otherwise, <c>false</c>.</returns>
+		/// <returns><see langword="true" /> if the character is prohibited; otherwise, <see langword="false" />.</returns>
 		/// <param name="s">The string.</param>
 		/// <param name="index">The character index.</param>
 		static bool IsProhibited (string s, int index)
@@ -547,7 +771,7 @@ namespace MailKit.Security {
 		}
 
 		/// <summary>
-		/// Prepares the user name or password string.
+		/// Prepare the user name or password string.
 		/// </summary>
 		/// <remarks>
 		/// Prepares a user name or password string according to the rules of rfc4013.
@@ -555,7 +779,7 @@ namespace MailKit.Security {
 		/// <returns>The prepared string.</returns>
 		/// <param name="s">The string to prepare.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="s"/> is <c>null</c>.
+		/// <paramref name="s"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ArgumentException">
 		/// <paramref name="s"/> contains prohibited characters.
@@ -571,7 +795,7 @@ namespace MailKit.Security {
 			var builder = new StringBuilder (s.Length);
 			for (int i = 0; i < s.Length; i++) {
 				if (IsNonAsciiSpace (s[i])) {
-					// non-ASII space characters [StringPrep, C.1.2] that can be
+					// non-ASCII space characters [StringPrep, C.1.2] that can be
 					// mapped to SPACE (U+0020).
 					builder.Append (' ');
 				} else if (IsCommonlyMappedToNothing (s[i])) {
@@ -586,11 +810,7 @@ namespace MailKit.Security {
 				}
 			}
 
-#if !NETSTANDARD1_3 && !NETSTANDARD1_6
 			return builder.ToString ().Normalize (NormalizationForm.FormKC);
-#else
-			return builder.ToString ();
-#endif
 		}
 
 		internal static string GenerateEntropy (int n)

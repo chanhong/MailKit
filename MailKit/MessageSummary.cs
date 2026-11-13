@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -27,9 +27,16 @@
 using System;
 using System.Linq;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 
 using MimeKit;
 using MimeKit.Utils;
+
+#if NET5_0_OR_GREATER
+using IReadOnlySetOfStrings = System.Collections.Generic.IReadOnlySet<string>;
+#else
+using IReadOnlySetOfStrings = System.Collections.Generic.ISet<string>;
+#endif
 
 namespace MailKit {
 	/// <summary>
@@ -40,12 +47,13 @@ namespace MailKit {
 	/// <a href="Overload_MailKit_IMailFolder_FetchAsync.htm">FetchAsync</a> methods
 	/// return lists of <see cref="IMessageSummary"/> items.</para>
 	/// <para>The properties of the <see cref="MessageSummary"/> that will be available
-	/// depend on the <see cref="MessageSummaryItems"/> passed to the aformentioned method.</para>
+	/// depend on the <see cref="MessageSummaryItems"/> passed to the aforementioned method.</para>
 	/// </remarks>
 	public class MessageSummary : IMessageSummary
 	{
+		IReadOnlySetOfStrings? keywords;
 		int threadableReplyDepth = -1;
-		string normalizedSubject;
+		string? normalizedSubject;
 
 		/// <summary>
 		/// Initializes a new instance of the <see cref="MailKit.MessageSummary"/> class.
@@ -62,32 +70,10 @@ namespace MailKit {
 			if (index < 0)
 				throw new ArgumentOutOfRangeException (nameof (index));
 
-			Keywords = new HashSet<string> (StringComparer.OrdinalIgnoreCase);
 			Index = index;
 		}
 
-		/// <summary>
-		/// Initializes a new instance of the <see cref="MailKit.MessageSummary"/> class.
-		/// </summary>
-		/// <remarks>
-		/// Creates a new <see cref="MessageSummary"/>.
-		/// </remarks>
-		/// <param name="folder">The folder that the message belongs to.</param>
-		/// <param name="index">The message index.</param>
-		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="folder"/> is <c>null</c>.
-		/// </exception>
-		/// <exception cref="System.ArgumentOutOfRangeException">
-		/// <paramref name="index"/> is negative.
-		/// </exception>
-		public MessageSummary (IMailFolder folder, int index) : this (index)
-		{
-			if (folder == null)
-				throw new ArgumentNullException (nameof (folder));
-
-			Folder = folder;
-		}
-
+		[MemberNotNull (nameof (normalizedSubject))]
 		void UpdateThreadableSubject ()
 		{
 			if (normalizedSubject != null)
@@ -99,17 +85,6 @@ namespace MailKit {
 				normalizedSubject = string.Empty;
 				threadableReplyDepth = 0;
 			}
-		}
-
-		/// <summary>
-		/// Get the folder that the message belongs to.
-		/// </summary>
-		/// <remarks>
-		/// Gets the folder that the message belongs to, if available.
-		/// </remarks>
-		/// <value>The folder.</value>
-		public IMailFolder Folder {
-			get; private set;
 		}
 
 		/// <summary>
@@ -138,14 +113,14 @@ namespace MailKit {
 		/// methods.</para>
 		/// </remarks>
 		/// <value>The body structure of the message.</value>
-		public BodyPart Body {
+		public BodyPart? Body {
 			get; set;
 		}
 
-		static BodyPart GetMultipartRelatedRoot (BodyPartMultipart related)
+		static BodyPart? GetMultipartRelatedRoot (BodyPartMultipart related)
 		{
-			string start = related.ContentType.Parameters["start"];
-			string contentId;
+			string? start = related.ContentType.Parameters["start"];
+			string? contentId;
 
 			if (start == null)
 				return related.BodyParts.Count > 0 ? related.BodyParts[0] : null;
@@ -156,37 +131,42 @@ namespace MailKit {
 			var cid = new Uri (string.Format ("cid:{0}", contentId));
 
 			for (int i = 0; i < related.BodyParts.Count; i++) {
-				var basic = related.BodyParts[i] as BodyPartBasic;
-
-				if (basic != null && (basic.ContentId == contentId || basic.ContentLocation == cid))
+				if (related.BodyParts[i] is BodyPartBasic basic && (basic.ContentId == contentId || basic.ContentLocation == cid))
 					return basic;
 
-				var multipart = related.BodyParts[i] as BodyPartMultipart;
-
-				if (multipart != null && multipart.ContentLocation == cid)
+				if (related.BodyParts[i] is BodyPartMultipart multipart && multipart.ContentLocation == cid)
 					return multipart;
 			}
 
 			return null;
 		}
 
-		static bool TryGetMultipartAlternativeBody (BodyPartMultipart multipart, bool html, out BodyPartText body)
+		static bool TryGetMultipartAlternativeBody (BodyPartMultipart multipart, bool html, [NotNullWhen (true)] out BodyPartText? body)
 		{
-			// walk the multipart/alternative children backwards from greatest level of faithfulness to the least faithful
-			for (int i = multipart.BodyParts.Count - 1; i >= 0; i--) {
-				var multi = multipart.BodyParts[i] as BodyPartMultipart;
-				BodyPartText text = null;
+			var pending = new Stack<(BodyPartMultipart Multipart, int Index)> ();
+			pending.Push ((multipart, multipart.BodyParts.Count - 1));
 
-				if (multi != null) {
+			// walk the multipart/alternative children backwards from greatest level of faithfulness to the least faithful
+			while (pending.Count > 0) {
+				var (parent, index) = pending.Pop ();
+
+				if (index < 0)
+					continue;
+
+				if (index > 0)
+					pending.Push ((parent, index - 1));
+
+				BodyPartText? text = null;
+
+				if (parent.BodyParts[index] is BodyPartMultipart multi) {
 					if (multi.ContentType.IsMimeType ("multipart", "related")) {
 						text = GetMultipartRelatedRoot (multi) as BodyPartText;
 					} else if (multi.ContentType.IsMimeType ("multipart", "alternative")) {
 						// Note: nested multipart/alternatives make no sense... yet here we are.
-						if (TryGetMultipartAlternativeBody (multi, html, out body))
-							return true;
+						pending.Push ((multi, multi.BodyParts.Count - 1));
 					}
 				} else {
-					text = multipart.BodyParts[i] as BodyPartText;
+					text = parent.BodyParts[index] as BodyPartText;
 				}
 
 				if (text != null && (html ? text.IsHtml : text.IsPlain)) {
@@ -200,59 +180,52 @@ namespace MailKit {
 			return false;
 		}
 
-		static bool TryGetMessageBody (BodyPartMultipart multipart, bool html, out BodyPartText body)
+		static bool TryGetMessageBody (BodyPartMultipart multipart, bool html, [NotNullWhen (true)] out BodyPartText? body)
 		{
-			BodyPartMultipart multi;
-			BodyPartText text;
+			while (true) {
+				if (multipart.ContentType.IsMimeType ("multipart", "alternative"))
+					return TryGetMultipartAlternativeBody (multipart, html, out body);
 
-			if (multipart.ContentType.IsMimeType ("multipart", "alternative"))
-				return TryGetMultipartAlternativeBody (multipart, html, out body);
+				BodyPartMultipart? next = null;
+				BodyPartText? text;
 
-			if (!multipart.ContentType.IsMimeType ("multipart", "related")) {
-				// Note: This is probably a multipart/mixed... and if not, we can still treat it like it is.
-				for (int i = 0; i < multipart.BodyParts.Count; i++) {
-					multi = multipart.BodyParts[i] as BodyPartMultipart;
-
-					// descend into nested multiparts, if there are any...
-					if (multi != null) {
-						if (TryGetMessageBody (multi, html, out body))
-							return true;
+				if (!multipart.ContentType.IsMimeType ("multipart", "related")) {
+					// Note: This is probably a multipart/mixed... and if not, we can still treat it like it is.
+					for (int i = 0; i < multipart.BodyParts.Count; i++) {
+						next = multipart.BodyParts[i] as BodyPartMultipart;
 
 						// The text body should never come after a multipart.
-						break;
-					}
+						if (next != null)
+							break;
 
-					text = multipart.BodyParts[i] as BodyPartText;
+						text = multipart.BodyParts[i] as BodyPartText;
 
-					// Look for the first non-attachment text part (realistically, the body text will
-					// preceed any attachments, but I'm not sure we can rely on that assumption).
-					if (text != null && !text.IsAttachment) {
-						if (html ? text.IsHtml : text.IsPlain) {
-							body = text;
-							return true;
+						// Look for the first non-attachment text part (realistically, the body text will
+						// precede any attachments, but I'm not sure we can rely on that assumption).
+						if (text != null && !text.IsAttachment) {
+							body = (html ? text.IsHtml : text.IsPlain) ? text : null;
+							return body != null;
 						}
-
-						// Note: the first text/* part in a multipart/mixed is the text body.
-						// If it's not in the format we're looking for, then it doesn't exist.
-						break;
 					}
+				} else {
+					// Note: If the multipart/related root document is HTML, then this is the droid we are looking for.
+					var root = GetMultipartRelatedRoot (multipart);
+
+					text = root as BodyPartText;
+
+					if (text != null) {
+						body = (html ? text.IsHtml : text.IsPlain) ? text : null;
+						return body != null;
+					}
+
+					// maybe the root is another multipart (like multipart/alternative)?
+					next = root as BodyPartMultipart;
 				}
-			} else {
-				// Note: If the multipart/related root document is HTML, then this is the droid we are looking for.
-				var root = GetMultipartRelatedRoot (multipart);
 
-				text = root as BodyPartText;
+				if (next == null)
+					break;
 
-				if (text != null) {
-					body = (html ? text.IsHtml : text.IsPlain) ? text : null;
-					return body != null;
-				}
-
-				// maybe the root is another multipart (like multipart/alternative)?
-				multi = root as BodyPartMultipart;
-
-				if (multi != null)
-					return TryGetMessageBody (multi, html, out body);
+				multipart = next;
 			}
 
 			body = null;
@@ -272,22 +245,16 @@ namespace MailKit {
 		/// methods.</para>
 		/// </remarks>
 		/// <example>
-		/// <code language="c#" source="Examples\ImapExamples.cs" region="DownloadBodyParts"/>
+		/// <code language="c#" source="Examples\ImapBodyPartExamples.cs" region="GetBodyPartsByUniqueId"/>
 		/// </example>
-		/// <value>The text body if it exists; otherwise, <c>null</c>.</value>
-		public BodyPartText TextBody {
+		/// <value>The text body if it exists; otherwise, <see langword="null" />.</value>
+		public BodyPartText? TextBody {
 			get {
-				var multipart = Body as BodyPartMultipart;
-
-				if (multipart != null) {
-					BodyPartText plain;
-
-					if (TryGetMessageBody (multipart, false, out plain))
+				if (Body is BodyPartMultipart multipart) {
+					if (TryGetMessageBody (multipart, false, out BodyPartText? plain))
 						return plain;
 				} else {
-					var text = Body as BodyPartText;
-
-					if (text != null && text.IsPlain)
+					if (Body is BodyPartText text && text.IsPlain)
 						return text;
 				}
 
@@ -306,20 +273,17 @@ namespace MailKit {
 		/// or <a href="Overload_MailKit_IMailFolder_FetchAsync.htm">FetchAsync</a>
 		/// methods.</para>
 		/// </remarks>
-		/// <value>The html body if it exists; otherwise, <c>null</c>.</value>
-		public BodyPartText HtmlBody {
+		/// <example>
+		/// <code language="c#" source="Examples\ImapBodyPartExamples.cs" region="GetBodyPartsByUniqueId"/>
+		/// </example>
+		/// <value>The html body if it exists; otherwise, <see langword="null" />.</value>
+		public BodyPartText? HtmlBody {
 			get {
-				var multipart = Body as BodyPartMultipart;
-
-				if (multipart != null) {
-					BodyPartText html;
-
-					if (TryGetMessageBody (multipart, true, out html))
+				if (Body is BodyPartMultipart multipart) {
+					if (TryGetMessageBody (multipart, true, out BodyPartText? html))
 						return html;
 				} else {
-					var text = Body as BodyPartText;
-
-					if (text != null && text.IsHtml)
+					if (Body is BodyPartText text && text.IsHtml)
 						return text;
 				}
 
@@ -327,28 +291,40 @@ namespace MailKit {
 			}
 		}
 
-		static IEnumerable<BodyPartBasic> EnumerateBodyParts (BodyPart entity, bool attachmentsOnly)
+		static IEnumerable<BodyPartBasic> EnumerateBodyParts (BodyPart? entity, bool attachmentsOnly)
 		{
 			if (entity == null)
 				yield break;
 
-			var multipart = entity as BodyPartMultipart;
+			var parents = new Stack<(BodyPartMultipart Multipart, int Index)> ();
 
-			if (multipart != null) {
-				foreach (var subpart in multipart.BodyParts) {
-					foreach (var part in EnumerateBodyParts (subpart, attachmentsOnly))
-						yield return part;
+			while (true) {
+				if (entity is BodyPartMultipart multipart) {
+					if (multipart.BodyParts.Count > 0) {
+						parents.Push ((multipart, 1));
+						entity = multipart.BodyParts[0];
+						continue;
+					}
+				} else {
+					var basic = (BodyPartBasic) entity;
+
+					if (!attachmentsOnly || basic.IsAttachment)
+						yield return basic;
 				}
 
-				yield break;
+				while (true) {
+					if (parents.Count == 0)
+						yield break;
+
+					var (parent, index) = parents.Pop ();
+
+					if (index < parent.BodyParts.Count) {
+						parents.Push ((parent, index + 1));
+						entity = parent.BodyParts[index];
+						break;
+					}
+				}
 			}
-
-			var basic = (BodyPartBasic) entity;
-
-			if (attachmentsOnly && !basic.IsAttachment)
-				yield break;
-
-			yield return basic;
 		}
 
 		/// <summary>
@@ -383,7 +359,7 @@ namespace MailKit {
 		/// methods.</para>
 		/// </remarks>
 		/// <example>
-		/// <code language="c#" source="Examples\ImapExamples.cs" region="DownloadBodyParts"/>
+		/// <code language="c#" source="Examples\ImapBodyPartExamples.cs" region="GetBodyPartsByUniqueId"/>
 		/// </example>
 		/// <value>The attachments.</value>
 		public IEnumerable<BodyPartBasic> Attachments {
@@ -404,7 +380,7 @@ namespace MailKit {
 		/// methods.</para>
 		/// </remarks>
 		/// <value>The preview text.</value>
-		public string PreviewText {
+		public string? PreviewText {
 			get; set;
 		}
 
@@ -424,7 +400,7 @@ namespace MailKit {
 		/// methods.</para>
 		/// </remarks>
 		/// <value>The envelope of the message.</value>
-		public Envelope Envelope {
+		public Envelope? Envelope {
 			get; set;
 		}
 
@@ -450,7 +426,7 @@ namespace MailKit {
 		/// <remarks>
 		/// This value should be based on whether the message subject contained any "Re:" or "Fwd:" prefixes.
 		/// </remarks>
-		/// <value><c>true</c> if the message is a reply; otherwise, <c>false</c>.</value>
+		/// <value><see langword="true" /> if the message is a reply; otherwise, <see langword="false" />.</value>
 		public bool IsReply {
 			get {
 				UpdateThreadableSubject ();
@@ -499,26 +475,15 @@ namespace MailKit {
 		/// methods.</para>
 		/// </remarks>
 		/// <value>The user-defined message flags.</value>
-		public HashSet<string> Keywords {
-			get; set;
-		}
+		public IReadOnlySetOfStrings Keywords {
+			get {
+				keywords ??= new HashSet<string> (StringComparer.Ordinal);
 
-		/// <summary>
-		/// Gets the user-defined message flags, if available.
-		/// </summary>
-		/// <remarks>
-		/// <para>Gets the user-defined message flags, if available.</para>
-		/// <para>This property will only be set if the
-		/// <see cref="MessageSummaryItems.Flags"/> flag is passed to
-		/// one of the <a href="Overload_MailKit_IMailFolder_Fetch.htm">Fetch</a>
-		/// or <a href="Overload_MailKit_IMailFolder_FetchAsync.htm">FetchAsync</a>
-		/// methods.</para>
-		/// </remarks>
-		/// <value>The user-defined message flags.</value>
-		[Obsolete ("Use Keywords instead.")]
-		public HashSet<string> UserFlags {
-			get { return Keywords; }
-			set { Keywords = value; }
+				return keywords;
+			}
+			set {
+				keywords = value;
+			}
 		}
 
 		/// <summary>
@@ -533,7 +498,7 @@ namespace MailKit {
 		/// methods.</para>
 		/// </remarks>
 		/// <value>The message annotations.</value>
-		public IList<Annotation> Annotations {
+		public IReadOnlyList<Annotation>? Annotations {
 			get; set;
 		}
 
@@ -542,17 +507,14 @@ namespace MailKit {
 		/// </summary>
 		/// <remarks>
 		/// <para>Gets the list of headers, if available.</para>
-		/// <para>This property will only be set if <see cref="MessageSummaryItems.Headers"/>
-		/// is specified in a call to one of the
-		/// <a href="Overload_MailKit_IMailFolder_Fetch.htm">Fetch</a>
-		/// or <a href="Overload_MailKit_IMailFolder_FetchAsync.htm">FetchAsync</a>
-		/// methods or specific headers are requested via a one of the Fetch or FetchAsync methods
-		/// that accept list of specific headers to request for each message such as
-		/// <see cref="IMailFolder.Fetch(System.Collections.Generic.IList&lt;UniqueId&gt;,MessageSummaryItems,System.Collections.Generic.IEnumerable&lt;MimeKit.HeaderId&gt;,System.Threading.CancellationToken)"/>.
+		/// <para>This property will only be set if the <see cref="IFetchRequest"/> used with
+		/// <a href="Overload_MailKit_IMailFolder_Fetch.htm">Fetch</a> or
+		/// <a href="Overload_MailKit_IMailFolder_FetchAsync.htm">FetchAsync</a> has the <see cref="MessageSummaryItems.Headers"/>
+		/// flag set on <see cref="IFetchRequest.Items"/> or if the <see cref="IFetchRequest.Headers"/> list is non-empty.
 		/// </para>
 		/// </remarks>
 		/// <value>The list of headers.</value>
-		public HeaderList Headers {
+		public HeaderList? Headers {
 			get; set;
 		}
 
@@ -598,9 +560,10 @@ namespace MailKit {
 		/// one of the <a href="Overload_MailKit_IMailFolder_Fetch.htm">Fetch</a>
 		/// or <a href="Overload_MailKit_IMailFolder_FetchAsync.htm">FetchAsync</a>
 		/// methods.</para>
+		/// <para>When set, this value will never be negative.</para>
 		/// </remarks>
 		/// <value>The size of the message.</value>
-		public uint? Size {
+		public long? Size {
 			get; set;
 		}
 
@@ -632,7 +595,7 @@ namespace MailKit {
 		/// methods.</para>
 		/// </remarks>
 		/// <value>The references.</value>
-		public MessageIdList References {
+		public MessageIdList? References {
 			get; set;
 		}
 
@@ -650,27 +613,8 @@ namespace MailKit {
 		/// <a href="https://tools.ietf.org/html/rfc8474">OBJECTID</a> extension.</note>
 		/// </remarks>
 		/// <value>The globally unique message identifier.</value>
-		public string EmailId {
+		public string? EmailId {
 			get; set;
-		}
-
-		/// <summary>
-		/// Get the globally unique identifier for the message, if available.
-		/// </summary>
-		/// <remarks>
-		/// <para>Gets the globally unique identifier of the message, if available.</para>
-		/// <para>This property will only be set if the
-		/// <see cref="MessageSummaryItems.EmailId"/> flag is passed to
-		/// one of the <a href="Overload_MailKit_IMailFolder_Fetch.htm">Fetch</a>
-		/// or <a href="Overload_MailKit_IMailFolder_FetchAsync.htm">FetchAsync</a>
-		/// methods.</para>
-		/// <note type="info">This property maps to the <c>EMAILID</c> value defined in the
-		/// <a href="https://tools.ietf.org/html/rfc8474">OBJECTID</a> extension.</note>
-		/// </remarks>
-		/// <value>The globally unique message identifier.</value>
-		[Obsolete ("Use EmailId instead.")]
-		public string Id {
-			get { return EmailId; }
 		}
 
 		/// <summary>
@@ -687,7 +631,7 @@ namespace MailKit {
 		/// <a href="https://tools.ietf.org/html/rfc8474">OBJECTID</a> extension.</note>
 		/// </remarks>
 		/// <value>The globally unique thread identifier.</value>
-		public string ThreadId {
+		public string? ThreadId {
 			get; set;
 		}
 
@@ -765,7 +709,7 @@ namespace MailKit {
 		/// methods.</para>
 		/// </remarks>
 		/// <value>The GMail labels.</value>
-		public IList<string> GMailLabels {
+		public IList<string>? GMailLabels {
 			get; set;
 		}
 

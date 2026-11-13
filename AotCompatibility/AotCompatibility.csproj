@@ -1,0 +1,26 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <PublishAot>true</PublishAot>
+    <TrimmerSingleWarn>false</TrimmerSingleWarn>
+    <SelfContained>true</SelfContained>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.Text.Encoding.CodePages" Version="8.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\MailKit\MailKit.csproj" />
+    <TrimmerRootAssembly Include="MailKit" Path="..\MailKit\MailKit.csproj" />
+
+    <ProjectReference Include="..\submodules\MimeKit\MimeKit\MimeKit.csproj" />
+    <TrimmerRootAssembly Include="MimeKit.Core" Path="..\submodules\MimeKit\MimeKit\MimeKit.csproj" />
+  </ItemGroup>
+
+</Project>

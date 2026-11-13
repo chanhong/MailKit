@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -24,10 +24,7 @@
 // THE SOFTWARE.
 //
 
-using System;
 using System.Net;
-
-using NUnit.Framework;
 
 using MailKit.Security;
 
@@ -39,13 +36,7 @@ namespace UnitTests.Security {
 		public void TestArgumentExceptions ()
 		{
 			var credentials = new NetworkCredential ("username", "password");
-			var uri = new Uri ("smtp://localhost");
 
-			Assert.Throws<ArgumentNullException> (() => new SaslMechanismOAuth2 (null, credentials));
-			Assert.Throws<ArgumentNullException> (() => new SaslMechanismOAuth2 (uri, null));
-			Assert.Throws<ArgumentNullException> (() => new SaslMechanismOAuth2 (null, "username", "password"));
-			Assert.Throws<ArgumentNullException> (() => new SaslMechanismOAuth2 (uri, null, "password"));
-			Assert.Throws<ArgumentNullException> (() => new SaslMechanismOAuth2 (uri, "username", null));
 			Assert.Throws<ArgumentNullException> (() => new SaslMechanismOAuth2 (null));
 			Assert.Throws<ArgumentNullException> (() => new SaslMechanismOAuth2 (null, "password"));
 			Assert.Throws<ArgumentNullException> (() => new SaslMechanismOAuth2 ("username", null));
@@ -56,18 +47,17 @@ namespace UnitTests.Security {
 			const string expected = "dXNlcj11c2VybmFtZQFhdXRoPUJlYXJlciBwYXNzd29yZAEB";
 			string challenge;
 
-			Assert.IsTrue (sasl.SupportsInitialResponse, "SupportsInitialResponse");
+			Assert.That (sasl.SupportsInitialResponse, Is.True, $"{prefix}: SupportsInitialResponse");
 			challenge = sasl.Challenge (string.Empty);
-			Assert.IsTrue (sasl.IsAuthenticated, "IsAuthenticated");
-			Assert.AreEqual (expected, challenge, "Challenge");
-			Assert.AreEqual (string.Empty, sasl.Challenge (string.Empty), "Already authenticated.");
+			Assert.That (sasl.IsAuthenticated, Is.True, $"{prefix}: IsAuthenticated");
+			Assert.That (challenge, Is.EqualTo (expected), $"{prefix}: Challenge");
+			Assert.That (sasl.Challenge (string.Empty), Is.EqualTo (string.Empty), $"{prefix}: Already authenticated.");
 		}
 
 		[Test]
 		public void TestSimpleOAuth2 ()
 		{
 			var credentials = new NetworkCredential ("username", "password");
-			var uri = new Uri ("smtp://localhost");
 			SaslMechanismOAuth2 sasl;
 
 			sasl = new SaslMechanismOAuth2 (credentials);
@@ -77,14 +67,6 @@ namespace UnitTests.Security {
 			sasl = new SaslMechanismOAuth2 ("username", "password");
 
 			AssertSimpleOAuth2 (sasl, "user/pass");
-
-			sasl = new SaslMechanismOAuth2 (uri, credentials);
-
-			AssertSimpleOAuth2 (sasl, "uri/credentials");
-
-			sasl = new SaslMechanismOAuth2 (uri, "username", "password");
-
-			AssertSimpleOAuth2 (sasl, "uri/user/pass");
 		}
 	}
 }

@@ -1,0 +1,85 @@
+name: "CodeQL"
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+  schedule:
+    - cron: '38 12 * * 1'
+
+jobs:
+  analyze:
+    name: Analyze
+    runs-on: 'ubuntu-latest'
+    timeout-minutes: 360
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [ 'csharp' ]
+
+    steps:
+    - name: Setup/Install the .NET SDKs
+      uses: actions/setup-dotnet@v5
+      with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+    
+    - name: Checkout repository
+      uses: actions/checkout@v6
+      with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          submodules: recursive
+          fetch-depth: 0
+
+    - name: Run .NET restore
+      shell: pwsh
+      run: |
+          dotnet restore MailKit.sln
+
+    # Initializes the CodeQL tools for scanning.
+    - name: Initialize CodeQL
+      uses: github/codeql-action/init@v4
+      with:
+        languages: ${{ matrix.language }}
+        config-file: ./.github/codeql/codeql-config.yml
+        # Prefix the list here with "+" to use these queries and those in the config file.
+
+        # For more details on CodeQL's query packs, refer to: https://docs.github.com/en/code-security/code-scanning/automatically-scanning-your-code-for-vulnerabilities-and-errors/configuring-code-scanning#using-queries-in-ql-packs
+        queries: security-extended,security-and-quality
+
+    - name: Build
+      continue-on-error: false
+      shell: pwsh
+      run: |
+          dotnet msbuild MailKit.sln -property:Platform="Any CPU" -property:Configuration=Release
+
+    - name: Perform CodeQL Analysis
+      uses: github/codeql-action/analyze@v4
+      with:
+        category: "/language:${{matrix.language}}"
+        output: sarif-results
+        upload: failure-only
+
+    # paths-ignore doesn't work for built C# code, so drop alerts for the
+    # unit tests and the MimeKit submodule (which is scanned in its own repo).
+    - name: Filter SARIF
+      uses: advanced-security/filter-sarif@v1.1
+      with:
+        patterns: |
+          -UnitTests/**
+          -submodules/**
+        input: sarif-results/${{ matrix.language }}.sarif
+        output: sarif-results/${{ matrix.language }}.sarif
+
+    - name: Upload SARIF
+      uses: github/codeql-action/upload-sarif@v4
+      with:
+        sarif_file: sarif-results/${{ matrix.language }}.sarif
+        category: "/language:${{matrix.language}}"

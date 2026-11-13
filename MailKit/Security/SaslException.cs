@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -25,8 +25,6 @@
 //
 
 using System;
-using System.Security;
-using System.Runtime.Serialization;
 
 namespace MailKit.Security {
 	/// <summary>
@@ -68,27 +66,8 @@ namespace MailKit.Security {
 	/// <remarks>
 	/// Typically indicates an error while parsing a server's challenge token.
 	/// </remarks>
-#if SERIALIZABLE
-	[Serializable]
-#endif
 	public class SaslException : AuthenticationException
 	{
-#if SERIALIZABLE
-		/// <summary>
-		/// Initializes a new instance of the <see cref="MailKit.Security.SaslException"/> class.
-		/// </summary>
-		/// <remarks>
-		/// Deserializes a <see cref="SaslException"/>.
-		/// </remarks>
-		/// <param name="info">The serialization info.</param>
-		/// <param name="context">The streaming context.</param>
-		protected SaslException (SerializationInfo info, StreamingContext context) : base (info, context)
-		{
-			ErrorCode = (SaslErrorCode) info.GetInt32 ("ErrorCode");
-			Mechanism = info.GetString ("Mechanism");
-		}
-#endif
-
 		/// <summary>
 		/// Initializes a new instance of the <see cref="MailKit.Security.SaslException"/> class.
 		/// </summary>
@@ -99,7 +78,7 @@ namespace MailKit.Security {
 		/// <param name="code">The error code.</param>
 		/// <param name="message">The error message.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="mechanism"/> is <c>null</c>.
+		/// <paramref name="mechanism"/> is <see langword="null" />.
 		/// </exception>
 		public SaslException (string mechanism, SaslErrorCode code, string message) : base (message)
 		{
@@ -109,29 +88,6 @@ namespace MailKit.Security {
 			Mechanism = mechanism;
 			ErrorCode = code;
 		}
-
-#if SERIALIZABLE
-		/// <summary>
-		/// When overridden in a derived class, sets the <see cref="System.Runtime.Serialization.SerializationInfo"/>
-		/// with information about the exception.
-		/// </summary>
-		/// <remarks>
-		/// Serializes the state of the <see cref="SaslException"/>.
-		/// </remarks>
-		/// <param name="info">The serialization info.</param>
-		/// <param name="context">The streaming context.</param>
-		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="info"/> is <c>null</c>.
-		/// </exception>
-		[SecurityCritical]
-		public override void GetObjectData (SerializationInfo info, StreamingContext context)
-		{
-			base.GetObjectData (info, context);
-
-			info.AddValue ("ErrorCode", (int) ErrorCode);
-			info.AddValue ("Mechanism", Mechanism);
-		}
-#endif
 
 		/// <summary>
 		/// Gets the error code.

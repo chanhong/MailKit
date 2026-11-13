@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -25,10 +25,15 @@
 //
 
 using System;
+using System.IO;
 using System.Net;
 using System.Threading;
 using System.Net.Sockets;
 using System.Threading.Tasks;
+
+#if NET6_0_OR_GREATER
+using System.Net.Http;
+#endif
 
 namespace MailKit.Net.Proxy
 {
@@ -39,8 +44,31 @@ namespace MailKit.Net.Proxy
 	/// A proxy client can be used to connect to a service through a firewall that
 	/// would otherwise be blocked.
 	/// </remarks>
+	/// <example>
+	/// <code language="c#" source="Examples\ProxyExamples.cs" region="ProxyClient" />
+	/// </example>
 	public abstract class ProxyClient : IProxyClient
 	{
+#if NET6_0_OR_GREATER
+		static IProxyClient? systemProxy;
+
+		/// <summary>
+		/// Get a client for the default system proxy.
+		/// </summary>
+		/// <remarks>
+		/// Gets a client for the default system proxy.
+		/// <note type="note">This property is only available on .NET 8.0 and later.</note>
+		/// </remarks>
+		/// <value>A client for the default system proxy.</value>
+		public static IProxyClient SystemProxy {
+			get {
+				systemProxy ??= new WebProxyClient (HttpClient.DefaultProxy);
+
+				return systemProxy;
+			}
+		}
+#endif
+
 		/// <summary>
 		/// Initializes a new instance of the <see cref="T:MailKit.Net.Proxy.ProxyClient"/> class.
 		/// </summary>
@@ -50,7 +78,7 @@ namespace MailKit.Net.Proxy
 		/// <param name="host">The host name of the proxy server.</param>
 		/// <param name="port">The proxy server port.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="host"/> is <c>null</c>.
+		/// <paramref name="host"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <paramref name="port"/> is not between <c>0</c> and <c>65535</c>.
@@ -85,9 +113,9 @@ namespace MailKit.Net.Proxy
 		/// <param name="port">The proxy server port.</param>
 		/// <param name="credentials">The credentials to use to authenticate with the proxy server.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <para><paramref name="host"/> is <c>null</c>.</para>
+		/// <para><paramref name="host"/> is <see langword="null" />.</para>
 		/// <para>-or-</para>
-		/// <para><paramref name="credentials"/>is <c>null</c>.</para>
+		/// <para><paramref name="credentials"/>is <see langword="null" />.</para>
 		/// </exception>
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <paramref name="port"/> is not between <c>0</c> and <c>65535</c>.
@@ -112,7 +140,7 @@ namespace MailKit.Net.Proxy
 		/// Gets the credentials to use when authenticating with the proxy server.
 		/// </remarks>
 		/// <value>The proxy credentials.</value>
-		public NetworkCredential ProxyCredentials {
+		public NetworkCredential? ProxyCredentials {
 			get; private set;
 		}
 
@@ -144,8 +172,8 @@ namespace MailKit.Net.Proxy
 		/// <remarks>
 		/// Gets or sets the local IP end point to use when connecting to a remote host.
 		/// </remarks>
-		/// <value>The local IP end point or <c>null</c> to use the default end point.</value>
-		public IPEndPoint LocalEndPoint {
+		/// <value>The local IP end point or <see langword="null" /> to use the default end point.</value>
+		public IPEndPoint? LocalEndPoint {
 			get; set;
 		}
 
@@ -169,9 +197,9 @@ namespace MailKit.Net.Proxy
 				throw new ArgumentOutOfRangeException (nameof (timeout));
 		}
 
-		static void AsyncOperationCompleted (object sender, SocketAsyncEventArgs args)
+		static void AsyncOperationCompleted (object? sender, SocketAsyncEventArgs args)
 		{
-			var tcs = (TaskCompletionSource<bool>) args.UserToken;
+			var tcs = (TaskCompletionSource<bool>) args.UserToken!;
 
 			if (args.SocketError == SocketError.Success) {
 				tcs.TrySetResult (true);
@@ -181,9 +209,9 @@ namespace MailKit.Net.Proxy
 			tcs.TrySetException (new SocketException ((int) args.SocketError));
 		}
 
-		internal static async Task SendAsync (Socket socket, byte[] buffer, int offset, int length, bool doAsync, CancellationToken cancellationToken)
+		internal static void Send (Socket socket, byte[] buffer, int offset, int length, CancellationToken cancellationToken)
 		{
-			if (doAsync || cancellationToken.CanBeCanceled) {
+			if (cancellationToken.CanBeCanceled) {
 				var tcs = new TaskCompletionSource<bool> ();
 
 				using (var registration = cancellationToken.Register (() => tcs.TrySetCanceled (), false)) {
@@ -196,11 +224,7 @@ namespace MailKit.Net.Proxy
 						if (!socket.SendAsync (args))
 							AsyncOperationCompleted (null, args);
 
-						if (doAsync)
-							await tcs.Task.ConfigureAwait (false);
-						else
-							tcs.Task.GetAwaiter ().GetResult ();
-
+						tcs.Task.GetAwaiter ().GetResult ();
 						return;
 					}
 				}
@@ -211,9 +235,28 @@ namespace MailKit.Net.Proxy
 			socket.Send (buffer, offset, length, SocketFlags.None);
 		}
 
-		internal static async Task<int> ReceiveAsync (Socket socket, byte[] buffer, int offset, int length, bool doAsync, CancellationToken cancellationToken)
+		internal static async Task SendAsync (Socket socket, byte[] buffer, int offset, int length, CancellationToken cancellationToken)
 		{
-			if (doAsync || cancellationToken.CanBeCanceled) {
+			var tcs = new TaskCompletionSource<bool> ();
+
+			using (var registration = cancellationToken.Register (() => tcs.TrySetCanceled (), false)) {
+				using (var args = new SocketAsyncEventArgs ()) {
+					args.Completed += AsyncOperationCompleted;
+					args.SetBuffer (buffer, offset, length);
+					args.AcceptSocket = socket;
+					args.UserToken = tcs;
+
+					if (!socket.SendAsync (args))
+						AsyncOperationCompleted (null, args);
+
+					await tcs.Task.ConfigureAwait (false);
+				}
+			}
+		}
+
+		internal static int Receive (Socket socket, byte[] buffer, int offset, int length, CancellationToken cancellationToken)
+		{
+			if (cancellationToken.CanBeCanceled) {
 				var tcs = new TaskCompletionSource<bool> ();
 
 				using (var registration = cancellationToken.Register (() => tcs.TrySetCanceled (), false)) {
@@ -226,10 +269,7 @@ namespace MailKit.Net.Proxy
 						if (!socket.ReceiveAsync (args))
 							AsyncOperationCompleted (null, args);
 
-						if (doAsync)
-							await tcs.Task.ConfigureAwait (false);
-						else
-							tcs.Task.GetAwaiter ().GetResult ();
+						tcs.Task.GetAwaiter ().GetResult ();
 
 						return args.BytesTransferred;
 					}
@@ -241,18 +281,70 @@ namespace MailKit.Net.Proxy
 			return socket.Receive (buffer, offset, length, SocketFlags.None);
 		}
 
+		internal static async Task<int> ReceiveAsync (Socket socket, byte[] buffer, int offset, int length, CancellationToken cancellationToken)
+		{
+			var tcs = new TaskCompletionSource<bool> ();
+
+			using (var registration = cancellationToken.Register (() => tcs.TrySetCanceled (), false)) {
+				using (var args = new SocketAsyncEventArgs ()) {
+					args.Completed += AsyncOperationCompleted;
+					args.SetBuffer (buffer, offset, length);
+					args.AcceptSocket = socket;
+					args.UserToken = tcs;
+
+					if (!socket.ReceiveAsync (args))
+						AsyncOperationCompleted (null, args);
+
+					await tcs.Task.ConfigureAwait (false);
+
+					return args.BytesTransferred;
+				}
+			}
+		}
+
+		static ProxyProtocolException CreateUnexpectedDisconnectException ()
+		{
+			return new ProxyProtocolException ("The proxy server unexpectedly disconnected.", ProtocolErrorType.UnexpectedDisconnect);
+		}
+
+		internal static void ReceiveExactly (Socket socket, byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+		{
+			while (count > 0) {
+				int nread = Receive (socket, buffer, offset, count, cancellationToken);
+
+				if (nread == 0)
+					throw CreateUnexpectedDisconnectException ();
+
+				offset += nread;
+				count -= nread;
+			}
+		}
+
+		internal static async Task ReceiveExactlyAsync (Socket socket, byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+		{
+			while (count > 0) {
+				int nread = await ReceiveAsync (socket, buffer, offset, count, cancellationToken).ConfigureAwait (false);
+
+				if (nread == 0)
+					throw CreateUnexpectedDisconnectException ();
+
+				offset += nread;
+				count -= nread;
+			}
+		}
+
 		/// <summary>
 		/// Connect to the target host.
 		/// </summary>
 		/// <remarks>
 		/// Connects to the target host and port through the proxy server.
 		/// </remarks>
-		/// <returns>The connected socket.</returns>
-		/// <param name="host">The host name of the proxy server.</param>
-		/// <param name="port">The proxy server port.</param>
+		/// <returns>The connected network stream.</returns>
+		/// <param name="host">The host name of the target server.</param>
+		/// <param name="port">The target server port.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="host"/> is <c>null</c>.
+		/// <paramref name="host"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <paramref name="port"/> is not between <c>1</c> and <c>65535</c>.
@@ -269,7 +361,7 @@ namespace MailKit.Net.Proxy
 		/// <exception cref="System.IO.IOException">
 		/// An I/O error occurred.
 		/// </exception>
-		public abstract Socket Connect (string host, int port, CancellationToken cancellationToken = default (CancellationToken));
+		public abstract Stream Connect (string host, int port, CancellationToken cancellationToken = default);
 
 		/// <summary>
 		/// Asynchronously connect to the target host.
@@ -277,12 +369,12 @@ namespace MailKit.Net.Proxy
 		/// <remarks>
 		/// Asynchronously connects to the target host and port through the proxy server.
 		/// </remarks>
-		/// <returns>The connected socket.</returns>
-		/// <param name="host">The host name of the proxy server.</param>
-		/// <param name="port">The proxy server port.</param>
+		/// <returns>The connected network stream.</returns>
+		/// <param name="host">The host name of the target server.</param>
+		/// <param name="port">The target server port.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="host"/> is <c>null</c>.
+		/// <paramref name="host"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <paramref name="port"/> is not between <c>1</c> and <c>65535</c>.
@@ -299,7 +391,7 @@ namespace MailKit.Net.Proxy
 		/// <exception cref="System.IO.IOException">
 		/// An I/O error occurred.
 		/// </exception>
-		public abstract Task<Socket> ConnectAsync (string host, int port, CancellationToken cancellationToken = default (CancellationToken));
+		public abstract Task<Stream> ConnectAsync (string host, int port, CancellationToken cancellationToken = default);
 
 		/// <summary>
 		/// Connect to the target host.
@@ -307,13 +399,13 @@ namespace MailKit.Net.Proxy
 		/// <remarks>
 		/// Connects to the target host and port through the proxy server.
 		/// </remarks>
-		/// <returns>The connected socket.</returns>
-		/// <param name="host">The host name of the proxy server.</param>
-		/// <param name="port">The proxy server port.</param>
+		/// <returns>The connected network stream.</returns>
+		/// <param name="host">The host name of the target server.</param>
+		/// <param name="port">The target server port.</param>
 		/// <param name="timeout">The timeout, in milliseconds.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="host"/> is <c>null</c>.
+		/// <paramref name="host"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <para><paramref name="port"/> is not between <c>1</c> and <c>65535</c>.</para>
@@ -335,7 +427,7 @@ namespace MailKit.Net.Proxy
 		/// <exception cref="System.IO.IOException">
 		/// An I/O error occurred.
 		/// </exception>
-		public virtual Socket Connect (string host, int port, int timeout, CancellationToken cancellationToken = default (CancellationToken))
+		public virtual Stream Connect (string host, int port, int timeout, CancellationToken cancellationToken = default)
 		{
 			ValidateArguments (host, port, timeout);
 
@@ -358,13 +450,13 @@ namespace MailKit.Net.Proxy
 		/// <remarks>
 		/// Asynchronously connects to the target host and port through the proxy server.
 		/// </remarks>
-		/// <returns>The connected socket.</returns>
-		/// <param name="host">The host name of the proxy server.</param>
-		/// <param name="port">The proxy server port.</param>
+		/// <returns>The connected network stream.</returns>
+		/// <param name="host">The host name of the target server.</param>
+		/// <param name="port">The target server port.</param>
 		/// <param name="timeout">The timeout, in milliseconds.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="host"/> is <c>null</c>.
+		/// <paramref name="host"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <para><paramref name="port"/> is not between <c>1</c> and <c>65535</c>.</para>
@@ -386,7 +478,7 @@ namespace MailKit.Net.Proxy
 		/// <exception cref="System.IO.IOException">
 		/// An I/O error occurred.
 		/// </exception>
-		public async virtual Task<Socket> ConnectAsync (string host, int port, int timeout, CancellationToken cancellationToken = default (CancellationToken))
+		public async virtual Task<Stream> ConnectAsync (string host, int port, int timeout, CancellationToken cancellationToken = default)
 		{
 			ValidateArguments (host, port, timeout);
 

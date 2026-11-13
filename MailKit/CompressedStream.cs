@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -24,33 +24,39 @@
 // THE SOFTWARE.
 //
 
+#if NET8_0_OR_GREATER
+
 using System;
 using System.IO;
+using System.IO.Compression;
 using System.Threading;
 using System.Threading.Tasks;
-
-using Org.BouncyCastle.Utilities.Zlib;
 
 namespace MailKit {
 	/// <summary>
 	/// A compressed stream.
 	/// </summary>
+	/// <remarks>
+	/// <para>Implements the DEFLATE-based compression layer used by the IMAP COMPRESS extension (rfc4978).</para>
+	/// <para>rfc4978 specifies the raw DEFLATE data format (rfc1951) without a zlib wrapper (rfc1950), which is
+	/// exactly what <see cref="DeflateStream"/> implements.</para>
+	/// <para>Note: Unlike most streams, data written to this stream is buffered by the deflater until
+	/// <see cref="Flush()"/> is called. Flushing emits a zlib Z_SYNC_FLUSH which aligns the compressed data
+	/// to a byte boundary and pushes it to the inner stream without terminating the DEFLATE stream.</para>
+	/// </remarks>
 	class CompressedStream : Stream
 	{
-		readonly ZStream zIn, zOut;
-		bool eos, disposed;
+		readonly DeflateStream deflate, inflate;
+		bool disposed;
 
 		public CompressedStream (Stream innerStream)
 		{
 			InnerStream = innerStream;
 
-			zOut = new ZStream ();
-			zOut.deflateInit (5, true);
-			zOut.next_out = new byte[4096];
-
-			zIn = new ZStream ();
-			zIn.inflateInit (true);
-			zIn.next_in = new byte[4096];
+			// Note: leaveOpen is used for both because they share the same (duplex) inner stream which
+			// is disposed exactly once by our own Dispose() method.
+			deflate = new DeflateStream (innerStream, CompressionLevel.Optimal, true);
+			inflate = new DeflateStream (innerStream, CompressionMode.Decompress, true);
 		}
 
 		/// <summary>
@@ -64,7 +70,7 @@ namespace MailKit {
 		/// <summary>
 		/// Gets whether the stream supports reading.
 		/// </summary>
-		/// <value><c>true</c> if the stream supports reading; otherwise, <c>false</c>.</value>
+		/// <value><see langword="true" /> if the stream supports reading; otherwise, <see langword="false" />.</value>
 		public override bool CanRead {
 			get { return InnerStream.CanRead; }
 		}
@@ -72,7 +78,7 @@ namespace MailKit {
 		/// <summary>
 		/// Gets whether the stream supports writing.
 		/// </summary>
-		/// <value><c>true</c> if the stream supports writing; otherwise, <c>false</c>.</value>
+		/// <value><see langword="true" /> if the stream supports writing; otherwise, <see langword="false" />.</value>
 		public override bool CanWrite {
 			get { return InnerStream.CanWrite; }
 		}
@@ -80,7 +86,7 @@ namespace MailKit {
 		/// <summary>
 		/// Gets whether the stream supports seeking.
 		/// </summary>
-		/// <value><c>true</c> if the stream supports seeking; otherwise, <c>false</c>.</value>
+		/// <value><see langword="true" /> if the stream supports seeking; otherwise, <see langword="false" />.</value>
 		public override bool CanSeek {
 			get { return false; }
 		}
@@ -88,15 +94,15 @@ namespace MailKit {
 		/// <summary>
 		/// Gets whether the stream supports I/O timeouts.
 		/// </summary>
-		/// <value><c>true</c> if the stream supports I/O timeouts; otherwise, <c>false</c>.</value>
+		/// <value><see langword="true" /> if the stream supports I/O timeouts; otherwise, <see langword="false" />.</value>
 		public override bool CanTimeout {
 			get { return InnerStream.CanTimeout; }
 		}
 
 		/// <summary>
-		/// Gets or sets a value, in miliseconds, that determines how long the stream will attempt to read before timing out.
+		/// Gets or sets a value, in milliseconds, that determines how long the stream will attempt to read before timing out.
 		/// </summary>
-		/// <returns>A value, in miliseconds, that determines how long the stream will attempt to read before timing out.</returns>
+		/// <returns>A value, in milliseconds, that determines how long the stream will attempt to read before timing out.</returns>
 		/// <value>The read timeout.</value>
 		public override int ReadTimeout {
 			get { return InnerStream.ReadTimeout; }
@@ -104,9 +110,9 @@ namespace MailKit {
 		}
 
 		/// <summary>
-		/// Gets or sets a value, in miliseconds, that determines how long the stream will attempt to write before timing out.
+		/// Gets or sets a value, in milliseconds, that determines how long the stream will attempt to write before timing out.
 		/// </summary>
-		/// <returns>A value, in miliseconds, that determines how long the stream will attempt to write before timing out.</returns>
+		/// <returns>A value, in milliseconds, that determines how long the stream will attempt to write before timing out.</returns>
 		/// <value>The write timeout.</value>
 		public override int WriteTimeout {
 			get { return InnerStream.WriteTimeout; }
@@ -156,47 +162,6 @@ namespace MailKit {
 				throw new ObjectDisposedException (nameof (CompressedStream));
 		}
 
-		async Task<int> ReadAsync (byte[] buffer, int offset, int count, bool doAsync, CancellationToken cancellationToken)
-		{
-			CheckDisposed ();
-
-			ValidateArguments (buffer, offset, count);
-
-			if (count == 0)
-				return 0;
-
-			zIn.next_out = buffer;
-			zIn.next_out_index = offset;
-			zIn.avail_out = count;
-
-			do {
-				if (zIn.avail_in == 0 && !eos) {
-					cancellationToken.ThrowIfCancellationRequested ();
-
-					if (doAsync)
-						zIn.avail_in = await InnerStream.ReadAsync (zIn.next_in, 0, zIn.next_in.Length, cancellationToken).ConfigureAwait (false);
-					else
-						zIn.avail_in = InnerStream.Read (zIn.next_in, 0, zIn.next_in.Length);
-
-					eos = zIn.avail_in == 0;
-					zIn.next_in_index = 0;
-				}
-
-				int retval = zIn.inflate (JZlib.Z_FULL_FLUSH);
-
-				if (retval == JZlib.Z_STREAM_END)
-					break;
-
-				if (eos && retval == JZlib.Z_BUF_ERROR)
-					return 0;
-
-				if (retval != JZlib.Z_OK)
-					throw new IOException ("Error inflating: " + zIn.msg);
-			} while (zIn.avail_out == count);
-
-			return count - zIn.avail_out;
-		}
-
 		/// <summary>
 		/// Reads a sequence of bytes from the stream and advances the position
 		/// within the stream by the number of bytes read.
@@ -207,12 +172,12 @@ namespace MailKit {
 		/// <param name="offset">The buffer offset.</param>
 		/// <param name="count">The number of bytes to read.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="buffer"/> is <c>null</c>.
+		/// <paramref name="buffer"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <para><paramref name="offset"/> is less than zero or greater than the length of <paramref name="buffer"/>.</para>
 		/// <para>-or-</para>
-		/// <para>The <paramref name="buffer"/> is not large enough to contain <paramref name="count"/> bytes strting
+		/// <para>The <paramref name="buffer"/> is not large enough to contain <paramref name="count"/> bytes starting
 		/// at the specified <paramref name="offset"/>.</para>
 		/// </exception>
 		/// <exception cref="System.ObjectDisposedException">
@@ -223,7 +188,14 @@ namespace MailKit {
 		/// </exception>
 		public override int Read (byte[] buffer, int offset, int count)
 		{
-			return ReadAsync (buffer, offset, count, false, CancellationToken.None).GetAwaiter ().GetResult ();
+			CheckDisposed ();
+
+			ValidateArguments (buffer, offset, count);
+
+			if (count == 0)
+				return 0;
+
+			return inflate.Read (buffer, offset, count);
 		}
 
 		/// <summary>
@@ -237,12 +209,12 @@ namespace MailKit {
 		/// <param name="count">The number of bytes to read.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="buffer"/> is <c>null</c>.
+		/// <paramref name="buffer"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <para><paramref name="offset"/> is less than zero or greater than the length of <paramref name="buffer"/>.</para>
 		/// <para>-or-</para>
-		/// <para>The <paramref name="buffer"/> is not large enough to contain <paramref name="count"/> bytes strting
+		/// <para>The <paramref name="buffer"/> is not large enough to contain <paramref name="count"/> bytes starting
 		/// at the specified <paramref name="offset"/>.</para>
 		/// </exception>
 		/// <exception cref="System.ObjectDisposedException">
@@ -253,36 +225,14 @@ namespace MailKit {
 		/// </exception>
 		public override Task<int> ReadAsync (byte[] buffer, int offset, int count, CancellationToken cancellationToken)
 		{
-			return ReadAsync (buffer, offset, count, true, cancellationToken);
-		}
-
-		async Task WriteAsync (byte[] buffer, int offset, int count, bool doAsync, CancellationToken cancellationToken)
-		{
 			CheckDisposed ();
 
 			ValidateArguments (buffer, offset, count);
 
 			if (count == 0)
-				return;
+				return Task.FromResult (0);
 
-			zOut.next_in = buffer;
-			zOut.next_in_index = offset;
-			zOut.avail_in = count;
-
-			do {
-				cancellationToken.ThrowIfCancellationRequested ();
-
-				zOut.avail_out = zOut.next_out.Length;
-				zOut.next_out_index = 0;
-
-				if (zOut.deflate (JZlib.Z_FULL_FLUSH) != JZlib.Z_OK)
-					throw new IOException ("Error deflating: " + zOut.msg);
-
-				if (doAsync)
-					await InnerStream.WriteAsync (zOut.next_out, 0, zOut.next_out.Length - zOut.avail_out, cancellationToken).ConfigureAwait (false);
-				else
-					InnerStream.Write (zOut.next_out, 0, zOut.next_out.Length - zOut.avail_out);
-			} while (zOut.avail_in > 0 || zOut.avail_out == 0);
+			return inflate.ReadAsync (buffer, offset, count, cancellationToken);
 		}
 
 		/// <summary>
@@ -293,12 +243,12 @@ namespace MailKit {
 		/// <param name="offset">The offset of the first byte to write.</param>
 		/// <param name="count">The number of bytes to write.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="buffer"/> is <c>null</c>.
+		/// <paramref name="buffer"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <para><paramref name="offset"/> is less than zero or greater than the length of <paramref name="buffer"/>.</para>
 		/// <para>-or-</para>
-		/// <para>The <paramref name="buffer"/> is not large enough to contain <paramref name="count"/> bytes strting
+		/// <para>The <paramref name="buffer"/> is not large enough to contain <paramref name="count"/> bytes starting
 		/// at the specified <paramref name="offset"/>.</para>
 		/// </exception>
 		/// <exception cref="System.ObjectDisposedException">
@@ -312,7 +262,15 @@ namespace MailKit {
 		/// </exception>
 		public override void Write (byte[] buffer, int offset, int count)
 		{
-			WriteAsync (buffer, offset, count, false, CancellationToken.None).GetAwaiter ().GetResult ();
+			CheckDisposed ();
+
+			ValidateArguments (buffer, offset, count);
+
+			if (count == 0)
+				return;
+
+			// Note: The deflater buffers this data until Flush() is called.
+			deflate.Write (buffer, offset, count);
 		}
 
 		/// <summary>
@@ -325,12 +283,12 @@ namespace MailKit {
 		/// <param name="count">The number of bytes to write.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="buffer"/> is <c>null</c>.
+		/// <paramref name="buffer"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <para><paramref name="offset"/> is less than zero or greater than the length of <paramref name="buffer"/>.</para>
 		/// <para>-or-</para>
-		/// <para>The <paramref name="buffer"/> is not large enough to contain <paramref name="count"/> bytes strting
+		/// <para>The <paramref name="buffer"/> is not large enough to contain <paramref name="count"/> bytes starting
 		/// at the specified <paramref name="offset"/>.</para>
 		/// </exception>
 		/// <exception cref="System.ObjectDisposedException">
@@ -344,7 +302,15 @@ namespace MailKit {
 		/// </exception>
 		public override Task WriteAsync (byte[] buffer, int offset, int count, CancellationToken cancellationToken)
 		{
-			return WriteAsync (buffer, offset, count, true, cancellationToken);
+			CheckDisposed ();
+
+			ValidateArguments (buffer, offset, count);
+
+			if (count == 0)
+				return Task.CompletedTask;
+
+			// Note: The deflater buffers this data until FlushAsync() is called.
+			return deflate.WriteAsync (buffer, offset, count, cancellationToken);
 		}
 
 		/// <summary>
@@ -364,7 +330,9 @@ namespace MailKit {
 		{
 			CheckDisposed ();
 
-			InnerStream.Flush ();
+			// Note: This performs a Z_SYNC_FLUSH, writes the compressed bytes to the inner
+			// stream and then flushes the inner stream.
+			deflate.Flush ();
 		}
 
 		/// <summary>
@@ -385,7 +353,9 @@ namespace MailKit {
 		{
 			CheckDisposed ();
 
-			return InnerStream.FlushAsync (cancellationToken);
+			// Note: This performs a Z_SYNC_FLUSH, writes the compressed bytes to the inner
+			// stream and then flushes the inner stream.
+			return deflate.FlushAsync (cancellationToken);
 		}
 
 		/// <summary>
@@ -418,18 +388,33 @@ namespace MailKit {
 		/// Releases the unmanaged resources used by the <see cref="CompressedStream"/> and
 		/// optionally releases the managed resources.
 		/// </summary>
-		/// <param name="disposing"><c>true</c> to release both managed and unmanaged resources;
-		/// <c>false</c> to release only the unmanaged resources.</param>
+		/// <param name="disposing"><see langword="true" /> to release both managed and unmanaged resources;
+		/// <see langword="false" /> to release only the unmanaged resources.</param>
 		protected override void Dispose (bool disposing)
 		{
 			if (disposing && !disposed) {
-				InnerStream.Dispose ();
 				disposed = true;
-				zOut.free ();
-				zIn.free ();
+
+				// Note: Dispose the inner stream *before* disposing the deflater. Disposing a
+				// DeflateStream in Compress mode writes a final block of compressed data to the
+				// inner stream, but at this point we are tearing the connection down and have no
+				// interest in transmitting anything further. Disposing the inner stream first
+				// guarantees that those bytes go nowhere.
+				InnerStream.Dispose ();
+
+				try {
+					deflate.Dispose ();
+				} catch (ObjectDisposedException) {
+				} catch (NotSupportedException) {
+				} catch (IOException) {
+				}
+
+				inflate.Dispose ();
 			}
 
 			base.Dispose (disposing);
 		}
 	}
 }
+
+#endif // NET8_0_OR_GREATER

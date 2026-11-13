@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -25,10 +25,6 @@
 //
 
 using System;
-#if SERIALIZABLE
-using System.Security;
-using System.Runtime.Serialization;
-#endif
 
 namespace MailKit.Net.Proxy
 {
@@ -38,28 +34,32 @@ namespace MailKit.Net.Proxy
 	/// <remarks>
 	/// The exception that is thrown when there is an error communicating with a proxy server.
 	/// </remarks>
-#if SERIALIZABLE
-	[Serializable]
-#endif
 	public class ProxyProtocolException : ProtocolException
 	{
-#if SERIALIZABLE
 		/// <summary>
 		/// Initializes a new instance of the <see cref="MailKit.Net.Proxy.ProxyProtocolException"/> class.
 		/// </summary>
 		/// <remarks>
-		/// Creates a new <see cref="ProxyProtocolException"/> from the serialized data.
+		/// Creates a new <see cref="ProxyProtocolException"/>.
 		/// </remarks>
-		/// <param name="info">The serialization info.</param>
-		/// <param name="context">The streaming context.</param>
-		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="info"/> is <c>null</c>.
-		/// </exception>
-		[SecuritySafeCritical]
-		protected ProxyProtocolException (SerializationInfo info, StreamingContext context) : base (info, context)
+		/// <param name="message">The error message.</param>
+		/// <param name="errorType">The type of protocol error.</param>
+		/// <param name="innerException">An inner exception.</param>
+		public ProxyProtocolException (string message, ProtocolErrorType errorType, Exception innerException) : base (message, errorType, innerException)
 		{
 		}
-#endif
+
+		/// <summary>
+		/// Initializes a new instance of the <see cref="MailKit.Net.Proxy.ProxyProtocolException"/> class.
+		/// </summary>
+		/// <remarks>
+		/// Creates a new <see cref="ProxyProtocolException"/>.
+		/// </remarks>
+		/// <param name="message">The error message.</param>
+		/// <param name="errorType">The type of protocol error.</param>
+		public ProxyProtocolException (string message, ProtocolErrorType errorType) : base (message, errorType)
+		{
+		}
 
 		/// <summary>
 		/// Initializes a new instance of the <see cref="MailKit.Net.Proxy.ProxyProtocolException"/> class.

@@ -11,5 +11,8 @@ packages
 obj
 bin
 .vs
+*.patch
 *.tree
 *.zip
+.idea
+.DS_Store

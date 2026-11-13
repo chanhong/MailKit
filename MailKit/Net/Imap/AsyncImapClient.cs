@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -30,6 +30,7 @@ using System.Net;
 using System.Text;
 using System.Threading;
 using System.Net.Sockets;
+using System.Net.Security;
 using System.Threading.Tasks;
 using System.Collections.Generic;
 
@@ -39,14 +40,16 @@ namespace MailKit.Net.Imap
 {
 	public partial class ImapClient
 	{
+#if NET8_0_OR_GREATER
 		/// <summary>
 		/// Asynchronously enable compression over the IMAP connection.
 		/// </summary>
 		/// <remarks>
 		/// <para>Asynchronously enables compression over the IMAP connection.</para>
-		/// <para>If the IMAP server supports the <see cref="ImapCapabilities.Compress"/> extension,
+		/// <para>If the IMAP server supports the <see cref="ImapCapability.Compress"/> extension,
 		/// it is possible at any point after connecting to enable compression to reduce network
 		/// bandwidth usage. Ideally, this method should be called before authenticating.</para>
+		/// <note type="note">This method is only available on .NET 8.0 and later.</note>
 		/// </remarks>
 		/// <returns>An asynchronous task context.</returns>
 		/// <param name="cancellationToken">The cancellation token.</param>
@@ -74,28 +77,35 @@ namespace MailKit.Net.Imap
 		/// <exception cref="ImapProtocolException">
 		/// An IMAP protocol error occurred.
 		/// </exception>
-		public Task CompressAsync (CancellationToken cancellationToken = default (CancellationToken))
+		public async Task CompressAsync (CancellationToken cancellationToken = default)
 		{
-			return CompressAsync (true, cancellationToken);
+			var ic = QueueCompressCommand (cancellationToken);
+
+			await engine.RunAsync (ic).ConfigureAwait (false);
+
+			ProcessCompressResponse (ic);
 		}
+#endif
 
 		/// <summary>
-		/// Asynchronously enable the QRESYNC feature.
+		/// Asynchronously enable the specified IMAP features.
 		/// </summary>
 		/// <remarks>
-		/// <para>Enables the <a href="https://tools.ietf.org/html/rfc5162">QRESYNC</a> feature.</para>
-		/// <para>The QRESYNC extension improves resynchronization performance of folders by
-		/// querying the IMAP server for a list of changes when the folder is opened using the
-		/// <see cref="ImapFolder.Open(FolderAccess,uint,ulong,System.Collections.Generic.IList&lt;UniqueId&gt;,System.Threading.CancellationToken)"/>
-		/// method.</para>
-		/// <para>If this feature is enabled, the <see cref="MailFolder.MessageExpunged"/> event is replaced
-		/// with the <see cref="MailFolder.MessagesVanished"/> event.</para>
+		/// <para>Enables the specified features using the <a href="https://tools.ietf.org/html/rfc5161">ENABLE</a>
+		/// command. Multiple features may be enabled at once by combining them, e.g.
+		/// <c>ImapFeatures.UTF8Accept | ImapFeatures.IMAP4rev2</c>.</para>
+		/// <para>Features that have already been enabled are not requested again. If all of the requested
+		/// features are already enabled, then no command is sent to the server.</para>
 		/// <para>This method needs to be called immediately after calling one of the
 		/// <a href="Overload_MailKit_Net_Imap_ImapClient_Authenticate.htm">Authenticate</a> methods, before
 		/// opening any folders.</para>
 		/// </remarks>
 		/// <returns>An asynchronous task context.</returns>
+		/// <param name="features">The features to enable.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
+		/// <exception cref="System.ArgumentOutOfRangeException">
+		/// <paramref name="features"/> contains unknown feature flags.
+		/// </exception>
 		/// <exception cref="System.ObjectDisposedException">
 		/// The <see cref="ImapClient"/> has been disposed.
 		/// </exception>
@@ -106,10 +116,10 @@ namespace MailKit.Net.Imap
 		/// The <see cref="ImapClient"/> is not authenticated.
 		/// </exception>
 		/// <exception cref="System.InvalidOperationException">
-		/// Quick resynchronization needs to be enabled before selecting a folder.
+		/// Features need to be enabled before selecting a folder.
 		/// </exception>
 		/// <exception cref="System.NotSupportedException">
-		/// The IMAP server does not support the QRESYNC extension.
+		/// The IMAP server does not support one or more of the requested features.
 		/// </exception>
 		/// <exception cref="System.OperationCanceledException">
 		/// The operation was canceled via the cancellation token.
@@ -123,49 +133,14 @@ namespace MailKit.Net.Imap
 		/// <exception cref="ImapProtocolException">
 		/// An IMAP protocol error occurred.
 		/// </exception>
-		public override Task EnableQuickResyncAsync (CancellationToken cancellationToken = default (CancellationToken))
+		public async Task EnableAsync (ImapFeatures features, CancellationToken cancellationToken = default)
 		{
-			return EnableQuickResyncAsync (true, cancellationToken);
-		}
+			if (!TryQueueEnableCommand (features, cancellationToken, out var ic))
+				return;
 
-		/// <summary>
-		/// Asynchronously enable the UTF8=ACCEPT extension.
-		/// </summary>
-		/// <remarks>
-		/// Enables the <a href="https://tools.ietf.org/html/rfc6855">UTF8=ACCEPT</a> extension.
-		/// </remarks>
-		/// <returns>An asynchronous task context.</returns>
-		/// <param name="cancellationToken">The cancellation token.</param>
-		/// <exception cref="System.ObjectDisposedException">
-		/// The <see cref="ImapClient"/> has been disposed.
-		/// </exception>
-		/// <exception cref="ServiceNotConnectedException">
-		/// The <see cref="ImapClient"/> is not connected.
-		/// </exception>
-		/// <exception cref="ServiceNotAuthenticatedException">
-		/// The <see cref="ImapClient"/> is not authenticated.
-		/// </exception>
-		/// <exception cref="System.InvalidOperationException">
-		/// UTF8=ACCEPT needs to be enabled before selecting a folder.
-		/// </exception>
-		/// <exception cref="System.NotSupportedException">
-		/// The IMAP server does not support the UTF8=ACCEPT extension.
-		/// </exception>
-		/// <exception cref="System.OperationCanceledException">
-		/// The operation was canceled via the cancellation token.
-		/// </exception>
-		/// <exception cref="System.IO.IOException">
-		/// An I/O error occurred.
-		/// </exception>
-		/// <exception cref="ImapCommandException">
-		/// The server replied to the ENABLE command with a NO or BAD response.
-		/// </exception>
-		/// <exception cref="ImapProtocolException">
-		/// An IMAP protocol error occurred.
-		/// </exception>
-		public Task EnableUTF8Async (CancellationToken cancellationToken = default (CancellationToken))
-		{
-			return EnableUTF8Async (true, cancellationToken);
+			await engine.RunAsync (ic).ConfigureAwait (false);
+
+			ProcessEnableResponse (ic, features);
 		}
 
 		/// <summary>
@@ -174,14 +149,14 @@ namespace MailKit.Net.Imap
 		/// <remarks>
 		/// <para>Passes along the client implementation details to the server while also obtaining implementation
 		/// details from the server.</para>
-		/// <para>If the <paramref name="clientImplementation"/> is <c>null</c> or no properties have been set, no
+		/// <para>If the <paramref name="clientImplementation"/> is <see langword="null" /> or no properties have been set, no
 		/// identifying information will be sent to the server.</para>
 		/// <note type="security">
 		/// <para>Security Implications</para>
 		/// <para>This command has the danger of violating the privacy of users if misused. Clients should
 		/// notify users that they send the ID command.</para>
 		/// <para>It is highly desirable that implementations provide a method of disabling ID support, perhaps by
-		/// not calling this method at all, or by passing <c>null</c> as the <paramref name="clientImplementation"/>
+		/// not calling this method at all, or by passing <see langword="null" /> as the <paramref name="clientImplementation"/>
 		/// argument.</para>
 		/// <para>Implementors must exercise extreme care in adding properties to the <paramref name="clientImplementation"/>.
 		/// Some properties, such as a processor ID number, Ethernet address, or other unique (or mostly unique) identifier
@@ -189,7 +164,7 @@ namespace MailKit.Net.Imap
 		/// attackers to exploit security holes in the client.</para>
 		/// </note>
 		/// </remarks>
-		/// <returns>The implementation details of the server if available; otherwise, <c>null</c>.</returns>
+		/// <returns>The implementation details of the server if available; otherwise, <see langword="null" />.</returns>
 		/// <param name="clientImplementation">The client implementation.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ObjectDisposedException">
@@ -213,9 +188,20 @@ namespace MailKit.Net.Imap
 		/// <exception cref="ImapProtocolException">
 		/// An IMAP protocol error occurred.
 		/// </exception>
-		public Task<ImapImplementation> IdentifyAsync (ImapImplementation clientImplementation, CancellationToken cancellationToken = default (CancellationToken))
+		public async Task<ImapImplementation> IdentifyAsync (ImapImplementation clientImplementation, CancellationToken cancellationToken = default)
 		{
-			return IdentifyAsync (clientImplementation, true, cancellationToken);
+			var ic = QueueIdentifyCommand (clientImplementation, cancellationToken);
+
+			await engine.RunAsync (ic).ConfigureAwait (false);
+
+			return ProcessIdentifyResponse (ic);
+		}
+
+		async Task OnAuthenticatedAsync (string message, CancellationToken cancellationToken)
+		{
+			await engine.QueryNamespacesAsync (cancellationToken).ConfigureAwait (false);
+			await engine.QuerySpecialFoldersAsync (cancellationToken).ConfigureAwait (false);
+			OnAuthenticated (message);
 		}
 
 		/// <summary>
@@ -231,7 +217,7 @@ namespace MailKit.Net.Imap
 		/// <param name="mechanism">The SASL mechanism.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="mechanism"/> is <c>null</c>.
+		/// <paramref name="mechanism"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ObjectDisposedException">
 		/// The <see cref="ImapClient"/> has been disposed.
@@ -260,19 +246,67 @@ namespace MailKit.Net.Imap
 		/// <exception cref="ImapProtocolException">
 		/// An IMAP protocol error occurred.
 		/// </exception>
-		public override Task AuthenticateAsync (SaslMechanism mechanism, CancellationToken cancellationToken = default (CancellationToken))
+		public override async Task AuthenticateAsync (SaslMechanism mechanism, CancellationToken cancellationToken = default)
 		{
-			return AuthenticateAsync (mechanism, true, cancellationToken);
+			CheckCanAuthenticate (mechanism, cancellationToken);
+
+			int capabilitiesVersion = engine.CapabilitiesVersion;
+			ImapCommand? ic = null;
+
+			ConfigureSaslMechanism (mechanism);
+
+			var command = string.Format ("AUTHENTICATE {0}", mechanism.MechanismName);
+
+			if (engine.Capabilities.Contains (ImapCapability.SaslIR) && mechanism.SupportsInitialResponse) {
+				string ir = await mechanism.ChallengeAsync (null, cancellationToken).ConfigureAwait (false);
+				command += " " + ir + "\r\n";
+			} else {
+				command += "\r\n";
+			}
+
+			ic = engine.QueueCommand (cancellationToken, null, command);
+			ic.ContinuationHandler = async (imap, cmd, text, xdoAsync) => {
+				string challenge = await mechanism.ChallengeAsync (text, cmd.CancellationToken).ConfigureAwait (false);
+				var buf = Encoding.ASCII.GetBytes (challenge + "\r\n");
+
+				await imap.Stream!.WriteAsync (buf, 0, buf.Length, cmd.CancellationToken).ConfigureAwait (false);
+				await imap.Stream.FlushAsync (cmd.CancellationToken).ConfigureAwait (false);
+			};
+
+			using var operation = engine.StartNetworkOperation (NetworkOperationKind.Authenticate);
+
+			try {
+				detector.IsAuthenticating = true;
+
+				try {
+					await engine.RunAsync (ic).ConfigureAwait (false);
+				} finally {
+					detector.IsAuthenticating = false;
+				}
+
+				ProcessAuthenticateResponse (ic, mechanism);
+
+				// Query the CAPABILITIES again if the server did not include an
+				// untagged CAPABILITIES response to the AUTHENTICATE command.
+				if (engine.CapabilitiesVersion == capabilitiesVersion)
+					await engine.QueryCapabilitiesAsync (cancellationToken).ConfigureAwait (false);
+
+				await OnAuthenticatedAsync (ic.ResponseText ?? string.Empty, cancellationToken).ConfigureAwait (false);
+			} catch (Exception ex) {
+				operation.SetError (ex);
+				throw;
+			}
 		}
 
 		/// <summary>
 		/// Asynchronously authenticate using the supplied credentials.
 		/// </summary>
 		/// <remarks>
+		/// <para>Asynchronously authenticates using the supplied credentials.</para>
 		/// <para>If the IMAP server supports one or more SASL authentication mechanisms,
-		/// then the SASL mechanisms that both the client and server support are tried
-		/// in order of greatest security to weakest security. Once a SASL
-		/// authentication mechanism is found that both client and server support,
+		/// then the SASL mechanisms that both the client and server support (not including
+		/// any OAUTH mechanisms) are tried in order of greatest security to weakest security.
+		/// Once a SASL authentication mechanism is found that both client and server support,
 		/// the credentials are used to authenticate.</para>
 		/// <para>If the server does not support SASL or if no common SASL mechanisms
 		/// can be found, then LOGIN command is used as a fallback.</para>
@@ -285,9 +319,9 @@ namespace MailKit.Net.Imap
 		/// <param name="credentials">The user's credentials.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <para><paramref name="encoding"/> is <c>null</c>.</para>
+		/// <para><paramref name="encoding"/> is <see langword="null" />.</para>
 		/// <para>-or-</para>
-		/// <para><paramref name="credentials"/> is <c>null</c>.</para>
+		/// <para><paramref name="credentials"/> is <see langword="null" />.</para>
 		/// </exception>
 		/// <exception cref="System.ObjectDisposedException">
 		/// The <see cref="ImapClient"/> has been disposed.
@@ -316,9 +350,196 @@ namespace MailKit.Net.Imap
 		/// <exception cref="ImapProtocolException">
 		/// An IMAP protocol error occurred.
 		/// </exception>
-		public override Task AuthenticateAsync (Encoding encoding, ICredentials credentials, CancellationToken cancellationToken = default (CancellationToken))
+		public override async Task AuthenticateAsync (Encoding encoding, ICredentials credentials, CancellationToken cancellationToken = default)
 		{
-			return AuthenticateAsync (encoding, credentials, true, cancellationToken);
+			CheckCanAuthenticate (encoding, credentials);
+
+			using var operation = engine.StartNetworkOperation (NetworkOperationKind.Authenticate);
+
+			try {
+				int capabilitiesVersion = engine.CapabilitiesVersion;
+				var uri = new Uri ("imap://" + engine.Uri!.Host);
+				NetworkCredential? cred;
+				ImapCommand? ic = null;
+				SaslMechanism? sasl;
+				string id;
+
+				foreach (var authmech in SaslMechanism.Rank (engine.AuthenticationMechanisms)) {
+					cred = credentials.GetCredential (uri, authmech);
+
+					if (cred == null || !SaslMechanism.TryCreate (authmech, encoding, cred, out sasl))
+						continue;
+
+					ConfigureSaslMechanism (sasl, uri);
+
+					cancellationToken.ThrowIfCancellationRequested ();
+
+					var command = string.Format ("AUTHENTICATE {0}", sasl.MechanismName);
+
+					if (engine.Capabilities.Contains (ImapCapability.SaslIR) && sasl.SupportsInitialResponse) {
+						string ir = await sasl.ChallengeAsync (null, cancellationToken).ConfigureAwait (false);
+
+						command += " " + ir + "\r\n";
+					} else {
+						command += "\r\n";
+					}
+
+					ic = engine.QueueCommand (cancellationToken, null, command);
+					ic.ContinuationHandler = async (imap, cmd, text, xdoAsync) => {
+						string challenge = await sasl.ChallengeAsync (text, cmd.CancellationToken).ConfigureAwait (false);
+						var buf = Encoding.ASCII.GetBytes (challenge + "\r\n");
+
+						await imap.Stream!.WriteAsync (buf, 0, buf.Length, cmd.CancellationToken).ConfigureAwait (false);
+						await imap.Stream.FlushAsync (cmd.CancellationToken).ConfigureAwait (false);
+					};
+
+					detector.IsAuthenticating = true;
+
+					try {
+						await engine.RunAsync (ic).ConfigureAwait (false);
+					} finally {
+						detector.IsAuthenticating = false;
+					}
+
+					if (ic.Response != ImapCommandResponse.Ok) {
+						EmitAndThrowOnAlert (ic);
+						if (ic.Bye)
+							throw ImapProtocolException.Create (ic);
+						continue;
+					}
+
+					engine.State = ImapEngineState.Authenticated;
+
+					id = GetSessionIdentifier (cred.UserName);
+					if (id != identifier) {
+						engine.FolderCache.Clear ();
+						identifier = id;
+					}
+
+					// Query the CAPABILITIES again if the server did not include an
+					// untagged CAPABILITIES response to the AUTHENTICATE command.
+					if (engine.CapabilitiesVersion == capabilitiesVersion)
+						await engine.QueryCapabilitiesAsync (cancellationToken).ConfigureAwait (false);
+
+					await OnAuthenticatedAsync (ic.ResponseText ?? string.Empty, cancellationToken).ConfigureAwait (false);
+					return;
+				}
+
+				CheckCanLogin (ic);
+
+				// fall back to the classic LOGIN command...
+				if ((cred = credentials.GetCredential (uri, "DEFAULT")) == null)
+					throw new AuthenticationException ("No credentials could be found for the IMAP server.");
+
+				ic = engine.QueueCommand (cancellationToken, null, "LOGIN %S %S\r\n", cred.UserName, cred.Password);
+
+				detector.IsAuthenticating = true;
+
+				try {
+					await engine.RunAsync (ic).ConfigureAwait (false);
+				} finally {
+					detector.IsAuthenticating = false;
+				}
+
+				if (ic.Response != ImapCommandResponse.Ok)
+					throw CreateAuthenticationException (ic);
+
+				engine.State = ImapEngineState.Authenticated;
+
+				id = GetSessionIdentifier (cred.UserName);
+				if (id != identifier) {
+					engine.FolderCache.Clear ();
+					identifier = id;
+				}
+
+				// Query the CAPABILITIES again if the server did not include an
+				// untagged CAPABILITIES response to the LOGIN command.
+				if (engine.CapabilitiesVersion == capabilitiesVersion)
+					await engine.QueryCapabilitiesAsync (cancellationToken).ConfigureAwait (false);
+
+				await OnAuthenticatedAsync (ic.ResponseText ?? string.Empty, cancellationToken).ConfigureAwait (false);
+			} catch (Exception ex) {
+				operation.SetError (ex);
+				throw;
+			}
+		}
+
+		async Task SslHandshakeAsync (SslStream ssl, string host, CancellationToken cancellationToken)
+		{
+#if NET5_0_OR_GREATER || NETSTANDARD2_1_OR_GREATER
+			await ssl.AuthenticateAsClientAsync (GetSslClientAuthenticationOptions (host, ValidateRemoteCertificate), cancellationToken).ConfigureAwait (false);
+#else
+			await ssl.AuthenticateAsClientAsync (host, ClientCertificates, SslProtocols, CheckCertificateRevocation).ConfigureAwait (false);
+#endif
+		}
+
+		async Task PostConnectAsync (Stream stream, string host, int port, SecureSocketOptions options, bool starttls, CancellationToken cancellationToken)
+		{
+			try {
+				ProtocolLogger.LogConnect (engine.Uri!);
+			} catch {
+				stream.Dispose ();
+				throw;
+			}
+
+			connecting = true;
+
+			var imap = new ImapStream (stream, ProtocolLogger);
+
+			try {
+				await engine.ConnectAsync (imap, cancellationToken).ConfigureAwait (false);
+			} catch {
+				connecting = false;
+				throw;
+			}
+
+			try {
+				// Only query the CAPABILITIES if the greeting didn't include them.
+				if (engine.CapabilitiesVersion == 0)
+					await engine.QueryCapabilitiesAsync (cancellationToken).ConfigureAwait (false);
+
+				if (options == SecureSocketOptions.StartTls && !engine.Capabilities.Contains (ImapCapability.StartTLS))
+					throw new NotSupportedException ("The IMAP server does not support the STARTTLS extension.");
+
+				if (starttls && engine.Capabilities.Contains (ImapCapability.StartTLS)) {
+					var ic = engine.QueueCommand (cancellationToken, null, "STARTTLS\r\n");
+
+					await engine.RunAsync (ic).ConfigureAwait (false);
+
+					if (ic.Response == ImapCommandResponse.Ok) {
+						try {
+							var tls = new ExtendedSslStream (stream, false, ValidateRemoteCertificate);
+							imap.SetStream (tls);
+
+							await SslHandshakeAsync (tls, host, cancellationToken).ConfigureAwait (false);
+						} catch (Exception ex) {
+							throw SslHandshakeException.Create (ref sslValidationInfo, ex, true, "IMAP", host, port, 993, 143);
+						}
+
+						engine.IsSecure = true;
+
+						// Query the CAPABILITIES again if the server did not include an
+						// untagged CAPABILITIES response to the STARTTLS command.
+						if (engine.CapabilitiesVersion == 1)
+							await engine.QueryCapabilitiesAsync (cancellationToken).ConfigureAwait (false);
+					} else if (options == SecureSocketOptions.StartTls) {
+						throw ImapCommandException.Create ("STARTTLS", ic);
+					}
+				}
+			} catch (Exception ex) {
+				engine.Disconnect (ex);
+				throw;
+			} finally {
+				connecting = false;
+			}
+
+			// Note: we capture the state here in case someone calls Authenticate() from within the Connected event handler.
+			var authenticated = engine.State == ImapEngineState.Authenticated;
+
+			OnConnected (host, port, options);
+
+			if (authenticated)
+				await OnAuthenticatedAsync (string.Empty, cancellationToken).ConfigureAwait (false);
 		}
 
 		/// <summary>
@@ -341,7 +562,7 @@ namespace MailKit.Net.Imap
 		/// populated.</para>
 		/// </remarks>
 		/// <example>
-		/// <code language="c#" source="Examples\ImapExamples.cs" region="DownloadMessages"/>
+		/// <code language="c#" source="Examples\ImapExamples.cs" region="DownloadMessagesByUniqueId"/>
 		/// </example>
 		/// <returns>An asynchronous task context.</returns>
 		/// <param name="host">The host name to connect to.</param>
@@ -349,7 +570,7 @@ namespace MailKit.Net.Imap
 		/// <param name="options">The secure socket options to when connecting.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="host"/> is <c>null</c>.
+		/// <paramref name="host"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <paramref name="port"/> is not between <c>0</c> and <c>65535</c>.
@@ -386,9 +607,40 @@ namespace MailKit.Net.Imap
 		/// <exception cref="ImapProtocolException">
 		/// An IMAP protocol error occurred.
 		/// </exception>
-		public override Task ConnectAsync (string host, int port = 0, SecureSocketOptions options = SecureSocketOptions.Auto, CancellationToken cancellationToken = default (CancellationToken))
+		public override async Task ConnectAsync (string host, int port = 0, SecureSocketOptions options = SecureSocketOptions.Auto, CancellationToken cancellationToken = default)
 		{
-			return ConnectAsync (host, port, options, true, cancellationToken);
+			CheckCanConnect (host, port);
+
+			ComputeDefaultValues (host, ref port, ref options, out var uri, out var starttls);
+
+			using var operation = engine.StartNetworkOperation (NetworkOperationKind.Connect, uri);
+
+			try {
+				var stream = await ConnectNetworkAsync (host, port, cancellationToken).ConfigureAwait (false);
+				stream.WriteTimeout = timeout;
+				stream.ReadTimeout = timeout;
+
+				engine.Uri = uri;
+
+				if (options == SecureSocketOptions.SslOnConnect) {
+					var ssl = new ExtendedSslStream (stream, false, ValidateRemoteCertificate);
+
+					try {
+						await SslHandshakeAsync (ssl, host, cancellationToken).ConfigureAwait (false);
+					} catch (Exception ex) {
+						ssl.Dispose ();
+
+						throw SslHandshakeException.Create (ref sslValidationInfo, ex, false, "IMAP", host, port, 993, 143);
+					}
+
+					stream = ssl;
+				}
+
+				await PostConnectAsync (stream, host, port, options, starttls, cancellationToken).ConfigureAwait (false);
+			} catch (Exception ex) {
+				operation.SetError (ex);
+				throw;
+			}
 		}
 
 		/// <summary>
@@ -418,9 +670,9 @@ namespace MailKit.Net.Imap
 		/// <param name="options">The secure socket options to when connecting.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <para><paramref name="socket"/> is <c>null</c>.</para>
+		/// <para><paramref name="socket"/> is <see langword="null" />.</para>
 		/// <para>-or-</para>
-		/// <para><paramref name="host"/> is <c>null</c>.</para>
+		/// <para><paramref name="host"/> is <see langword="null" />.</para>
 		/// </exception>
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <paramref name="port"/> is not between <c>0</c> and <c>65535</c>.
@@ -456,9 +708,11 @@ namespace MailKit.Net.Imap
 		/// <exception cref="ImapProtocolException">
 		/// An IMAP protocol error occurred.
 		/// </exception>
-		public override Task ConnectAsync (Socket socket, string host, int port = 0, SecureSocketOptions options = SecureSocketOptions.Auto, CancellationToken cancellationToken = default (CancellationToken))
+		public override Task ConnectAsync (Socket socket, string host, int port = 0, SecureSocketOptions options = SecureSocketOptions.Auto, CancellationToken cancellationToken = default)
 		{
-			return ConnectAsync (socket, host, port, options, true, cancellationToken);
+			CheckCanConnect (socket, host, port);
+
+			return ConnectAsync (new NetworkStream (socket, true), host, port, options, cancellationToken);
 		}
 
 		/// <summary>
@@ -488,9 +742,9 @@ namespace MailKit.Net.Imap
 		/// <param name="options">The secure socket options to when connecting.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <para><paramref name="stream"/> is <c>null</c>.</para>
+		/// <para><paramref name="stream"/> is <see langword="null" />.</para>
 		/// <para>-or-</para>
-		/// <para><paramref name="host"/> is <c>null</c>.</para>
+		/// <para><paramref name="host"/> is <see langword="null" />.</para>
 		/// </exception>
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <paramref name="port"/> is not between <c>0</c> and <c>65535</c>.
@@ -524,29 +778,83 @@ namespace MailKit.Net.Imap
 		/// <exception cref="ImapProtocolException">
 		/// An IMAP protocol error occurred.
 		/// </exception>
-		public override Task ConnectAsync (Stream stream, string host, int port = 0, SecureSocketOptions options = SecureSocketOptions.Auto, CancellationToken cancellationToken = default (CancellationToken))
+		public override async Task ConnectAsync (Stream stream, string host, int port = 0, SecureSocketOptions options = SecureSocketOptions.Auto, CancellationToken cancellationToken = default)
 		{
-			return ConnectAsync (stream, host, port, options, true, cancellationToken);
+			CheckCanConnect (stream, host, port);
+
+			ComputeDefaultValues (host, ref port, ref options, out var uri, out var starttls);
+
+			using var operation = engine.StartNetworkOperation (NetworkOperationKind.Connect, uri);
+
+			try {
+				Stream network;
+
+				engine.Uri = uri;
+
+				if (options == SecureSocketOptions.SslOnConnect) {
+					var ssl = new ExtendedSslStream (stream, false, ValidateRemoteCertificate);
+
+					try {
+						await SslHandshakeAsync (ssl, host, cancellationToken).ConfigureAwait (false);
+					} catch (Exception ex) {
+						ssl.Dispose ();
+
+						throw SslHandshakeException.Create (ref sslValidationInfo, ex, false, "IMAP", host, port, 993, 143);
+					}
+
+					network = ssl;
+				} else {
+					network = stream;
+				}
+
+				if (network.CanTimeout) {
+					network.WriteTimeout = timeout;
+					network.ReadTimeout = timeout;
+				}
+
+				await PostConnectAsync (network, host, port, options, starttls, cancellationToken).ConfigureAwait (false);
+			} catch (Exception ex) {
+				operation.SetError (ex);
+				throw;
+			}
 		}
 
 		/// <summary>
 		/// Asynchronously disconnect the service.
 		/// </summary>
 		/// <remarks>
-		/// If <paramref name="quit"/> is <c>true</c>, a <c>LOGOUT</c> command will be issued in order to disconnect cleanly.
+		/// If <paramref name="quit"/> is <see langword="true" />, a <c>LOGOUT</c> command will be issued in order to disconnect cleanly.
 		/// </remarks>
 		/// <example>
-		/// <code language="c#" source="Examples\ImapExamples.cs" region="DownloadMessages"/>
+		/// <code language="c#" source="Examples\ImapExamples.cs" region="DownloadMessagesByUniqueId"/>
 		/// </example>
 		/// <returns>An asynchronous task context.</returns>
-		/// <param name="quit">If set to <c>true</c>, a <c>LOGOUT</c> command will be issued in order to disconnect cleanly.</param>
+		/// <param name="quit">If set to <see langword="true" />, a <c>LOGOUT</c> command will be issued in order to disconnect cleanly.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ObjectDisposedException">
 		/// The <see cref="ImapClient"/> has been disposed.
 		/// </exception>
-		public override Task DisconnectAsync (bool quit, CancellationToken cancellationToken = default (CancellationToken))
+		public override async Task DisconnectAsync (bool quit, CancellationToken cancellationToken = default)
 		{
-			return DisconnectAsync (quit, true, cancellationToken);
+			CheckDisposed ();
+
+			if (!engine.IsConnected)
+				return;
+
+			if (quit) {
+				try {
+					var ic = engine.QueueCommand (cancellationToken, null, "LOGOUT\r\n");
+					await engine.RunAsync (ic).ConfigureAwait (false);
+				} catch (OperationCanceledException) {
+				} catch (ImapProtocolException) {
+				} catch (ImapCommandException) {
+				} catch (IOException) {
+				}
+			}
+
+			disconnecting = true;
+
+			engine.Disconnect (null);
 		}
 
 		/// <summary>
@@ -593,9 +901,13 @@ namespace MailKit.Net.Imap
 		/// <exception cref="ImapProtocolException">
 		/// The server responded with an unexpected token.
 		/// </exception>
-		public override Task NoOpAsync (CancellationToken cancellationToken = default (CancellationToken))
+		public override async Task NoOpAsync (CancellationToken cancellationToken = default)
 		{
-			return NoOpAsync (true, cancellationToken);
+			var ic = QueueNoOpCommand (cancellationToken);
+
+			await engine.RunAsync (ic).ConfigureAwait (false);
+
+			ProcessNoOpResponse (ic);
 		}
 
 		/// <summary>
@@ -650,9 +962,20 @@ namespace MailKit.Net.Imap
 		/// <exception cref="ImapProtocolException">
 		/// The server responded with an unexpected token.
 		/// </exception>
-		public Task IdleAsync (CancellationToken doneToken, CancellationToken cancellationToken = default (CancellationToken))
+		public async Task IdleAsync (CancellationToken doneToken, CancellationToken cancellationToken = default)
 		{
-			return IdleAsync (doneToken, true, cancellationToken);
+			CheckCanIdle (doneToken);
+
+			if (doneToken.IsCancellationRequested)
+				return;
+
+			using (var context = new ImapIdleContext (engine, doneToken, cancellationToken)) {
+				var ic = QueueIdleCommand (context, cancellationToken);
+
+				await engine.RunAsync (ic).ConfigureAwait (false);
+
+				ProcessIdleResponse (ic);
+			}
 		}
 
 		/// <summary>
@@ -667,12 +990,12 @@ namespace MailKit.Net.Imap
 		/// can be used to get instant notifications for changes to any of the specified folders.</para>
 		/// </remarks>
 		/// <returns>An asynchronous task context.</returns>
-		/// <param name="status"><c>true</c> if the server should immediately notify the client of the
-		/// selected folder's status; otherwise, <c>false</c>.</param>
+		/// <param name="status"><see langword="true" /> if the server should immediately notify the client of the
+		/// selected folder's status; otherwise, <see langword="false" />.</param>
 		/// <param name="eventGroups">The specific event groups that the client would like to receive notifications for.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="eventGroups"/> is <c>null</c>.
+		/// <paramref name="eventGroups"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ArgumentException">
 		/// <paramref name="eventGroups"/> is empty.
@@ -704,9 +1027,13 @@ namespace MailKit.Net.Imap
 		/// <exception cref="ImapProtocolException">
 		/// The server responded with an unexpected token.
 		/// </exception>
-		public Task NotifyAsync (bool status, IList<ImapEventGroup> eventGroups, CancellationToken cancellationToken = default (CancellationToken))
+		public async Task NotifyAsync (bool status, IList<ImapEventGroup> eventGroups, CancellationToken cancellationToken = default)
 		{
-			return NotifyAsync (status, eventGroups, true, cancellationToken);
+			var ic = QueueNotifyCommand (status, eventGroups, cancellationToken, out bool notifySelectedNewExpunge);
+
+			await engine.RunAsync (ic).ConfigureAwait (false);
+
+			ProcessNotifyResponse (ic, notifySelectedNewExpunge);
 		}
 
 		/// <summary>
@@ -743,9 +1070,13 @@ namespace MailKit.Net.Imap
 		/// <exception cref="ImapProtocolException">
 		/// The server responded with an unexpected token.
 		/// </exception>
-		public Task DisableNotifyAsync (CancellationToken cancellationToken = default (CancellationToken))
+		public async Task DisableNotifyAsync (CancellationToken cancellationToken = default)
 		{
-			return DisableNotifyAsync (true, cancellationToken);
+			var ic = QueueDisableNotifyCommand (cancellationToken);
+
+			await engine.RunAsync (ic).ConfigureAwait (false);
+
+			ProcessNotifyResponse (ic, false);
 		}
 
 		/// <summary>
@@ -757,10 +1088,10 @@ namespace MailKit.Net.Imap
 		/// <returns>The folders.</returns>
 		/// <param name="namespace">The namespace.</param>
 		/// <param name="items">The status items to pre-populate.</param>
-		/// <param name="subscribedOnly">If set to <c>true</c>, only subscribed folders will be listed.</param>
+		/// <param name="subscribedOnly">If set to <see langword="true" />, only subscribed folders will be listed.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="namespace"/> is <c>null</c>.
+		/// <paramref name="namespace"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ObjectDisposedException">
 		/// The <see cref="ImapClient"/> has been disposed.
@@ -786,9 +1117,16 @@ namespace MailKit.Net.Imap
 		/// <exception cref="ImapProtocolException">
 		/// The server responded with an unexpected token.
 		/// </exception>
-		public override Task<IList<IMailFolder>> GetFoldersAsync (FolderNamespace @namespace, StatusItems items = StatusItems.None, bool subscribedOnly = false, CancellationToken cancellationToken = default (CancellationToken))
+		public override Task<IList<IMailFolder>> GetFoldersAsync (FolderNamespace @namespace, StatusItems items = StatusItems.None, bool subscribedOnly = false, CancellationToken cancellationToken = default)
 		{
-			return GetFoldersAsync (@namespace, items, subscribedOnly, true, cancellationToken);
+			if (@namespace == null)
+				throw new ArgumentNullException (nameof (@namespace));
+
+			CheckDisposed ();
+			CheckConnected ();
+			CheckAuthenticated ();
+
+			return engine.GetFoldersAsync (@namespace, items, subscribedOnly, cancellationToken);
 		}
 
 		/// <summary>
@@ -801,7 +1139,7 @@ namespace MailKit.Net.Imap
 		/// <param name="path">The folder path.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="path"/> is <c>null</c>.
+		/// <paramref name="path"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ObjectDisposedException">
 		/// The <see cref="ImapClient"/> has been disposed.
@@ -827,7 +1165,7 @@ namespace MailKit.Net.Imap
 		/// <exception cref="ImapProtocolException">
 		/// The server responded with an unexpected token.
 		/// </exception>
-		public override async Task<IMailFolder> GetFolderAsync (string path, CancellationToken cancellationToken = default (CancellationToken))
+		public override Task<IMailFolder> GetFolderAsync (string path, CancellationToken cancellationToken = default)
 		{
 			if (path == null)
 				throw new ArgumentNullException (nameof (path));
@@ -836,7 +1174,7 @@ namespace MailKit.Net.Imap
 			CheckConnected ();
 			CheckAuthenticated ();
 
-			return await engine.GetFolderAsync (path, true, cancellationToken).ConfigureAwait (false);
+			return engine.GetFolderAsync (path, cancellationToken);
 		}
 
 		/// <summary>
@@ -872,9 +1210,13 @@ namespace MailKit.Net.Imap
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override Task<string> GetMetadataAsync (MetadataTag tag, CancellationToken cancellationToken = default (CancellationToken))
+		public override async Task<string?> GetMetadataAsync (MetadataTag tag, CancellationToken cancellationToken = default)
 		{
-			return GetMetadataAsync (tag, true, cancellationToken);
+			var ic = QueueGetMetadataCommand (tag, cancellationToken);
+
+			await engine.RunAsync (ic).ConfigureAwait (false);
+
+			return ProcessGetMetadataResponse (ic, tag);
 		}
 
 		/// <summary>
@@ -888,9 +1230,9 @@ namespace MailKit.Net.Imap
 		/// <param name="tags">The metadata tags.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <para><paramref name="options"/> is <c>null</c>.</para>
+		/// <para><paramref name="options"/> is <see langword="null" />.</para>
 		/// <para>-or-</para>
-		/// <para><paramref name="tags"/> is <c>null</c>.</para>
+		/// <para><paramref name="tags"/> is <see langword="null" />.</para>
 		/// </exception>
 		/// <exception cref="System.ObjectDisposedException">
 		/// The <see cref="ImapClient"/> has been disposed.
@@ -916,9 +1258,14 @@ namespace MailKit.Net.Imap
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override Task<MetadataCollection> GetMetadataAsync (MetadataOptions options, IEnumerable<MetadataTag> tags, CancellationToken cancellationToken = default (CancellationToken))
+		public override async Task<MetadataCollection> GetMetadataAsync (MetadataOptions options, IEnumerable<MetadataTag> tags, CancellationToken cancellationToken = default)
 		{
-			return GetMetadataAsync (options, tags, true, cancellationToken);
+			if (!TryQueueGetMetadataCommand (options, tags, cancellationToken, out var ic))
+				return new MetadataCollection ();
+
+			await engine.RunAsync (ic).ConfigureAwait (false);
+
+			return ProcessGetMetadataResponse (ic, options);
 		}
 
 		/// <summary>
@@ -931,7 +1278,7 @@ namespace MailKit.Net.Imap
 		/// <param name="metadata">The metadata.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="metadata"/> is <c>null</c>.
+		/// <paramref name="metadata"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ObjectDisposedException">
 		/// The <see cref="ImapClient"/> has been disposed.
@@ -957,9 +1304,14 @@ namespace MailKit.Net.Imap
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override Task SetMetadataAsync (MetadataCollection metadata, CancellationToken cancellationToken = default (CancellationToken))
+		public override async Task SetMetadataAsync (MetadataCollection metadata, CancellationToken cancellationToken = default)
 		{
-			return SetMetadataAsync (metadata, true, cancellationToken);
+			if (!TryQueueSetMetadataCommand (metadata, cancellationToken, out var ic))
+				return;
+
+			await engine.RunAsync (ic).ConfigureAwait (false);
+
+			ProcessSetMetadataResponse (ic);
 		}
 	}
 }

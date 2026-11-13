@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -27,7 +27,9 @@
 using System;
 using System.Text;
 using System.Linq;
+using System.Globalization;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 
 using MimeKit;
 using MimeKit.Utils;
@@ -136,7 +138,7 @@ namespace MailKit {
 		/// The Message-Id that the message is replying to.
 		/// </remarks>
 		/// <value>The Message-Id that the message is replying to.</value>
-		public string InReplyTo {
+		public string? InReplyTo {
 			get; set;
 		}
 
@@ -158,7 +160,7 @@ namespace MailKit {
 		/// Gets the ID of the message, if available.
 		/// </remarks>
 		/// <value>The message identifier.</value>
-		public string MessageId {
+		public string? MessageId {
 			get; set;
 		}
 
@@ -169,7 +171,7 @@ namespace MailKit {
 		/// Gets the subject of the message.
 		/// </remarks>
 		/// <value>The subject.</value>
-		public string Subject {
+		public string? Subject {
 			get; set;
 		}
 
@@ -177,15 +179,19 @@ namespace MailKit {
 		{
 			builder.Append ('(');
 
-			if (mailbox.Name != null)
-				builder.AppendFormat ("{0} ", MimeUtils.Quote (mailbox.Name));
-			else
+			if (mailbox.Name != null) {
+				MimeUtils.AppendQuoted (builder, mailbox.Name);
+				builder.Append (' ');
+			} else {
 				builder.Append ("NIL ");
+			}
 
-			if (mailbox.Route.Count != 0)
-				builder.AppendFormat ("\"{0}\" ", mailbox.Route);
-			else
+			if (mailbox.Route.Count != 0) {
+				MimeUtils.AppendQuoted (builder, mailbox.Route.ToString ());
+				builder.Append (' ');
+			} else {
 				builder.Append ("NIL ");
+			}
 
 			int at = mailbox.Address.LastIndexOf ('@');
 
@@ -193,9 +199,14 @@ namespace MailKit {
 				var domain = mailbox.Address.Substring (at + 1);
 				var user = mailbox.Address.Substring (0, at);
 
-				builder.AppendFormat ("{0} {1}", MimeUtils.Quote (user), MimeUtils.Quote (domain));
+				MimeUtils.AppendQuoted (builder, user);
+				builder.Append (' ');
+				MimeUtils.AppendQuoted (builder, domain);
 			} else {
-				builder.AppendFormat ("{0} \"localhost\"", MimeUtils.Quote (mailbox.Address));
+				// Note: Use an empty domain (rather than NIL) for mailboxes without a domain so
+				// that they cannot be confused with group-start markers.
+				MimeUtils.AppendQuoted (builder, mailbox.Address);
+				builder.Append (" \"\"");
 			}
 
 			builder.Append (')');
@@ -204,20 +215,43 @@ namespace MailKit {
 		static void EncodeInternetAddressListAddresses (StringBuilder builder, InternetAddressList addresses)
 		{
 			foreach (var addr in addresses) {
-				var mailbox = addr as MailboxAddress;
-				var group = addr as GroupAddress;
-
-				if (mailbox != null)
+				if (addr is MailboxAddress mailbox)
 					EncodeMailbox (builder, mailbox);
-				else if (group != null)
+				else if (addr is GroupAddress group)
 					EncodeGroup (builder, group);
 			}
 		}
 
 		static void EncodeGroup (StringBuilder builder, GroupAddress group)
 		{
-			builder.AppendFormat ("(NIL NIL {0} NIL)", MimeUtils.Quote (group.Name));
-			EncodeInternetAddressListAddresses (builder, group.Members);
+			builder.Append ("(NIL NIL ");
+			MimeUtils.AppendQuoted (builder, group.Name ?? string.Empty);
+			builder.Append (" NIL)");
+
+			var parents = new Stack<(InternetAddressList Members, int Index)> ();
+			var members = group.Members;
+			int index = 0;
+
+			// Nested groups are not valid address syntax; emit their mailboxes in the outer group.
+			while (true) {
+				if (index == members.Count) {
+					if (parents.Count == 0)
+						break;
+
+					(members, index) = parents.Pop ();
+					continue;
+				}
+
+				var address = members[index++];
+				if (address is MailboxAddress mailbox) {
+					EncodeMailbox (builder, mailbox);
+				} else if (address is GroupAddress nested) {
+					parents.Push ((members, index));
+					members = nested.Members;
+					index = 0;
+				}
+			}
+
 			builder.Append ("(NIL NIL NIL NIL)");
 		}
 
@@ -232,15 +266,20 @@ namespace MailKit {
 		{
 			builder.Append ('(');
 
-			if (Date.HasValue)
-				builder.AppendFormat ("\"{0}\" ", DateUtils.FormatDate (Date.Value));
-			else
+			if (Date.HasValue) {
+				builder.Append ('"');
+				builder.Append (FormatDate (Date.Value));
+				builder.Append ("\" ");
+			} else {
 				builder.Append ("NIL ");
+			}
 
-			if (Subject != null)
-				builder.AppendFormat ("{0} ", MimeUtils.Quote (Subject));
-			else
+			if (Subject != null) {
+				MimeUtils.AppendQuoted (builder, Subject);
+				builder.Append (' ');
+			} else {
 				builder.Append ("NIL ");
+			}
 
 			if (From.Count > 0) {
 				EncodeAddressList (builder, From);
@@ -285,22 +324,47 @@ namespace MailKit {
 			}
 
 			if (InReplyTo != null) {
-				if (InReplyTo.Length > 1 && InReplyTo[0] != '<' && InReplyTo[InReplyTo.Length - 1] != '>')
-					builder.AppendFormat ("{0} ", MimeUtils.Quote ('<' + InReplyTo + '>'));
-				else
-					builder.AppendFormat ("{0} ", MimeUtils.Quote (InReplyTo));
-			} else
+				MimeUtils.AppendQuoted (builder, '<' + InReplyTo + '>');
+				builder.Append (' ');
+			} else {
 				builder.Append ("NIL ");
+			}
 
 			if (MessageId != null) {
-				if (MessageId.Length > 1 && MessageId[0] != '<' && MessageId[MessageId.Length - 1] != '>')
-					builder.AppendFormat ("{0}", MimeUtils.Quote ('<' + MessageId + '>'));
-				else
-					builder.AppendFormat ("{0}", MimeUtils.Quote (MessageId));
-			} else
+				MimeUtils.AppendQuoted (builder, '<' + MessageId + '>');
+			} else {
 				builder.Append ("NIL");
+			}
 
 			builder.Append (')');
+		}
+
+		static string FormatDate (DateTimeOffset date)
+		{
+			// Note: The RFC 5322 date format cannot represent fractional seconds and DateUtils.TryParse()
+			// treats years below 100 as 2-digit years, so fall back to the ISO 8601 round-trip format
+			// whenever the RFC 5322 format would be lossy.
+			if (date.Year >= 1000 && date.Ticks % TimeSpan.TicksPerSecond == 0)
+				return DateUtils.FormatDate (date);
+
+			return date.ToString ("o", CultureInfo.InvariantCulture);
+		}
+
+		static bool TryParseDate (string text, out DateTimeOffset date)
+		{
+			if (DateTimeOffset.TryParseExact (text, "o", CultureInfo.InvariantCulture, DateTimeStyles.None, out date))
+				return true;
+
+			return DateUtils.TryParse (text, out date);
+		}
+
+		static string UnwrapMessageId (string value)
+		{
+			// Note: The serializer always wraps the msg-id in angle brackets, so simply strip them off.
+			if (value.Length >= 2 && value[0] == '<' && value[value.Length - 1] == '>')
+				return value.Substring (1, value.Length - 2);
+
+			return MimeUtils.EnumerateReferences (value).FirstOrDefault () ?? value;
 		}
 
 		/// <summary>
@@ -308,6 +372,7 @@ namespace MailKit {
 		/// </summary>
 		/// <remarks>
 		/// <para>The returned string can be parsed by <see cref="TryParse(string,out Envelope)"/>.</para>
+		/// <para>Nested address groups are flattened into their outermost group.</para>
 		/// <note type="warning">The syntax of the string returned, while similar to IMAP's ENVELOPE syntax,
 		/// is not completely compatible.</note>
 		/// </remarks>
@@ -321,7 +386,12 @@ namespace MailKit {
 			return builder.ToString ();
 		}
 
-		static bool TryParse (string text, ref int index, out string nstring)
+		static bool IsNIL (string text, int index)
+		{
+			return string.Compare (text, index, "NIL", 0, 3, StringComparison.Ordinal) == 0;
+		}
+
+		static bool TryParse (string text, ref int index, out string? nstring)
 		{
 			nstring = null;
 
@@ -332,7 +402,7 @@ namespace MailKit {
 				return false;
 
 			if (text[index] != '"') {
-				if (index + 3 <= text.Length && text.Substring (index, 3) == "NIL") {
+				if (index + 3 <= text.Length && IsNIL (text, index)) {
 					index += 3;
 					return true;
 				}
@@ -369,11 +439,8 @@ namespace MailKit {
 			return true;
 		}
 
-		static bool TryParse (string text, ref int index, out InternetAddress addr)
+		static bool TryParse (string text, ref int index, out InternetAddress? addr)
 		{
-			string name, route, user, domain;
-			DomainList domains;
-
 			addr = null;
 
 			if (text[index] != '(')
@@ -381,16 +448,16 @@ namespace MailKit {
 
 			index++;
 
-			if (!TryParse (text, ref index, out name))
+			if (!TryParse (text, ref index, out string? name))
 				return false;
 
-			if (!TryParse (text, ref index, out route))
+			if (!TryParse (text, ref index, out string? route))
 				return false;
 
-			if (!TryParse (text, ref index, out user))
+			if (!TryParse (text, ref index, out string? user))
 				return false;
 
-			if (!TryParse (text, ref index, out domain))
+			if (!TryParse (text, ref index, out string? domain))
 				return false;
 
 			while (index < text.Length && text[index] == ' ')
@@ -402,9 +469,12 @@ namespace MailKit {
 			index++;
 
 			if (domain != null) {
-				var address = user + "@" + domain;
+				user ??= "NIL";
 
-				if (route != null && DomainList.TryParse (route, out domains))
+				// Note: The serializer uses an empty domain for UNIX mailboxes and the special <> mailbox.
+				var address = domain.Length == 0 ? user : user + "@" + domain;
+
+				if (route != null && DomainList.TryParse (route, out var domains))
 					addr = new MailboxAddress (name, domains, address);
 				else
 					addr = new MailboxAddress (name, address);
@@ -415,7 +485,7 @@ namespace MailKit {
 			return true;
 		}
 
-		static bool TryParse (string text, ref int index, out InternetAddressList list)
+		static bool TryParse (string text, ref int index, [NotNullWhen (true)] out InternetAddressList? list)
 		{
 			list = null;
 
@@ -426,7 +496,7 @@ namespace MailKit {
 				return false;
 
 			if (text[index] != '(') {
-				if (index + 3 <= text.Length && text.Substring (index, 3) == "NIL") {
+				if (index + 3 <= text.Length && IsNIL (text, index)) {
 					list = new InternetAddressList ();
 					index += 3;
 					return true;
@@ -441,39 +511,35 @@ namespace MailKit {
 				return false;
 
 			list = new InternetAddressList ();
-			var stack = new List<InternetAddressList> ();
-			int sp = 0;
-
-			stack.Add (list);
+			GroupAddress? group = null;
+			int depth = 0;
 
 			do {
 				if (text[index] == ')')
 					break;
 
-				if (!TryParse (text, ref index, out InternetAddress addr))
+				if (!TryParse (text, ref index, out InternetAddress? addr))
 					return false;
 
-				if (addr != null) {
-					var group = addr as GroupAddress;
+				if (addr is GroupAddress nested) {
+					if (depth == int.MaxValue)
+						return false;
 
-					stack[sp].Add (addr);
-
-					if (group != null) {
-						stack.Add (group.Members);
-						sp++;
+					if (depth++ == 0) {
+						group = nested;
+						list.Add (group);
 					}
-				} else if (sp > 0) {
-					stack.RemoveAt (sp);
-					sp--;
+				} else if (addr != null) {
+					(group?.Members ?? list).Add (addr);
+				} else if (depth > 0 && --depth == 0) {
+					group = null;
 				}
 
 				while (index < text.Length && text[index] == ' ')
 					index++;
 			} while (index < text.Length);
 
-			// Note: technically, we should check that sp == 0 as well, since all groups should
-			// be popped off the stack, but in the interest of being liberal in what we accept,
-			// we'll ignore that.
+			// Tolerate unclosed groups, as we do when parsing IMAP envelopes.
 			if (index >= text.Length)
 				return false;
 
@@ -482,10 +548,8 @@ namespace MailKit {
 			return true;
 		}
 
-		internal static bool TryParse (string text, ref int index, out Envelope envelope)
+		internal static bool TryParse (string text, ref int index, out Envelope? envelope)
 		{
-			InternetAddressList from, sender, replyto, to, cc, bcc;
-			string inreplyto, messageid, subject, nstring;
 			DateTimeOffset? date = null;
 
 			envelope = null;
@@ -494,7 +558,7 @@ namespace MailKit {
 				index++;
 
 			if (index >= text.Length || text[index] != '(') {
-				if (index + 3 <= text.Length && text.Substring (index, 3) == "NIL") {
+				if (index + 3 <= text.Length && IsNIL (text, index)) {
 					index += 3;
 					return true;
 				}
@@ -504,43 +568,41 @@ namespace MailKit {
 
 			index++;
 
-			if (!TryParse (text, ref index, out nstring))
+			if (!TryParse (text, ref index, out string? nstring))
 				return false;
 
 			if (nstring != null) {
-				DateTimeOffset value;
-
-				if (!DateUtils.TryParse (nstring, out value))
+				if (!TryParseDate (nstring, out DateTimeOffset value))
 					return false;
 
 				date = value;
 			}
 
-			if (!TryParse (text, ref index, out subject))
+			if (!TryParse (text, ref index, out string? subject))
 				return false;
 
-			if (!TryParse (text, ref index, out from))
+			if (!TryParse (text, ref index, out InternetAddressList? from))
 				return false;
 
-			if (!TryParse (text, ref index, out sender))
+			if (!TryParse (text, ref index, out InternetAddressList? sender))
 				return false;
 
-			if (!TryParse (text, ref index, out replyto))
+			if (!TryParse (text, ref index, out InternetAddressList? replyto))
 				return false;
 
-			if (!TryParse (text, ref index, out to))
+			if (!TryParse (text, ref index, out InternetAddressList? to))
 				return false;
 
-			if (!TryParse (text, ref index, out cc))
+			if (!TryParse (text, ref index, out InternetAddressList? cc))
 				return false;
 
-			if (!TryParse (text, ref index, out bcc))
+			if (!TryParse (text, ref index, out InternetAddressList? bcc))
 				return false;
 
-			if (!TryParse (text, ref index, out inreplyto))
+			if (!TryParse (text, ref index, out string? inreplyto))
 				return false;
 
-			if (!TryParse (text, ref index, out messageid))
+			if (!TryParse (text, ref index, out string? messageid))
 				return false;
 
 			if (index >= text.Length || text[index] != ')')
@@ -557,8 +619,8 @@ namespace MailKit {
 				To = to,
 				Cc = cc,
 				Bcc = bcc,
-				InReplyTo = inreplyto != null ? MimeUtils.EnumerateReferences (inreplyto).FirstOrDefault () ?? inreplyto : null,
-				MessageId = messageid != null ? MimeUtils.EnumerateReferences (messageid).FirstOrDefault () ?? messageid : null
+				InReplyTo = inreplyto != null ? UnwrapMessageId (inreplyto) : null,
+				MessageId = messageid != null ? UnwrapMessageId (messageid) : null
 			};
 
 			return true;
@@ -569,16 +631,17 @@ namespace MailKit {
 		/// </summary>
 		/// <remarks>
 		/// <para>Parses an Envelope value from the specified text.</para>
+		/// <para>Nested address groups are flattened into their outermost group.</para>
 		/// <note type="warning">This syntax, while similar to IMAP's ENVELOPE syntax, is not
 		/// completely compatible.</note>
 		/// </remarks>
-		/// <returns><c>true</c>, if the envelope was successfully parsed, <c>false</c> otherwise.</returns>
+		/// <returns><see langword="true" />, if the envelope was successfully parsed, <see langword="false" /> otherwise.</returns>
 		/// <param name="text">The text to parse.</param>
 		/// <param name="envelope">The parsed envelope.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="text"/> is <c>null</c>.
+		/// <paramref name="text"/> is <see langword="null" />.
 		/// </exception>
-		public static bool TryParse (string text, out Envelope envelope)
+		public static bool TryParse (string text, out Envelope? envelope)
 		{
 			if (text == null)
 				throw new ArgumentNullException (nameof (text));
@@ -589,4 +652,3 @@ namespace MailKit {
 		}
 	}
 }
-	

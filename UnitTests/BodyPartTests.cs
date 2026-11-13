@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -24,11 +24,8 @@
 // THE SOFTWARE.
 //
 
-using System;
 using System.Text;
 using System.Collections;
-
-using NUnit.Framework;
 
 using MimeKit;
 using MailKit;
@@ -46,13 +43,13 @@ namespace UnitTests {
 		{
 			var uri = new Uri ("https://www.nationalgeographic.com/travel/contests/photographer-of-the-year-2018/wallpapers/week-9-nature/2/");
 			const string expected = "(\"image\" \"jpeg\" (\"name\" \"wallpaper.jpg\") \"id@localhost\" \"A majestic supercell storm approaching a house in Kansas, 2016.\" \"base64\" 0 \"8criUiOQmpfifOuOmYFtEQ==\" (\"attachment\" (\"filename\" \"wallpaper.jpg\")) (\"en\" \"fr\") \"https://www.nationalgeographic.com/travel/contests/photographer-of-the-year-2018/wallpapers/week-9-nature/2/\")";
+			var contentType = new ContentType ("image", "jpeg") {
+				Name = "wallpaper.jpg"
+			};
 			BodyPartBasic basic, parsed;
 			BodyPart body;
 
-			basic = new BodyPartBasic {
-				ContentType = new ContentType ("image", "jpeg") {
-					Name = "wallpaper.jpg"
-				},
+			basic = new BodyPartBasic (contentType, string.Empty) {
 				ContentId = "id@localhost",
 				ContentMd5 = "8criUiOQmpfifOuOmYFtEQ==",
 				ContentLanguage = new string[] { "en", "fr" },
@@ -64,54 +61,245 @@ namespace UnitTests {
 				ContentTransferEncoding = "base64"
 			};
 
-			Assert.IsTrue (basic.IsAttachment);
-			Assert.AreEqual ("wallpaper.jpg", basic.FileName);
-			Assert.AreEqual (expected, basic.ToString ());
-			Assert.IsTrue (BodyPart.TryParse (expected, out body));
-			Assert.IsInstanceOf<BodyPartBasic> (body);
+			Assert.That (basic.IsAttachment, Is.True);
+			Assert.That (basic.FileName, Is.EqualTo ("wallpaper.jpg"));
+			Assert.That (basic.ToString (), Is.EqualTo (expected));
+			Assert.That (BodyPart.TryParse (expected, out body), Is.True);
+			Assert.That (body, Is.InstanceOf<BodyPartBasic> ());
 
 			parsed = (BodyPartBasic) body;
-			Assert.AreEqual (expected, parsed.ToString ());
+			Assert.That (parsed.ToString (), Is.EqualTo (expected));
+		}
+
+		const string NestedTextPart = "(\"text\" \"plain\" NIL NIL NIL \"7bit\" 12 NIL NIL NIL NIL 1)";
+		const string NestedMessagePart = "(\"message\" \"rfc822\" NIL \"id\" \"description\" \"7bit\" 12 \"md5\" (\"attachment\" NIL) (\"en\") \"message.eml\" NIL ";
+
+		static bool IsNestedMultipart (string kind, int level)
+		{
+			return kind == "multipart" || (kind == "mixed" && level % 2 == 0);
+		}
+
+		static string CreateDeeplyNestedBodyPart (string kind, int depth)
+		{
+			var builder = new StringBuilder ();
+
+			// Build the expected serialized form independently of the encoder.
+			for (int i = 0; i < depth; i++)
+				builder.Append (IsNestedMultipart (kind, i) ? "(" : NestedMessagePart);
+
+			builder.Append (NestedTextPart);
+
+			for (int i = depth - 1; i >= 0; i--) {
+				if (IsNestedMultipart (kind, i)) {
+					builder.Append (' ').Append (NestedTextPart);
+					builder.Append (" \"alternative\" (\"boundary\" \"b\") (\"inline\" NIL) (\"en\") \"container\")");
+				} else {
+					builder.Append (" 7)");
+				}
+			}
+
+			return builder.ToString ();
+		}
+
+		[TestCase ("multipart", 4096)]
+		[TestCase ("message", 32768)]
+		[TestCase ("mixed", 4096)]
+		public void TestToStringDeeplyNestedBodyPart (string kind, int depth)
+		{
+			var expected = CreateDeeplyNestedBodyPart (kind, depth);
+
+			Assert.That (BodyPart.TryParse (expected, out var body), Is.True);
+
+			var serialized = body.ToString ();
+
+			Assert.That (serialized, Is.EqualTo (expected));
+			Assert.That (BodyPart.TryParse (serialized, out var parsed), Is.True);
+			Assert.That (parsed.ToString (), Is.EqualTo (expected));
+		}
+
+		class CustomBodyPartText : BodyPartText
+		{
+			public CustomBodyPartText () : base (new ContentType ("text", "plain"), string.Empty)
+			{
+			}
+
+			protected override void Encode (StringBuilder builder)
+			{
+				builder.Append ("text-before ");
+				base.Encode (builder);
+				builder.Append (" text-after");
+			}
+		}
+
+		class CustomBodyPartMessage : BodyPartMessage
+		{
+			public CustomBodyPartMessage () : base (new ContentType ("message", "rfc822"), string.Empty)
+			{
+			}
+
+			protected override void Encode (StringBuilder builder)
+			{
+				builder.Append ("message-before ");
+				base.Encode (builder);
+				builder.Append (" message-after");
+			}
+		}
+
+		class CustomBodyPartMultipart : BodyPartMultipart
+		{
+			public CustomBodyPartMultipart () : base (new ContentType ("multipart", "mixed"), string.Empty)
+			{
+			}
+
+			protected override void Encode (StringBuilder builder)
+			{
+				builder.Append ("multipart-before ");
+				base.Encode (builder);
+				builder.Append (" multipart-after");
+			}
+		}
+
+		[TestCase (false)]
+		[TestCase (true)]
+		public void TestToStringEncodeOverrides (bool nested)
+		{
+			var multipart = new CustomBodyPartMultipart ();
+			multipart.BodyParts.Add (new CustomBodyPartMessage { Body = new CustomBodyPartText () });
+			BodyPart body = multipart;
+			string expected = "(multipart-before (message-before \"message\" \"rfc822\" NIL NIL NIL NIL 0 NIL NIL NIL NIL NIL (text-before \"text\" \"plain\" NIL NIL NIL NIL 0 NIL NIL NIL NIL 0 text-after) 0 message-after) \"mixed\" NIL NIL NIL NIL multipart-after)";
+
+			if (nested) {
+				var parent = new BodyPartMultipart (new ContentType ("multipart", "mixed"), string.Empty);
+				parent.BodyParts.Add (new BodyPartMessage (new ContentType ("message", "rfc822"), string.Empty) { Body = body });
+				body = parent;
+				expected = "((\"message\" \"rfc822\" NIL NIL NIL NIL 0 NIL NIL NIL NIL NIL " + expected + " 0) \"mixed\" NIL NIL NIL NIL)";
+			}
+
+			Assert.That (body.ToString (), Is.EqualTo (expected));
+		}
+
+		[TestCase ("multipart", 4096)]
+		[TestCase ("message", 8192)]
+		[TestCase ("mixed", 4096)]
+		public void TestTryParseDeeplyNestedBodyPart (string kind, int depth)
+		{
+			var serialized = CreateDeeplyNestedBodyPart (kind, depth);
+
+			Assert.That (BodyPart.TryParse (serialized, out var body), Is.True);
+
+			string path = string.Empty;
+
+			for (int i = 0; i < depth; i++) {
+				Assert.That (body.PartSpecifier, Is.EqualTo (path), $"Part specifier at level {i}");
+
+				if (IsNestedMultipart (kind, i)) {
+					Assert.That (body, Is.InstanceOf<BodyPartMultipart> ());
+					var multipart = (BodyPartMultipart) body;
+					var prefix = path.Length > 0 ? path + "." : string.Empty;
+
+					Assert.That (multipart.BodyParts, Has.Count.EqualTo (2));
+					Assert.That (multipart.ContentType.MimeType, Is.EqualTo ("multipart/alternative"));
+					Assert.That (multipart.ContentType.Boundary, Is.EqualTo ("b"));
+					Assert.That (multipart.ContentDisposition.Disposition, Is.EqualTo ("inline"));
+					Assert.That (multipart.ContentLanguage, Is.EqualTo (new[] { "en" }));
+					Assert.That (multipart.ContentLocation.OriginalString, Is.EqualTo ("container"));
+					Assert.That (multipart.BodyParts[1], Is.InstanceOf<BodyPartText> ());
+					Assert.That (multipart.BodyParts[1].PartSpecifier, Is.EqualTo (prefix + "2"));
+
+					path = prefix + "1";
+					body = multipart.BodyParts[0];
+				} else {
+					Assert.That (body, Is.InstanceOf<BodyPartMessage> ());
+					var message = (BodyPartMessage) body;
+
+					Assert.That (message.Envelope, Is.Null);
+					Assert.That (message.ContentId, Is.EqualTo ("id"));
+					Assert.That (message.ContentDescription, Is.EqualTo ("description"));
+					Assert.That (message.ContentTransferEncoding, Is.EqualTo ("7bit"));
+					Assert.That (message.Octets, Is.EqualTo (12));
+					Assert.That (message.ContentMd5, Is.EqualTo ("md5"));
+					Assert.That (message.ContentDisposition.Disposition, Is.EqualTo ("attachment"));
+					Assert.That (message.ContentLanguage, Is.EqualTo (new[] { "en" }));
+					Assert.That (message.ContentLocation.OriginalString, Is.EqualTo ("message.eml"));
+					Assert.That (message.Lines, Is.EqualTo (7));
+
+					body = message.Body;
+				}
+			}
+
+			Assert.That (body, Is.InstanceOf<BodyPartText> ());
+			Assert.That (body.PartSpecifier, Is.EqualTo (path));
+			Assert.That (((BodyPartText) body).Lines, Is.EqualTo (1));
+			Assert.That (BodyPart.TryParse (serialized.Substring (0, serialized.Length - 1), out _), Is.False);
+		}
+
+		[Test]
+		public void TestNilSerialization ()
+		{
+			var builder = new StringBuilder ();
+
+			BodyPart.Encode (builder, (BodyPart) null);
+			Assert.That (builder.ToString (), Is.EqualTo ("NIL"), "BodyPart");
+
+			builder.Clear ();
+			BodyPart.Encode (builder, (BodyPartCollection) null);
+			Assert.That (builder.ToString (), Is.EqualTo ("NIL"), "BodyPartCollection");
+
+			builder.Clear ();
+			BodyPart.Encode (builder, (ContentDisposition) null);
+			Assert.That (builder.ToString (), Is.EqualTo ("NIL"), "ContentDisposition");
+
+			//builder.Clear ();
+			//BodyPart.Encode (builder, (ContentType) null);
+			//Assert.That (builder.ToString (), Is.EqualTo ("NIL"), "ContentType");
+
+			builder.Clear ();
+			BodyPart.Encode (builder, (Envelope) null);
+			Assert.That (builder.ToString (), Is.EqualTo ("NIL"), "Envelope");
+
+			builder.Clear ();
+			BodyPart.Encode (builder, (IList<Parameter>) null);
+			Assert.That (builder.ToString (), Is.EqualTo ("NIL"), "IEnumerable<Parameter>");
 		}
 
 		[Test]
 		public void TestSimplePlainTextBody ()
 		{
 			const string expected = "(\"text\" \"plain\" (\"charset\" \"us-ascii\" \"name\" \"body.txt\") NIL NIL \"7bit\" 3028 NIL NIL NIL NIL 92)";
+			var contentType = new ContentType ("text", "plain") { Charset = "us-ascii", Name = "body.txt" };
 			BodyPartText text, parsed;
 			BodyPart body;
 
-			text = new BodyPartText {
-				ContentType = new ContentType ("text", "plain") { Charset = "us-ascii", Name = "body.txt" },
+			text = new BodyPartText (contentType, string.Empty) {
 				ContentTransferEncoding = "7bit",
 				Octets = 3028,
 				Lines = 92,
 			};
 
-			Assert.IsTrue (text.IsPlain);
-			Assert.IsFalse (text.IsHtml);
-			Assert.IsFalse (text.IsAttachment);
-			Assert.AreEqual ("body.txt", text.FileName);
-			Assert.AreEqual (expected, text.ToString ());
-			Assert.IsTrue (BodyPart.TryParse (expected, out body));
-			Assert.IsInstanceOf<BodyPartText> (body);
+			Assert.That (text.IsPlain, Is.True);
+			Assert.That (text.IsHtml, Is.False);
+			Assert.That (text.IsAttachment, Is.False);
+			Assert.That (text.FileName, Is.EqualTo ("body.txt"));
+			Assert.That (text.ToString (), Is.EqualTo (expected));
+			Assert.That (BodyPart.TryParse (expected, out body), Is.True);
+			Assert.That (body, Is.InstanceOf<BodyPartText> ());
 
 			parsed = (BodyPartText) body;
-			Assert.IsTrue (parsed.ContentType.IsMimeType ("text", "plain"), "Content-Type did not match.");
-			Assert.AreEqual ("us-ascii", parsed.ContentType.Charset, "charset param did not match");
-			Assert.AreEqual ("body.txt", parsed.ContentType.Name, "name param did not match");
-			Assert.AreEqual ("7bit", parsed.ContentTransferEncoding, "Content-Transfer-Encoding did not match.");
-			Assert.AreEqual (3028, parsed.Octets, "Octet count did not match.");
-			Assert.AreEqual (92, parsed.Lines, "Line count did not match.");
-			Assert.AreEqual (expected, parsed.ToString ());
+			Assert.That (parsed.ContentType.IsMimeType ("text", "plain"), Is.True, "Content-Type did not match.");
+			Assert.That (parsed.ContentType.Charset, Is.EqualTo ("us-ascii"), "charset param did not match");
+			Assert.That (parsed.ContentType.Name, Is.EqualTo ("body.txt"), "name param did not match");
+			Assert.That (parsed.ContentTransferEncoding, Is.EqualTo ("7bit"), "Content-Transfer-Encoding did not match.");
+			Assert.That (parsed.Octets, Is.EqualTo (3028), "Octet count did not match.");
+			Assert.That (parsed.Lines, Is.EqualTo (92), "Line count did not match.");
+			Assert.That (parsed.ToString (), Is.EqualTo (expected));
 		}
 
 		[Test]
 		public void TestBodyPartCollection ()
 		{
-			var text = new BodyPartText { ContentType = new ContentType ("text", "plain"), ContentLocation = new Uri ("body", UriKind.Relative) };
-			var image1 = new BodyPartBasic { ContentType = new ContentType ("image", "jpeg"), ContentLocation = new Uri ("http://localhost/image1.jpg") };
-			var image2 = new BodyPartBasic { ContentType = new ContentType ("image", "jpeg"), ContentId = "image2@localhost" };
+			var text = new BodyPartText (new ContentType ("text", "plain"), string.Empty) { ContentLocation = new Uri ("body", UriKind.Relative) };
+			var image1 = new BodyPartBasic (new ContentType ("image", "jpeg"), string.Empty) { ContentLocation = new Uri ("http://localhost/image1.jpg") };
+			var image2 = new BodyPartBasic (new ContentType ("image", "jpeg"), string.Empty) { ContentId = "image2@localhost" };
 			var list = new BodyPartCollection ();
 			var parts = new BodyPart[3];
 			int i = 0;
@@ -124,54 +312,54 @@ namespace UnitTests {
 			Assert.Throws<ArgumentOutOfRangeException> (() => list.CopyTo (parts, -1));
 			Assert.Throws<ArgumentOutOfRangeException> (() => { var x = list[0]; });
 
-			Assert.IsFalse (list.IsReadOnly);
-			Assert.AreEqual (0, list.Count);
+			Assert.That (list.IsReadOnly, Is.False);
+			Assert.That (list, Is.Empty);
 
 			list.Add (text);
-			Assert.AreEqual (1, list.Count);
-			Assert.IsTrue (list.Contains (text));
-			Assert.IsFalse (list.Contains (image1));
-			Assert.AreEqual (0, list.IndexOf (new Uri ("body", UriKind.Relative)));
-			Assert.AreEqual (-1, list.IndexOf (new Uri ("http://localhost/image1.jpg")));
-			Assert.AreEqual (-1, list.IndexOf (new Uri ("cid:image2@localhost")));
-			Assert.AreEqual (text, list[0]);
+			Assert.That (list, Has.Count.EqualTo (1));
+			Assert.That (list, Does.Contain (text));
+			Assert.That (list, Does.Not.Contain (image1));
+			Assert.That (list.IndexOf (new Uri ("body", UriKind.Relative)), Is.EqualTo (0));
+			Assert.That (list.IndexOf (new Uri ("http://localhost/image1.jpg")), Is.EqualTo (-1));
+			Assert.That (list.IndexOf (new Uri ("cid:image2@localhost")), Is.EqualTo (-1));
+			Assert.That (list[0], Is.EqualTo (text));
 
 			list.Add (image1);
-			Assert.AreEqual (2, list.Count);
-			Assert.IsTrue (list.Contains (text));
-			Assert.IsTrue (list.Contains (image1));
-			Assert.AreEqual (0, list.IndexOf (new Uri ("body", UriKind.Relative)));
-			Assert.AreEqual (1, list.IndexOf (new Uri ("http://localhost/image1.jpg")));
-			Assert.AreEqual (-1, list.IndexOf (new Uri ("cid:image2@localhost")));
-			Assert.AreEqual (text, list[0]);
-			Assert.AreEqual (image1, list[1]);
+			Assert.That (list, Has.Count.EqualTo (2));
+			Assert.That (list, Does.Contain (text));
+			Assert.That (list, Does.Contain (image1));
+			Assert.That (list.IndexOf (new Uri ("body", UriKind.Relative)), Is.EqualTo (0));
+			Assert.That (list.IndexOf (new Uri ("http://localhost/image1.jpg")), Is.EqualTo (1));
+			Assert.That (list.IndexOf (new Uri ("cid:image2@localhost")), Is.EqualTo (-1));
+			Assert.That (list[0], Is.EqualTo (text));
+			Assert.That (list[1], Is.EqualTo (image1));
 
-			Assert.IsTrue (list.Remove (text));
-			Assert.AreEqual (1, list.Count);
-			Assert.IsFalse (list.Contains (text));
-			Assert.IsTrue (list.Contains (image1));
-			Assert.AreEqual (-1, list.IndexOf (new Uri ("body", UriKind.Relative)));
-			Assert.AreEqual (0, list.IndexOf (new Uri ("http://localhost/image1.jpg")));
-			Assert.AreEqual (-1, list.IndexOf (new Uri ("cid:image2@localhost")));
-			Assert.AreEqual (image1, list[0]);
+			Assert.That (list.Remove (text), Is.True);
+			Assert.That (list, Has.Count.EqualTo (1));
+			Assert.That (list, Does.Not.Contain (text));
+			Assert.That (list, Does.Contain (image1));
+			Assert.That (list.IndexOf (new Uri ("body", UriKind.Relative)), Is.EqualTo (-1));
+			Assert.That (list.IndexOf (new Uri ("http://localhost/image1.jpg")), Is.EqualTo (0));
+			Assert.That (list.IndexOf (new Uri ("cid:image2@localhost")), Is.EqualTo (-1));
+			Assert.That (list[0], Is.EqualTo (image1));
 
 			list.Clear ();
-			Assert.AreEqual (0, list.Count);
+			Assert.That (list, Is.Empty);
 
 			list.Add (text);
 			list.Add (image1);
 			list.Add (image2);
 			list.CopyTo (parts, 0);
-			Assert.AreEqual (0, list.IndexOf (new Uri ("body", UriKind.Relative)));
-			Assert.AreEqual (1, list.IndexOf (new Uri ("http://localhost/image1.jpg")));
-			Assert.AreEqual (2, list.IndexOf (new Uri ("cid:image2@localhost")));
+			Assert.That (list.IndexOf (new Uri ("body", UriKind.Relative)), Is.EqualTo (0));
+			Assert.That (list.IndexOf (new Uri ("http://localhost/image1.jpg")), Is.EqualTo (1));
+			Assert.That (list.IndexOf (new Uri ("cid:image2@localhost")), Is.EqualTo (2));
 
 			foreach (var part in list)
-				Assert.AreEqual (parts[i++], part);
+				Assert.That (part, Is.EqualTo (parts[i++]));
 
 			i = 0;
 			foreach (var part in (IEnumerable) list)
-				Assert.AreEqual (parts[i++], part);
+				Assert.That (part, Is.EqualTo (parts[i++]));
 		}
 
 		[Test]
@@ -181,19 +369,42 @@ namespace UnitTests {
 			BodyPartMultipart multipart;
 			BodyPart body;
 
-			Assert.IsTrue (BodyPart.TryParse (text, out body), "Failed to parse body.");
+			Assert.That (BodyPart.TryParse (text, out body), Is.True, "Failed to parse body.");
 
-			Assert.IsInstanceOf<BodyPartMultipart> (body, "Body types did not match.");
+			Assert.That (body, Is.InstanceOf<BodyPartMultipart> (), "Body types did not match.");
 			multipart = (BodyPartMultipart) body;
 
-			Assert.IsTrue (body.ContentType.IsMimeType ("multipart", "mixed"), "Content-Type did not match.");
-			Assert.AreEqual ("----=_NextPart_000_0077_01CBB179.57530990", body.ContentType.Parameters["boundary"], "boundary param did not match");
-			Assert.AreEqual (3, multipart.BodyParts.Count, "BodyParts count does not match.");
-			Assert.IsInstanceOf<BodyPartMultipart> (multipart.BodyParts[0], "The type of the first child does not match.");
-			Assert.IsInstanceOf<BodyPartMessage> (multipart.BodyParts[1], "The type of the second child does not match.");
-			Assert.IsInstanceOf<BodyPartMessage> (multipart.BodyParts[2], "The type of the third child does not match.");
+			Assert.That (body.ContentType.IsMimeType ("multipart", "mixed"), Is.True, "Content-Type did not match.");
+			Assert.That (body.ContentType.Parameters["boundary"], Is.EqualTo ("----=_NextPart_000_0077_01CBB179.57530990"), "boundary param did not match");
+			Assert.That (multipart.BodyParts, Has.Count.EqualTo (3), "BodyParts count does not match.");
+			Assert.That (multipart.BodyParts[0], Is.InstanceOf<BodyPartMultipart> (), "The type of the first child does not match.");
+			Assert.That (multipart.BodyParts[1], Is.InstanceOf<BodyPartMessage> (), "The type of the second child does not match.");
+			Assert.That (multipart.BodyParts[2], Is.InstanceOf<BodyPartMessage> (), "The type of the third child does not match.");
 
 			// FIXME: assert more stuff
+		}
+
+		[Test]
+		public void TestMultipartWithNoChildren ()
+		{
+			var original = new BodyPartMultipart (new ContentType ("multipart", "mixed") { Boundary = "----=_NextPart_000_001" }, string.Empty);
+			original.BodyParts.Add (new BodyPartMultipart (new ContentType ("multipart", "alternative") { Boundary = "----=_AlternativePart_001_001" }, string.Empty));
+
+			var serialized = original.ToString ();
+
+			Assert.That (BodyPart.TryParse (serialized, out var body), Is.True, "Failed to parse.");
+			Assert.That (body, Is.InstanceOf<BodyPartMultipart> (), "Body types did not match.");
+
+			var multipart = (BodyPartMultipart) body;
+			Assert.That (multipart.ContentType.IsMimeType ("multipart", "mixed"), Is.True, "Content-Type did not match.");
+			Assert.That (multipart.ContentType.Boundary, Is.EqualTo (original.ContentType.Boundary), "boundary param did not match");
+			Assert.That (multipart.BodyParts, Has.Count.EqualTo (1), "BodyParts count does not match.");
+			Assert.That (multipart.BodyParts[0], Is.InstanceOf<BodyPartMultipart> (), "The type of the first child does not match.");
+
+			var alternative = (BodyPartMultipart) multipart.BodyParts[0];
+			Assert.That (alternative.ContentType.IsMimeType ("multipart", "alternative"), Is.True, "Inner Content-Type did not match.");
+			Assert.That (alternative.ContentType.Boundary, Is.EqualTo (original.BodyParts[0].ContentType.Boundary), "Inner boundary param did not match");
+			Assert.That (alternative.BodyParts, Is.Empty, "Inner BodyParts count does not match.");
 		}
 
 		static ContentType CreateContentType (string type, string subtype, string partSpecifier)
@@ -205,14 +416,15 @@ namespace UnitTests {
 
 		static BodyPartMessage CreateMessage (string type, string subtype, string partSpecifier, BodyPart body)
 		{
-			var message = new BodyPartMessage { ContentType = CreateContentType (type, subtype, partSpecifier) };
-			message.Body = body;
+			var message = new BodyPartMessage (CreateContentType (type, subtype, partSpecifier), partSpecifier) {
+				Body = body
+			};
 			return message;
 		}
 
 		static BodyPartMultipart CreateMultipart (string type, string subtype, string partSpecifier, params BodyPart[] bodyParts)
 		{
-			var multipart = new BodyPartMultipart { ContentType = CreateContentType (type, subtype, partSpecifier) };
+			var multipart = new BodyPartMultipart (CreateContentType (type, subtype, partSpecifier), partSpecifier);
 			foreach (var bodyPart in bodyParts)
 				multipart.BodyParts.Add (bodyPart);
 			return multipart;
@@ -220,28 +432,26 @@ namespace UnitTests {
 
 		static BodyPartBasic CreateBasic (string type, string subtype, string partSpecifier)
 		{
-			return new BodyPartBasic { ContentType = CreateContentType (type, subtype, partSpecifier) };
+			return new BodyPartBasic (CreateContentType (type, subtype, partSpecifier), partSpecifier);
 		}
 
-		static BodyPartBasic CreateText (string type, string subtype, string partSpecifier)
+		static BodyPartText CreateText (string type, string subtype, string partSpecifier)
 		{
-			return new BodyPartText { ContentType = CreateContentType (type, subtype, partSpecifier) };
+			return new BodyPartText (CreateContentType (type, subtype, partSpecifier), partSpecifier);
 		}
 
 		static void VerifyPartSpecifier (BodyPart part)
 		{
 			var expected = part.ContentType.Parameters["part-specifier"];
 
-			Assert.AreEqual (expected, part.PartSpecifier, "The part-specifier does not match for {0}", part.ContentType.MimeType);
+			Assert.That (part.PartSpecifier, Is.EqualTo (expected), $"The part-specifier does not match for {part.ContentType.MimeType}");
 
-			var message = part as BodyPartMessage;
-			if (message != null) {
+			if (part is BodyPartMessage message) {
 				VerifyPartSpecifier (message.Body);
 				return;
 			}
 
-			var multipart = part as BodyPartMultipart;
-			if (multipart != null) {
+			if (part is BodyPartMultipart multipart) {
 				for (int i = 0; i < multipart.BodyParts.Count; i++)
 					VerifyPartSpecifier (multipart.BodyParts[i]);
 				return;
@@ -250,7 +460,7 @@ namespace UnitTests {
 
 		class TestVisitor : BodyPartVisitor
 		{
-			StringBuilder builder = new StringBuilder ();
+			readonly StringBuilder builder = new StringBuilder ();
 			int indent;
 
 			public override void Visit (BodyPart body)
@@ -321,15 +531,16 @@ namespace UnitTests {
 
 			visitor.Visit (body);
 
-			Assert.AreEqual (expected, visitor.ToString ());
-			Assert.Throws<ArgumentNullException> (() => new BodyPartText ().Accept (null));
-			Assert.Throws<ArgumentNullException> (() => new BodyPartBasic ().Accept (null));
-			Assert.Throws<ArgumentNullException> (() => new BodyPartMessage ().Accept (null));
-			Assert.Throws<ArgumentNullException> (() => new BodyPartMultipart ().Accept (null));
+			Assert.That (visitor.ToString (), Is.EqualTo (expected));
+			Assert.Throws<ArgumentNullException> (() => new BodyPartText (new ContentType ("text", "plain"), string.Empty).Accept (null));
+			Assert.Throws<ArgumentNullException> (() => new BodyPartBasic (new ContentType ("image", "jpeg"), string.Empty).Accept (null));
+			Assert.Throws<ArgumentNullException> (() => new BodyPartMessage (new ContentType ("message", "rfc822"), string.Empty).Accept (null));
+			Assert.Throws<ArgumentNullException> (() => new BodyPartMultipart (new ContentType ("multipart", "mixed"), string.Empty).Accept (null));
 
 			var encoded = body.ToString ();
 
-			Assert.IsTrue (BodyPart.TryParse (encoded, out body));
+			Assert.Throws<ArgumentNullException> (() => BodyPart.TryParse (null, out body));
+			Assert.That (BodyPart.TryParse (encoded, out body), Is.True);
 
 			VerifyPartSpecifier (body);
 		}

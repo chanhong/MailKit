@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -25,10 +25,6 @@
 //
 
 using System;
-#if SERIALIZABLE
-using System.Security;
-using System.Runtime.Serialization;
-#endif
 
 namespace MailKit.Net.Pop3 {
 	/// <summary>
@@ -41,30 +37,8 @@ namespace MailKit.Net.Pop3 {
 	/// <example>
 	/// <code language="c#" source="Examples\Pop3Examples.cs" region="ExceptionHandling"/>
 	/// </example>
-#if SERIALIZABLE
-	[Serializable]
-#endif
 	public class Pop3CommandException : CommandException
 	{
-#if SERIALIZABLE
-		/// <summary>
-		/// Initializes a new instance of the <see cref="MailKit.Net.Pop3.Pop3CommandException"/> class.
-		/// </summary>
-		/// <remarks>
-		/// Creates a new <see cref="Pop3CommandException"/> from the serialized data.
-		/// </remarks>
-		/// <param name="info">The serialization info.</param>
-		/// <param name="context">The streaming context.</param>
-		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="info"/> is <c>null</c>.
-		/// </exception>
-		[SecuritySafeCritical]
-		protected Pop3CommandException (SerializationInfo info, StreamingContext context) : base (info, context)
-		{
-			StatusText = info.GetString ("StatusText");
-		}
-#endif
-
 		/// <summary>
 		/// Initializes a new instance of the <see cref="MailKit.Net.Pop3.Pop3CommandException"/> class.
 		/// </summary>
@@ -88,7 +62,7 @@ namespace MailKit.Net.Pop3 {
 		/// <param name="statusText">The response status text.</param>
 		/// <param name="innerException">An inner exception.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="statusText"/> is <c>null</c>.
+		/// <paramref name="statusText"/> is <see langword="null" />.
 		/// </exception>
 		public Pop3CommandException (string message, string statusText, Exception innerException) : base (message, innerException)
 		{
@@ -119,7 +93,7 @@ namespace MailKit.Net.Pop3 {
 		/// <param name="message">The error message.</param>
 		/// <param name="statusText">The response status text.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="statusText"/> is <c>null</c>.
+		/// <paramref name="statusText"/> is <see langword="null" />.
 		/// </exception>
 		public Pop3CommandException (string message, string statusText) : base (message)
 		{
@@ -154,26 +128,61 @@ namespace MailKit.Net.Pop3 {
 			get; private set;
 		}
 
-#if SERIALIZABLE
 		/// <summary>
-		/// When overridden in a derived class, sets the <see cref="System.Runtime.Serialization.SerializationInfo"/>
-		/// with information about the exception.
+		/// Get the POP3 response code, if any.
 		/// </summary>
 		/// <remarks>
-		/// Serializes the state of the <see cref="FolderNotFoundException"/>.
+		/// <para>Gets the extended response code that the server included at the beginning of
+		/// the <see cref="StatusText"/>, if any.</para>
+		/// <para>Extended response codes are defined by
+		/// <a href="https://tools.ietf.org/html/rfc2449">rfc2449</a> and
+		/// <a href="https://tools.ietf.org/html/rfc3206">rfc3206</a> and include values such as
+		/// <c>"IN-USE"</c>, <c>"LOGIN-DELAY"</c>, <c>"SYS/TEMP"</c>, <c>"SYS/PERM"</c> and <c>"AUTH"</c>.</para>
 		/// </remarks>
-		/// <param name="info">The serialization info.</param>
-		/// <param name="context">The streaming context.</param>
-		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="info"/> is <c>null</c>.
-		/// </exception>
-		[SecurityCritical]
-		public override void GetObjectData (SerializationInfo info, StreamingContext context)
-		{
-			base.GetObjectData (info, context);
+		/// <value>The upper-case response code or <see langword="null" /> if the server did not include a response code.</value>
+		public string? ResponseCode {
+			get {
+				if (StatusText.Length < 3 || StatusText[0] != '[')
+					return null;
 
-			info.AddValue ("StatusText", StatusText);
+				int endIndex = StatusText.IndexOf (']', 1);
+
+				if (endIndex <= 1)
+					return null;
+
+				return StatusText.Substring (1, endIndex - 1).Trim ().ToUpperInvariant ();
+			}
 		}
-#endif
+
+		/// <summary>
+		/// Get the type of command error.
+		/// </summary>
+		/// <remarks>
+		/// Gets the type of command error based on the <see cref="ResponseCode"/>.
+		/// </remarks>
+		/// <value>The type of command error.</value>
+		public override CommandErrorType ErrorType {
+			get {
+				var code = ResponseCode;
+
+				if (code is null)
+					return CommandErrorType.Rejected;
+
+				if (code == "IN-USE")
+					return CommandErrorType.InUse;
+
+				if (code == "LOGIN-DELAY" || code == "SYS/TEMP" || code.StartsWith ("SYS/TEMP/", StringComparison.Ordinal))
+					return CommandErrorType.TemporaryFailure;
+
+				if (code == "SYS/PERM" || code.StartsWith ("SYS/PERM/", StringComparison.Ordinal))
+					return CommandErrorType.ServerError;
+
+				if (code == "AUTH" || code.StartsWith ("AUTH/", StringComparison.Ordinal))
+					return CommandErrorType.PermissionDenied;
+
+				return CommandErrorType.Rejected;
+			}
+		}
+
 	}
 }

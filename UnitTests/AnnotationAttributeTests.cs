@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -24,10 +24,6 @@
 // THE SOFTWARE.
 //
 
-using System;
-
-using NUnit.Framework;
-
 using MailKit;
 
 namespace UnitTests {
@@ -45,25 +41,74 @@ namespace UnitTests {
 			Assert.Throws<ArgumentException> (() => new AnnotationAttribute ("w%ldcard"));
 		}
 
+		[TestCase (".priv", TestName = "TestInvalidSpecifier(ScopeOnlyPriv)")]
+		[TestCase (".shared", TestName = "TestInvalidSpecifier(ScopeOnlyShared)")]
+		[TestCase (".value", TestName = "TestInvalidSpecifier(LeadingDot)")]
+		[TestCase ("value.", TestName = "TestInvalidSpecifier(TrailingDot)")]
+		[TestCase ("vendor..value", TestName = "TestInvalidSpecifier(ConsecutiveDots)")]
+		[TestCase ("value..priv", TestName = "TestInvalidSpecifier(ConsecutiveDotsBeforeSuffix)")]
+		[TestCase ("priv", TestName = "TestInvalidSpecifier(Priv)")]
+		[TestCase ("shared", TestName = "TestInvalidSpecifier(Shared)")]
+		[TestCase ("priv.value", TestName = "TestInvalidSpecifier(PrivComponent)")]
+		[TestCase ("vendor.shared.value", TestName = "TestInvalidSpecifier(SharedComponent)")]
+		[TestCase ("value.priv.priv", TestName = "TestInvalidSpecifier(DoublePrivSuffix)")]
+		[TestCase ("value.shared.priv", TestName = "TestInvalidSpecifier(SharedThenPrivSuffix)")]
+		[TestCase ("val\0ue", TestName = "TestInvalidSpecifier(Nul)")]
+		[TestCase ("val\u00fce", TestName = "TestInvalidSpecifier(NonAscii)")]
+		[TestCase ("value*.priv", TestName = "TestInvalidSpecifier(WildcardBeforeSuffix)")]
+		public void TestInvalidSpecifier (string specifier)
+		{
+			Assert.Throws<ArgumentException> (() => new AnnotationAttribute (specifier));
+		}
+
+		[TestCase ("value", "value", AnnotationScope.Both)]
+		[TestCase ("size.shared", "size", AnnotationScope.Shared)]
+		[TestCase ("vendor.cmu.value.priv", "vendor.cmu.value", AnnotationScope.Private)]
+		[TestCase ("private", "private", AnnotationScope.Both)]
+		[TestCase ("sharedx.priv", "sharedx", AnnotationScope.Private)]
+		[TestCase ("Priv", "Priv", AnnotationScope.Both)]
+		[TestCase ("value.Shared", "value.Shared", AnnotationScope.Both)]
+		public void TestValidSpecifier (string specifier, string name, AnnotationScope scope)
+		{
+			var attr = new AnnotationAttribute (specifier);
+
+			Assert.That (attr.Specifier, Is.EqualTo (specifier), "Specifier");
+			Assert.That (attr.Name, Is.EqualTo (name), "Name");
+			Assert.That (attr.Scope, Is.EqualTo (scope), "Scope");
+		}
+
+		[Test]
+		public void TestNonValidatingConstructor ()
+		{
+			// Note: attribute specifiers parsed from server responses are not validated.
+			var attr = new AnnotationAttribute ("vendor..value.priv", false);
+
+			Assert.That (attr.Specifier, Is.EqualTo ("vendor..value.priv"), "Specifier");
+			Assert.That (attr.Name, Is.EqualTo ("vendor..value"), "Name");
+			Assert.That (attr.Scope, Is.EqualTo (AnnotationScope.Private), "Scope");
+
+			Assert.Throws<ArgumentNullException> (() => new AnnotationAttribute (null, false));
+		}
+
 		[Test]
 		public void TestBasicFunctionality ()
 		{
 			AnnotationAttribute attr;
 
 			attr = new AnnotationAttribute ("value");
-			Assert.AreEqual ("value", attr.Name, "Name");
-			Assert.AreEqual ("value", attr.Specifier, "Specifier");
-			Assert.AreEqual (AnnotationScope.Both, attr.Scope, "Scope");
+			Assert.That (attr.Name, Is.EqualTo ("value"), "Name");
+			Assert.That (attr.Specifier, Is.EqualTo ("value"), "Specifier");
+			Assert.That (attr.Scope, Is.EqualTo (AnnotationScope.Both), "Scope");
 
 			attr = new AnnotationAttribute ("value.priv");
-			Assert.AreEqual ("value", attr.Name, "Name");
-			Assert.AreEqual ("value.priv", attr.Specifier, "Specifier");
-			Assert.AreEqual (AnnotationScope.Private, attr.Scope, "Scope");
+			Assert.That (attr.Name, Is.EqualTo ("value"), "Name");
+			Assert.That (attr.Specifier, Is.EqualTo ("value.priv"), "Specifier");
+			Assert.That (attr.Scope, Is.EqualTo (AnnotationScope.Private), "Scope");
 
 			attr = new AnnotationAttribute ("value.shared");
-			Assert.AreEqual ("value", attr.Name, "Name");
-			Assert.AreEqual ("value.shared", attr.Specifier, "Specifier");
-			Assert.AreEqual (AnnotationScope.Shared, attr.Scope, "Scope");
+			Assert.That (attr.Name, Is.EqualTo ("value"), "Name");
+			Assert.That (attr.Specifier, Is.EqualTo ("value.shared"), "Specifier");
+			Assert.That (attr.Scope, Is.EqualTo (AnnotationScope.Shared), "Scope");
 		}
 
 		[Test]
@@ -71,15 +116,15 @@ namespace UnitTests {
 		{
 			var value = new AnnotationAttribute ("value");
 
-			Assert.AreEqual (AnnotationAttribute.Value, value, "AreEqual");
-			Assert.IsTrue (AnnotationAttribute.Value.Equals (value), ".Equals");
-			Assert.IsTrue (value == AnnotationAttribute.Value, "value == value");
-			Assert.IsTrue (AnnotationAttribute.PrivateValue != AnnotationAttribute.SharedValue, "value.priv != value.shared");
+			Assert.That (value, Is.EqualTo (AnnotationAttribute.Value), "AreEqual");
+			Assert.That (AnnotationAttribute.Value.Equals (value), Is.True, ".Equals");
+			Assert.That (value == AnnotationAttribute.Value, Is.True, "value == value");
+			Assert.That (AnnotationAttribute.PrivateValue != AnnotationAttribute.SharedValue, Is.True, "value.priv != value.shared");
 
-			Assert.IsFalse (AnnotationAttribute.Value.Equals ((object) null), "value.Equals ((object) null)");
-			Assert.IsFalse (AnnotationAttribute.Value.Equals ((AnnotationAttribute) null), "value.Equals ((AnnotationAttribute) null)");
-			Assert.IsFalse (AnnotationAttribute.Value == null, "value == null");
-			Assert.IsTrue (AnnotationAttribute.Value != null, "/comment != null");
+			Assert.That (AnnotationAttribute.Value.Equals ((object) null), Is.False, "value.Equals ((object) null)");
+			Assert.That (AnnotationAttribute.Value.Equals ((AnnotationAttribute) null), Is.False, "value.Equals ((AnnotationAttribute) null)");
+			Assert.That (AnnotationAttribute.Value == null, Is.False, "value == null");
+			Assert.That (AnnotationAttribute.Value != null, Is.True, "/comment != null");
 		}
 	}
 }

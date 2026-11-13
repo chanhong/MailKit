@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -24,10 +24,6 @@
 // THE SOFTWARE.
 //
 
-using System;
-
-using NUnit.Framework;
-
 using MailKit;
 
 namespace UnitTests {
@@ -46,8 +42,8 @@ namespace UnitTests {
 			var annotation = new Annotation (AnnotationEntry.AltSubject);
 			annotation.Properties.Add (AnnotationAttribute.SharedValue, "Shared altsubject");
 			annotation.Properties.Add (AnnotationAttribute.PrivateValue, "Private altsubject");
-			Assert.AreEqual (AnnotationEntry.AltSubject, annotation.Entry, "Entry");
-			Assert.AreEqual (2, annotation.Properties.Count, "Count");
+			Assert.That (annotation.Entry, Is.EqualTo (AnnotationEntry.AltSubject), "Entry");
+			Assert.That (annotation.Properties, Has.Count.EqualTo (2), "Count");
 		}
 	}
 }

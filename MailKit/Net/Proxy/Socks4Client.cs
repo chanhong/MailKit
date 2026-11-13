@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -25,6 +25,7 @@
 //
 
 using System;
+using System.IO;
 using System.Net;
 using System.Text;
 using System.Threading;
@@ -37,9 +38,12 @@ namespace MailKit.Net.Proxy
 	/// <summary>
 	/// A SOCKS4 proxy client.
 	/// </summary>
-	/// <remarkas>
+	/// <remarks>
 	/// A SOCKS4 proxy client.
-	/// </remarkas>
+	/// </remarks>
+	/// <example>
+	/// <code language="c#" source="Examples\ProxyExamples.cs" region="ProxyClient" />
+	/// </example>
 	public class Socks4Client : SocksClient
 	{
 		static readonly byte[] InvalidIPAddress = { 0, 0, 0, 1 };
@@ -53,7 +57,7 @@ namespace MailKit.Net.Proxy
 		/// <param name="host">The host name of the proxy server.</param>
 		/// <param name="port">The proxy server port.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="host"/> is <c>null</c>.
+		/// <paramref name="host"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <paramref name="port"/> is not between <c>1</c> and <c>65535</c>.
@@ -77,9 +81,9 @@ namespace MailKit.Net.Proxy
 		/// <param name="port">The proxy server port.</param>
 		/// <param name="credentials">The credentials to use to authenticate with the proxy server.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <para><paramref name="host"/> is <c>null</c>.</para>
+		/// <para><paramref name="host"/> is <see langword="null" />.</para>
 		/// <para>-or-</para>
-		/// <para><paramref name="credentials"/>is <c>null</c>.</para>
+		/// <para><paramref name="credentials"/>is <see langword="null" />.</para>
 		/// </exception>
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <paramref name="port"/> is not between <c>1</c> and <c>65535</c>.
@@ -97,7 +101,7 @@ namespace MailKit.Net.Proxy
 		/// <remarks>
 		/// Gets or sets whether this <see cref="T:MailKit.Net.Proxy.Socks4Client"/> is a Socks4a client.
 		/// </remarks>
-		/// <value><c>true</c> if is is a Socks4a client; otherwise, <c>false</c>.</value>
+		/// <value><see langword="true" /> if is is a Socks4a client; otherwise, <see langword="false" />.</value>
 		protected bool IsSocks4a {
 			get; set;
 		}
@@ -126,20 +130,8 @@ namespace MailKit.Net.Proxy
 			}
 		}
 
-		async Task<IPAddress> ResolveAsync (string host, bool doAsync, CancellationToken cancellationToken)
+		static IPAddress Resolve (string host, IPAddress[] ipAddresses)
 		{
-			IPAddress[] ipAddresses;
-
-			if (doAsync) {
-				ipAddresses = await Dns.GetHostAddressesAsync (host).ConfigureAwait (false);
-			} else {
-#if NETSTANDARD1_3 || NETSTANDARD1_6
-				ipAddresses = Dns.GetHostAddressesAsync (host).GetAwaiter ().GetResult ();
-#else
-				ipAddresses = Dns.GetHostAddresses (host);
-#endif
-			}
-
 			for (int i = 0; i < ipAddresses.Length; i++) {
 				if (ipAddresses[i].AddressFamily == AddressFamily.InterNetwork)
 					return ipAddresses[i];
@@ -148,19 +140,100 @@ namespace MailKit.Net.Proxy
 			throw new ArgumentException ($"Could not resolve a suitable IPv4 address for '{host}'.", nameof (host));
 		}
 
-		async Task<Socket> ConnectAsync (string host, int port, bool doAsync, CancellationToken cancellationToken)
+		static IPAddress Resolve (string host, CancellationToken cancellationToken)
 		{
-			byte[] addr, domain = null;
-			IPAddress ip;
+			cancellationToken.ThrowIfCancellationRequested ();
+
+			var ipAddresses = Dns.GetHostAddresses (host);
+
+			return Resolve (host, ipAddresses);
+		}
+
+		static async Task<IPAddress> ResolveAsync (string host, CancellationToken cancellationToken)
+		{
+			cancellationToken.ThrowIfCancellationRequested ();
+
+#if NET6_0_OR_GREATER
+			var ipAddresses = await Dns.GetHostAddressesAsync (host, cancellationToken).ConfigureAwait (false);
+#else
+			var ipAddresses = await Dns.GetHostAddressesAsync (host).ConfigureAwait (false);
+#endif
+
+			return Resolve (host, ipAddresses);
+		}
+
+		byte[] GetConnectCommand (byte[]? domain, byte[] addr, int port)
+		{
+			// +----+-----+----------+----------+----------+-------+--------------+-------+
+			// |VER | CMD | DST.PORT | DST.ADDR |  USERID  | NULL  |  DST.DOMAIN  | NULL  |
+			// +----+-----+----------+----------+----------+-------+--------------+-------+
+			// | 1  |  1  |    2     |    4     | VARIABLE | X'00' |   VARIABLE   | X'00' |
+			// +----+-----+----------+----------+----------+-------+--------------+-------+
+			var user = ProxyCredentials != null ? Encoding.UTF8.GetBytes (ProxyCredentials.UserName) : Array.Empty<byte> ();
+			int bufferSize = 9 + user.Length + (domain != null ? domain.Length + 1 : 0);
+			var buffer = new byte[bufferSize];
+			int n = 0;
+
+			buffer[n++] = (byte) SocksVersion;
+			buffer[n++] = (byte) Socks4Command.Connect;
+			buffer[n++] = (byte) (port >> 8);
+			buffer[n++] = (byte) port;
+			Buffer.BlockCopy (addr, 0, buffer, n, 4);
+			n += 4;
+			Buffer.BlockCopy (user, 0, buffer, n, user.Length);
+			n += user.Length;
+			buffer[n++] = 0x00;
+
+			if (domain != null) {
+				Buffer.BlockCopy (domain, 0, buffer, n, domain.Length);
+				n += domain.Length;
+				buffer[n++] = 0x00;
+			}
+
+			return buffer;
+		}
+
+		/// <summary>
+		/// Connect to the target host.
+		/// </summary>
+		/// <remarks>
+		/// Connects to the target host and port through the proxy server.
+		/// </remarks>
+		/// <returns>The connected network stream.</returns>
+		/// <param name="host">The host name of the proxy server.</param>
+		/// <param name="port">The proxy server port.</param>
+		/// <param name="cancellationToken">The cancellation token.</param>
+		/// <exception cref="System.ArgumentNullException">
+		/// <paramref name="host"/> is <see langword="null" />.
+		/// </exception>
+		/// <exception cref="System.ArgumentOutOfRangeException">
+		/// <paramref name="port"/> is not between <c>0</c> and <c>65535</c>.
+		/// </exception>
+		/// <exception cref="System.ArgumentException">
+		/// The <paramref name="host"/> is a zero-length string.
+		/// </exception>
+		/// <exception cref="System.OperationCanceledException">
+		/// The operation was canceled via the cancellation token.
+		/// </exception>
+		/// <exception cref="System.Net.Sockets.SocketException">
+		/// A socket error occurred trying to connect to the remote host.
+		/// </exception>
+		/// <exception cref="System.IO.IOException">
+		/// An I/O error occurred.
+		/// </exception>
+		public override Stream Connect (string host, int port, CancellationToken cancellationToken = default)
+		{
+			byte[]? domain = null;
+			byte[] addr;
 
 			ValidateArguments (host, port);
 
-			if (!IPAddress.TryParse (host, out ip)) {
+			if (!IPAddress.TryParse (host, out var ip)) {
 				if (IsSocks4a) {
 					domain = Encoding.UTF8.GetBytes (host);
 					addr = InvalidIPAddress;
 				} else {
-					ip = await ResolveAsync (host, doAsync, cancellationToken).ConfigureAwait (false);
+					ip = Resolve (host, cancellationToken);
 					addr = ip.GetAddressBytes ();
 				}
 			} else {
@@ -172,95 +245,35 @@ namespace MailKit.Net.Proxy
 
 			cancellationToken.ThrowIfCancellationRequested ();
 
-			var socket = await SocketUtils.ConnectAsync (ProxyHost, ProxyPort, LocalEndPoint, doAsync, cancellationToken).ConfigureAwait (false);
-			var user = ProxyCredentials != null ? Encoding.UTF8.GetBytes (ProxyCredentials.UserName) : new byte[0];
+			var socket = SocketUtils.Connect (ProxyHost, ProxyPort, LocalEndPoint, cancellationToken);
 
 			try {
-				// +----+-----+----------+----------+----------+-------+--------------+-------+
-				// |VER | CMD | DST.PORT | DST.ADDR |  USERID  | NULL  |  DST.DOMAIN  | NULL  |
-				// +----+-----+----------+----------+----------+-------+--------------+-------+
-				// | 1  |  1  |    2     |    4     | VARIABLE | X'00' |   VARIABLE   | X'00' |
-				// +----+-----+----------+----------+----------+-------+--------------+-------+
-				int bufferSize = 9 + user.Length + (domain != null ? domain.Length + 1 : 0);
-				var buffer = new byte[bufferSize];
-				int nread, n = 0;
+				var buffer = GetConnectCommand (domain, addr, port);
 
-				buffer[n++] = (byte) SocksVersion;
-				buffer[n++] = (byte) Socks4Command.Connect;
-				buffer[n++] = (byte) (port >> 8);
-				buffer[n++] = (byte) port;
-				Buffer.BlockCopy (addr, 0, buffer, n, 4);
-				n += 4;
-				Buffer.BlockCopy (user, 0, buffer, n, user.Length);
-				n += user.Length;
-				buffer[n++] = 0x00;
-				if (domain != null) {
-					Buffer.BlockCopy (domain, 0, buffer, n, domain.Length);
-					n += domain.Length;
-					buffer[n++] = 0x00;
-				}
-
-				await SendAsync (socket, buffer, 0, n, doAsync, cancellationToken).ConfigureAwait (false);
+				Send (socket, buffer, 0, buffer.Length, cancellationToken);
 
 				// +-----+-----+----------+----------+
 				// | VER | REP | BND.PORT | BND.ADDR |
 				// +-----+-----+----------+----------+
 				// |  1  |  1  |    2     |    4     |
 				// +-----+-----+----------+----------+
-				n = 0;
-
-				do {
-					if ((nread = await ReceiveAsync (socket, buffer, 0 + n, 8 - n, doAsync, cancellationToken).ConfigureAwait (false)) > 0)
-						n += nread;
-				} while (n < 8);
+				ReceiveExactly (socket, buffer, 0, 8, cancellationToken);
 
 				if (buffer[1] != (byte) Socks4Reply.RequestGranted)
 					throw new ProxyProtocolException (string.Format (CultureInfo.InvariantCulture, "Failed to connect to {0}:{1}: {2}", host, port, GetFailureReason (buffer[1])));
 
-				// TODO: do we care about BND.ADDR and BND.PORT?
+				// Note: For a CONNECT request, BND.PORT and BND.ADDR are not meaningful (many SOCKS4
+				// servers just send zeros) and are only used for BIND requests, which we do not
+				// support, so we ignore them.
 
-				return socket;
+				return new NetworkStream (socket, true);
 			} catch {
-#if !NETSTANDARD1_3 && !NETSTANDARD1_6
 				if (socket.Connected)
 					socket.Disconnect (false);
-#endif
+
 				socket.Dispose ();
 				throw;
 			}
-		}
-
-		/// <summary>
-		/// Connect to the target host.
-		/// </summary>
-		/// <remarks>
-		/// Connects to the target host and port through the proxy server.
-		/// </remarks>
-		/// <returns>The connected socket.</returns>
-		/// <param name="host">The host name of the proxy server.</param>
-		/// <param name="port">The proxy server port.</param>
-		/// <param name="cancellationToken">The cancellation token.</param>
-		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="host"/> is <c>null</c>.
-		/// </exception>
-		/// <exception cref="System.ArgumentOutOfRangeException">
-		/// <paramref name="port"/> is not between <c>0</c> and <c>65535</c>.
-		/// </exception>
-		/// <exception cref="System.ArgumentException">
-		/// The <paramref name="host"/> is a zero-length string.
-		/// </exception>
-		/// <exception cref="System.OperationCanceledException">
-		/// The operation was canceled via the cancellation token.
-		/// </exception>
-		/// <exception cref="System.Net.Sockets.SocketException">
-		/// A socket error occurred trying to connect to the remote host.
-		/// </exception>
-		/// <exception cref="System.IO.IOException">
-		/// An I/O error occurred.
-		/// </exception>
-		public override Socket Connect (string host, int port, CancellationToken cancellationToken = default (CancellationToken))
-		{
-			return ConnectAsync (host, port, false, cancellationToken).GetAwaiter ().GetResult ();
 		}
 
 		/// <summary>
@@ -269,12 +282,12 @@ namespace MailKit.Net.Proxy
 		/// <remarks>
 		/// Asynchronously connects to the target host and port through the proxy server.
 		/// </remarks>
-		/// <returns>The connected socket.</returns>
+		/// <returns>The connected network stream.</returns>
 		/// <param name="host">The host name of the proxy server.</param>
 		/// <param name="port">The proxy server port.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="host"/> is <c>null</c>.
+		/// <paramref name="host"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <paramref name="port"/> is not between <c>0</c> and <c>65535</c>.
@@ -291,9 +304,59 @@ namespace MailKit.Net.Proxy
 		/// <exception cref="System.IO.IOException">
 		/// An I/O error occurred.
 		/// </exception>
-		public override Task<Socket> ConnectAsync (string host, int port, CancellationToken cancellationToken = default (CancellationToken))
+		public override async Task<Stream> ConnectAsync (string host, int port, CancellationToken cancellationToken = default)
 		{
-			return ConnectAsync (host, port, true, cancellationToken);
+			byte[]? domain = null;
+			byte[] addr;
+
+			ValidateArguments (host, port);
+
+			if (!IPAddress.TryParse (host, out var ip)) {
+				if (IsSocks4a) {
+					domain = Encoding.UTF8.GetBytes (host);
+					addr = InvalidIPAddress;
+				} else {
+					ip = await ResolveAsync (host, cancellationToken).ConfigureAwait (false);
+					addr = ip.GetAddressBytes ();
+				}
+			} else {
+				if (ip.AddressFamily != AddressFamily.InterNetwork)
+					throw new ArgumentException ("The specified host address must be IPv4.", nameof (host));
+
+				addr = ip.GetAddressBytes ();
+			}
+
+			cancellationToken.ThrowIfCancellationRequested ();
+
+			var socket = await SocketUtils.ConnectAsync (ProxyHost, ProxyPort, LocalEndPoint, cancellationToken).ConfigureAwait (false);
+
+			try {
+				var buffer = GetConnectCommand (domain, addr, port);
+
+				await SendAsync (socket, buffer, 0, buffer.Length, cancellationToken).ConfigureAwait (false);
+
+				// +-----+-----+----------+----------+
+				// | VER | REP | BND.PORT | BND.ADDR |
+				// +-----+-----+----------+----------+
+				// |  1  |  1  |    2     |    4     |
+				// +-----+-----+----------+----------+
+				await ReceiveExactlyAsync (socket, buffer, 0, 8, cancellationToken).ConfigureAwait (false);
+
+				if (buffer[1] != (byte) Socks4Reply.RequestGranted)
+					throw new ProxyProtocolException (string.Format (CultureInfo.InvariantCulture, "Failed to connect to {0}:{1}: {2}", host, port, GetFailureReason (buffer[1])));
+
+				// Note: For a CONNECT request, BND.PORT and BND.ADDR are not meaningful (many SOCKS4
+				// servers just send zeros) and are only used for BIND requests, which we do not
+				// support, so we ignore them.
+
+				return new NetworkStream (socket, true);
+			} catch {
+				if (socket.Connected)
+					socket.Disconnect (false);
+
+				socket.Dispose ();
+				throw;
+			}
 		}
 	}
 }

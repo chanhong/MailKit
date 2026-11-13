@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -24,11 +24,6 @@
 // THE SOFTWARE.
 //
 
-using System;
-using System.Collections.Generic;
-
-using NUnit.Framework;
-
 using MailKit;
 
 namespace UnitTests {
@@ -41,7 +36,7 @@ namespace UnitTests {
 			var uri = new Uri ("imap://imap.gmail.com/");
 			var query = uri.ParsedQuery ();
 
-			Assert.AreEqual (0, query.Count, "Unexpected number of queries.");
+			Assert.That (query, Is.Empty, "Unexpected number of queries.");
 		}
 
 		[Test]
@@ -50,8 +45,8 @@ namespace UnitTests {
 			var uri = new Uri ("imap://imap.gmail.com/?starttls=false");
 			var query = uri.ParsedQuery ();
 
-			Assert.AreEqual (1, query.Count, "Unexpected number of queries.");
-			Assert.AreEqual ("false", query["starttls"], "Unexpected value for 'starttls'.");
+			Assert.That (query, Has.Count.EqualTo (1), "Unexpected number of queries.");
+			Assert.That (query["starttls"], Is.EqualTo ("false"), "Unexpected value for 'starttls'.");
 		}
 
 		[Test]
@@ -60,9 +55,9 @@ namespace UnitTests {
 			var uri = new Uri ("imap://imap.gmail.com/?starttls=false&compress=false");
 			var query = uri.ParsedQuery ();
 
-			Assert.AreEqual (2, query.Count, "Unexpected number of queries.");
-			Assert.AreEqual ("false", query["starttls"], "Unexpected value for 'starttls'.");
-			Assert.AreEqual ("false", query["compress"], "Unexpected value for 'compress'.");
+			Assert.That (query, Has.Count.EqualTo (2), "Unexpected number of queries.");
+			Assert.That (query["starttls"], Is.EqualTo ("false"), "Unexpected value for 'starttls'.");
+			Assert.That (query["compress"], Is.EqualTo ("false"), "Unexpected value for 'compress'.");
 		}
 
 		[Test]
@@ -71,9 +66,9 @@ namespace UnitTests {
 			var uri = new Uri ("imap://imap.gmail.com/?starttls=false&compress");
 			var query = uri.ParsedQuery ();
 
-			Assert.AreEqual (2, query.Count, "Unexpected number of queries.");
-			Assert.AreEqual ("false", query["starttls"], "Unexpected value for 'starttls'.");
-			Assert.AreEqual (string.Empty, query["compress"], "Unexpected value for 'compress'.");
+			Assert.That (query, Has.Count.EqualTo (2), "Unexpected number of queries.");
+			Assert.That (query["starttls"], Is.EqualTo ("false"), "Unexpected value for 'starttls'.");
+			Assert.That (query["compress"], Is.EqualTo (string.Empty), "Unexpected value for 'compress'.");
 		}
 	}
 }

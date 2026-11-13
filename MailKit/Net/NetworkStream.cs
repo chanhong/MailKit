@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -34,8 +34,8 @@ namespace MailKit.Net
 {
 	class NetworkStream : Stream
 	{
-		SocketAsyncEventArgs send;
-		SocketAsyncEventArgs recv;
+		SocketAsyncEventArgs? send;
+		SocketAsyncEventArgs? recv;
 		bool ownsSocket;
 		bool connected;
 
@@ -115,9 +115,9 @@ namespace MailKit.Net
 			}
 		}
 
-		void AsyncOperationCompleted (object sender, SocketAsyncEventArgs args)
+		void AsyncOperationCompleted (object? sender, SocketAsyncEventArgs args)
 		{
-			var tcs = (TaskCompletionSource<bool>) args.UserToken;
+			var tcs = (TaskCompletionSource<bool>) args.UserToken!;
 
 			if (args.SocketError == SocketError.Success) {
 				tcs.TrySetResult (true);
@@ -127,21 +127,33 @@ namespace MailKit.Net
 			tcs.TrySetException (new SocketException ((int) args.SocketError));
 		}
 
+		void Cleanup ()
+		{
+			if (send != null) {
+				send.Completed -= AsyncOperationCompleted;
+				send.AcceptSocket = null;
+				send.Dispose ();
+				send = null;
+			}
+
+			if (recv != null) {
+				recv.Completed -= AsyncOperationCompleted;
+				recv.AcceptSocket = null;
+				recv.Dispose ();
+				recv = null;
+			}
+		}
+
 		void Disconnect ()
 		{
 			try {
-#if !NETSTANDARD1_3 && !NETSTANDARD1_6
 				Socket.Disconnect (false);
-#endif
 				Socket.Dispose ();
 			} catch {
 				return;
 			} finally {
 				connected = false;
-				send.Dispose ();
-				send = null;
-				recv.Dispose ();
-				recv = null;
+				Cleanup ();
 			}
 		}
 
@@ -160,10 +172,13 @@ namespace MailKit.Net
 
 			var tcs = new TaskCompletionSource<bool> ();
 
-			using (var timeout = new CancellationTokenSource (ReadTimeout)) {
+			// Capture the ReadTimeout so even if we get an exception and disconnect the socket, we still have it.
+			int readTimeout = ReadTimeout;
+
+			using (var timeout = new CancellationTokenSource (readTimeout)) {
 				using (var linked = CancellationTokenSource.CreateLinkedTokenSource (cancellationToken, timeout.Token)) {
 					using (var registration = linked.Token.Register (() => tcs.TrySetCanceled (), false)) {
-						recv.SetBuffer (buffer, offset, count);
+						recv!.SetBuffer (buffer, offset, count);
 						recv.UserToken = tcs;
 
 						if (!Socket.ReceiveAsync (recv))
@@ -172,8 +187,10 @@ namespace MailKit.Net
 						try {
 							await tcs.Task.ConfigureAwait (false);
 							return recv.BytesTransferred;
-						} catch (OperationCanceledException) {
+						} catch (OperationCanceledException ex) {
 							Disconnect ();
+							if (timeout.IsCancellationRequested)
+								throw new TimeoutException ($"Operation timed out after {readTimeout} milliseconds", ex);
 							throw;
 						} catch (Exception ex) {
 							Disconnect ();
@@ -201,10 +218,13 @@ namespace MailKit.Net
 
 			var tcs = new TaskCompletionSource<bool> ();
 
-			using (var timeout = new CancellationTokenSource (WriteTimeout)) {
+			// Capture the WriteTimeout so even if we get an exception and disconnect the socket, we still have it.
+			int writeTimeout = WriteTimeout;
+
+			using (var timeout = new CancellationTokenSource (writeTimeout)) {
 				using (var linked = CancellationTokenSource.CreateLinkedTokenSource (cancellationToken, timeout.Token)) {
 					using (var registration = linked.Token.Register (() => tcs.TrySetCanceled (), false)) {
-						send.SetBuffer (buffer, offset, count);
+						send!.SetBuffer (buffer, offset, count);
 						send.UserToken = tcs;
 
 						if (!Socket.SendAsync (send))
@@ -212,8 +232,10 @@ namespace MailKit.Net
 
 						try {
 							await tcs.Task.ConfigureAwait (false);
-						} catch (OperationCanceledException) {
+						} catch (OperationCanceledException ex) {
 							Disconnect ();
+							if (timeout.IsCancellationRequested)
+								throw new TimeoutException ($"Operation timed out after {writeTimeout} milliseconds", ex);
 							throw;
 						} catch (Exception ex) {
 							Disconnect ();
@@ -232,7 +254,7 @@ namespace MailKit.Net
 
 		public override Task FlushAsync (CancellationToken cancellationToken)
 		{
-			return Task.FromResult (true);
+			return Task.CompletedTask;
 		}
 
 		public override long Seek (long offset, SeekOrigin origin)
@@ -245,12 +267,14 @@ namespace MailKit.Net
 			throw new NotSupportedException ();
 		}
 
-		public static NetworkStream Get (Stream stream)
+		public static NetworkStream? Get (Stream stream)
 		{
+#if NET8_0_OR_GREATER
 			if (stream is CompressedStream compressed)
 				stream = compressed.InnerStream;
+#endif
 
-			if (stream is SslStream ssl)
+			if (stream is ExtendedSslStream ssl)
 				stream = ssl.InnerStream;
 
 			return stream as NetworkStream;
@@ -276,11 +300,7 @@ namespace MailKit.Net
 					ownsSocket = false;
 					Disconnect ();
 				} else {
-					send?.Dispose ();
-					send = null;
-
-					recv?.Dispose ();
-					recv = null;
+					Cleanup ();
 				}
 			}
 

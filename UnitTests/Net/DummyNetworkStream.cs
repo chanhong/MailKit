@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -24,14 +24,15 @@
 // THE SOFTWARE.
 //
 
-using System;
-using System.IO;
 
 namespace UnitTests.Net {
 	public class DummyNetworkStream : MemoryStream
 	{
-		public DummyNetworkStream ()
+		readonly bool throwOnWrite;
+
+		public DummyNetworkStream (bool throwOnWrite = false)
 		{
+			this.throwOnWrite = throwOnWrite;
 		}
 
 		public override bool CanSeek => false;
@@ -39,5 +40,21 @@ namespace UnitTests.Net {
 
 		public override int ReadTimeout { get; set; }
 		public override int WriteTimeout { get; set; }
+
+		public override void Write (byte[] buffer, int offset, int count)
+		{
+			if (throwOnWrite)
+				throw new IOException ();
+
+			base.Write (buffer, offset, count);
+		}
+
+		public override Task WriteAsync (byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+		{
+			if (throwOnWrite)
+				throw new IOException ();
+
+			return base.WriteAsync (buffer, offset, count, cancellationToken);
+		}
 	}
 }

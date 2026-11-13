@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -25,11 +25,10 @@
 //
 
 using System;
+using System.IO;
 using System.Net;
 using System.Text;
-using System.Buffers;
 using System.Threading;
-using System.Net.Sockets;
 using System.Globalization;
 using System.Threading.Tasks;
 
@@ -38,13 +37,11 @@ namespace MailKit.Net.Proxy
 	/// <summary>
 	/// An HTTP proxy client.
 	/// </summary>
-	/// <remarkas>
+	/// <remarks>
 	/// An HTTP proxy client.
-	/// </remarkas>
+	/// </remarks>
 	public class HttpProxyClient : ProxyClient
 	{
-		const int BufferSize = 4096;
-
 		/// <summary>
 		/// Initializes a new instance of the <see cref="T:MailKit.Net.Proxy.HttpProxyClient"/> class.
 		/// </summary>
@@ -54,7 +51,7 @@ namespace MailKit.Net.Proxy
 		/// <param name="host">The host name of the proxy server.</param>
 		/// <param name="port">The proxy server port.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="host"/> is <c>null</c>.
+		/// <paramref name="host"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <paramref name="port"/> is not between <c>1</c> and <c>65535</c>.
@@ -78,9 +75,9 @@ namespace MailKit.Net.Proxy
 		/// <param name="port">The proxy server port.</param>
 		/// <param name="credentials">The credentials to use to authenticate with the proxy server.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <para><paramref name="host"/> is <c>null</c>.</para>
+		/// <para><paramref name="host"/> is <see langword="null" />.</para>
 		/// <para>-or-</para>
-		/// <para><paramref name="credentials"/>is <c>null</c>.</para>
+		/// <para><paramref name="credentials"/>is <see langword="null" />.</para>
 		/// </exception>
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <paramref name="port"/> is not between <c>1</c> and <c>65535</c>.
@@ -94,97 +91,54 @@ namespace MailKit.Net.Proxy
 		{
 		}
 
-		async Task<Socket> ConnectAsync (string host, int port, bool doAsync, CancellationToken cancellationToken)
+		internal static byte[] GetConnectCommand (string host, int port, NetworkCredential? proxyCredentials)
 		{
-			ValidateArguments (host, port);
-
-			cancellationToken.ThrowIfCancellationRequested ();
-
-			var socket = await SocketUtils.ConnectAsync (ProxyHost, ProxyPort, LocalEndPoint, doAsync, cancellationToken).ConfigureAwait (false);
 			var builder = new StringBuilder ();
 
 			builder.AppendFormat (CultureInfo.InvariantCulture, "CONNECT {0}:{1} HTTP/1.1\r\n", host, port);
 			builder.AppendFormat (CultureInfo.InvariantCulture, "Host: {0}:{1}\r\n", host, port);
-			if (ProxyCredentials != null) {
-				var token = Encoding.UTF8.GetBytes (string.Format (CultureInfo.InvariantCulture, "{0}:{1}", ProxyCredentials.UserName, ProxyCredentials.Password));
+			if (proxyCredentials != null) {
+				var token = Encoding.UTF8.GetBytes (string.Format (CultureInfo.InvariantCulture, "{0}:{1}", proxyCredentials.UserName, proxyCredentials.Password));
 				var base64 = Convert.ToBase64String (token);
 				builder.AppendFormat (CultureInfo.InvariantCulture, "Proxy-Authorization: Basic {0}\r\n", base64);
 			}
 			builder.Append ("\r\n");
 
-			var command = Encoding.UTF8.GetBytes (builder.ToString ());
+			return Encoding.UTF8.GetBytes (builder.ToString ());
+		}
 
-			try {
-				await SendAsync (socket, command, 0, command.Length, doAsync, cancellationToken).ConfigureAwait (false);
+		internal static bool TryConsumeHeaders (ByteArrayBuilder builder, byte c, ref bool newLine)
+		{
+			var endOfHeaders = false;
 
-				var buffer = ArrayPool<byte>.Shared.Rent (BufferSize);
-
-				try {
-					var endOfHeaders = false;
-					var newline = false;
-
-					builder.Clear ();
-
-					// read until we consume the end of the headers (it's ok if we read some of the content)
-					do {
-						int nread = await ReceiveAsync (socket, buffer, 0, BufferSize, doAsync, cancellationToken).ConfigureAwait (false);
-
-						if (nread > 0) {
-							int n = nread;
-
-							for (int i = 0; i < nread && !endOfHeaders; i++) {
-								switch ((char) buffer[i]) {
-								case '\r':
-									break;
-								case '\n':
-									endOfHeaders = newline;
-									newline = true;
-
-									if (endOfHeaders)
-										n = i + 1;
-									break;
-								default:
-									newline = false;
-									break;
-								}
-							}
-
-							builder.Append (Encoding.UTF8.GetString (buffer, 0, n));
-						}
-					} while (!endOfHeaders);
-				} finally {
-					ArrayPool<byte>.Shared.Return (buffer);
-				}
-
-				int index = 0;
-
-				while (builder[index] != '\n')
-					index++;
-
-				if (index > 0 && builder[index - 1] == '\r')
-					index--;
-
-				// trim everything beyond the "HTTP/1.1 200 ..." part of the response
-				builder.Length = index;
-
-				var response = builder.ToString ();
-
-				if (response.Length >= 15 && response.StartsWith ("HTTP/1.", StringComparison.OrdinalIgnoreCase) &&
-					(response[7] == '1' || response[7] == '0') && response[8] == ' ' &&
-					response[9] == '2' && response[10] == '0' && response[11] == '0' &&
-					response[12] == ' ') {
-					return socket;
-				}
-
-				throw new ProxyProtocolException (string.Format (CultureInfo.InvariantCulture, "Failed to connect to {0}:{1}: {2}", host, port, response));
-			} catch {
-#if !NETSTANDARD1_3 && !NETSTANDARD1_6
-				if (socket.Connected)
-					socket.Disconnect (false);
-#endif
-				socket.Dispose ();
-				throw;
+			switch ((char) c) {
+			case '\r':
+				break;
+			case '\n':
+				endOfHeaders = newLine;
+				newLine = true;
+				break;
+			default:
+				newLine = false;
+				break;
 			}
+
+			builder.Append (c);
+
+			return endOfHeaders;
+		}
+
+		internal static void ValidateHttpResponse (string response, string host, int port)
+		{
+			// Verify that the response starts with something like "HTTP/1.1 200 ..."
+			if (response.Length >= 13 && response.StartsWith ("HTTP/1.", StringComparison.OrdinalIgnoreCase) &&
+				(response[7] == '1' || response[7] == '0') && response[8] == ' ' &&
+				response[9] == '2' && response[10] == '0' && response[11] == '0' &&
+				(response[12] == ' ' || response[12] == '\r' || response[12] == '\n')) {
+				return;
+			}
+
+			throw new ProxyProtocolException (string.Format (CultureInfo.InvariantCulture, "Failed to connect to {0}:{1}: {2}", host, port, response));
 		}
 
 		/// <summary>
@@ -193,12 +147,12 @@ namespace MailKit.Net.Proxy
 		/// <remarks>
 		/// Connects to the target host and port through the proxy server.
 		/// </remarks>
-		/// <returns>The connected socket.</returns>
-		/// <param name="host">The host name of the proxy server.</param>
-		/// <param name="port">The proxy server port.</param>
+		/// <returns>The connected network stream.</returns>
+		/// <param name="host">The host name of the target server.</param>
+		/// <param name="port">The target server port.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="host"/> is <c>null</c>.
+		/// <paramref name="host"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <paramref name="port"/> is not between <c>0</c> and <c>65535</c>.
@@ -215,9 +169,40 @@ namespace MailKit.Net.Proxy
 		/// <exception cref="System.IO.IOException">
 		/// An I/O error occurred.
 		/// </exception>
-		public override Socket Connect (string host, int port, CancellationToken cancellationToken = default (CancellationToken))
+		public override Stream Connect (string host, int port, CancellationToken cancellationToken = default)
 		{
-			return ConnectAsync (host, port, false, cancellationToken).GetAwaiter ().GetResult ();
+			ValidateArguments (host, port);
+
+			cancellationToken.ThrowIfCancellationRequested ();
+
+			var command = GetConnectCommand (host, port, ProxyCredentials);
+			var socket = SocketUtils.Connect (ProxyHost, ProxyPort, LocalEndPoint, cancellationToken);
+
+			try {
+				Send (socket, command, 0, command.Length, cancellationToken);
+
+				using var builder = new ByteArrayBuilder (256);
+				var buffer = new byte[1];
+				var newline = false;
+
+				// read until we consume the end of the headers
+				do {
+					int nread = Receive (socket, buffer, 0, 1, cancellationToken);
+
+					if (nread < 1 || TryConsumeHeaders (builder, buffer[0], ref newline))
+						break;
+				} while (true);
+
+				var response = builder.ToString ();
+
+				ValidateHttpResponse (response, host, port);
+				return new NetworkStream (socket, true);
+			} catch {
+				if (socket.Connected)
+					socket.Disconnect (false);
+				socket.Dispose ();
+				throw;
+			}
 		}
 
 		/// <summary>
@@ -226,12 +211,12 @@ namespace MailKit.Net.Proxy
 		/// <remarks>
 		/// Asynchronously connects to the target host and port through the proxy server.
 		/// </remarks>
-		/// <returns>The connected socket.</returns>
-		/// <param name="host">The host name of the proxy server.</param>
-		/// <param name="port">The proxy server port.</param>
+		/// <returns>The connected network stream.</returns>
+		/// <param name="host">The host name of the target server.</param>
+		/// <param name="port">The target server port.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="host"/> is <c>null</c>.
+		/// <paramref name="host"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <paramref name="port"/> is not between <c>0</c> and <c>65535</c>.
@@ -248,9 +233,40 @@ namespace MailKit.Net.Proxy
 		/// <exception cref="System.IO.IOException">
 		/// An I/O error occurred.
 		/// </exception>
-		public override Task<Socket> ConnectAsync (string host, int port, CancellationToken cancellationToken = default (CancellationToken))
+		public override async Task<Stream> ConnectAsync (string host, int port, CancellationToken cancellationToken = default)
 		{
-			return ConnectAsync (host, port, true, cancellationToken);
+			ValidateArguments (host, port);
+
+			cancellationToken.ThrowIfCancellationRequested ();
+
+			var socket = await SocketUtils.ConnectAsync (ProxyHost, ProxyPort, LocalEndPoint, cancellationToken).ConfigureAwait (false);
+			var command = GetConnectCommand (host, port, ProxyCredentials);
+
+			try {
+				await SendAsync (socket, command, 0, command.Length, cancellationToken).ConfigureAwait (false);
+
+				using var builder = new ByteArrayBuilder (256);
+				var buffer = new byte[1];
+				var newline = false;
+
+				// read until we consume the end of the headers
+				do {
+					int nread = await ReceiveAsync (socket, buffer, 0, 1, cancellationToken).ConfigureAwait (false);
+
+					if (nread < 1 || TryConsumeHeaders (builder, buffer[0], ref newline))
+						break;
+				} while (true);
+
+				var response = builder.ToString ();
+
+				ValidateHttpResponse (response, host, port);
+				return new NetworkStream (socket, true);
+			} catch {
+				if (socket.Connected)
+					socket.Disconnect (false);
+				socket.Dispose ();
+				throw;
+			}
 		}
 	}
 }

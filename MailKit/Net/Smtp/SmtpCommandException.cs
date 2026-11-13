@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -25,52 +25,10 @@
 //
 
 using System;
-#if SERIALIZABLE
-using System.Security;
-using System.Runtime.Serialization;
-#endif
 
 using MimeKit;
 
 namespace MailKit.Net.Smtp {
-	/// <summary>
-	/// An enumeration of the possible error codes that may be reported by a <see cref="SmtpCommandException"/>.
-	/// </summary>
-	/// <remarks>
-	/// An enumeration of the possible error codes that may be reported by a <see cref="SmtpCommandException"/>.
-	/// </remarks>
-	/// <example>
-	/// <code language="c#" source="Examples\SmtpExamples.cs" region="ExceptionHandling"/>
-	/// </example>
-	public enum SmtpErrorCode {
-		/// <summary>
-		/// The message was not accepted for delivery. This may happen if
-		/// the server runs out of available disk space.
-		/// </summary>
-		MessageNotAccepted,
-
-		/// <summary>
-		/// The sender's mailbox address was not accepted. Check the
-		/// <see cref="SmtpCommandException.Mailbox"/> property for the
-		/// mailbox used as the sender's mailbox address.
-		/// </summary>
-		SenderNotAccepted,
-
-		/// <summary>
-		/// A recipient's mailbox address was not accepted. Check the
-		/// <see cref="SmtpCommandException.Mailbox"/> property for the
-		/// particular recipient mailbox that was not acccepted.
-		/// </summary>
-		RecipientNotAccepted,
-
-		/// <summary>
-		/// An unexpected status code was returned by the server.
-		/// For more details, the <see cref="Exception.Message"/>
-		/// property may provide some additional hints.
-		/// </summary>
-		UnexpectedStatusCode,
-	}
-
 	/// <summary>
 	/// An SMTP protocol exception.
 	/// </summary>
@@ -81,37 +39,71 @@ namespace MailKit.Net.Smtp {
 	/// <example>
 	/// <code language="c#" source="Examples\SmtpExamples.cs" region="ExceptionHandling"/>
 	/// </example>
-#if SERIALIZABLE
-	[Serializable]
-#endif
 	public class SmtpCommandException : CommandException
 	{
-#if SERIALIZABLE
 		/// <summary>
 		/// Initializes a new instance of the <see cref="MailKit.Net.Smtp.SmtpCommandException"/> class.
 		/// </summary>
 		/// <remarks>
-		/// Creates a new <see cref="SmtpCommandException"/> from the serialized data.
+		/// Creates a new <see cref="SmtpCommandException"/> using the response text as the error message.
 		/// </remarks>
-		/// <param name="info">The serialization info.</param>
-		/// <param name="context">The streaming context.</param>
+		/// <param name="code">The error code.</param>
+		/// <param name="command">The command that the server responded to.</param>
+		/// <param name="response">The server's response.</param>
+		/// <param name="mailbox">The rejected mailbox.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="info"/> is <c>null</c>.
+		/// <para><paramref name="response"/> is <see langword="null" />.</para>
+		/// <para>-or-</para>
+		/// <para><paramref name="mailbox"/> is <see langword="null" />.</para>
 		/// </exception>
-		[SecuritySafeCritical]
-		protected SmtpCommandException (SerializationInfo info, StreamingContext context) : base (info, context)
+		public SmtpCommandException (SmtpErrorCode code, SmtpCommand command, SmtpResponse response, MailboxAddress mailbox) : this (code, command, response)
 		{
-			MailboxAddress mailbox;
-			string value;
+			if (mailbox == null)
+				throw new ArgumentNullException (nameof (mailbox));
 
-			value = info.GetString ("Mailbox");
-			if (!string.IsNullOrEmpty (value) && MailboxAddress.TryParse (value, out mailbox))
-				Mailbox = mailbox;
-
-			ErrorCode = (SmtpErrorCode) info.GetValue ("ErrorCode", typeof (SmtpErrorCode));
-			StatusCode = (SmtpStatusCode) info.GetValue ("StatusCode", typeof (SmtpStatusCode));
+			Mailbox = mailbox;
 		}
-#endif
+
+		/// <summary>
+		/// Initializes a new instance of the <see cref="MailKit.Net.Smtp.SmtpCommandException"/> class.
+		/// </summary>
+		/// <remarks>
+		/// Creates a new <see cref="SmtpCommandException"/> using the response text as the error message.
+		/// </remarks>
+		/// <param name="code">The error code.</param>
+		/// <param name="command">The command that the server responded to.</param>
+		/// <param name="response">The server's response.</param>
+		/// <param name="innerException">The inner exception.</param>
+		/// <exception cref="System.ArgumentNullException">
+		/// <paramref name="response"/> is <see langword="null" />.
+		/// </exception>
+		public SmtpCommandException (SmtpErrorCode code, SmtpCommand command, SmtpResponse response, Exception innerException) : base (GetResponseText (response), innerException)
+		{
+			ResponseText = response.ResponseText;
+			StatusCode = response.StatusCode;
+			Command = command;
+			ErrorCode = code;
+		}
+
+		/// <summary>
+		/// Initializes a new instance of the <see cref="MailKit.Net.Smtp.SmtpCommandException"/> class.
+		/// </summary>
+		/// <remarks>
+		/// Creates a new <see cref="SmtpCommandException"/> using the response text as the error message.
+		/// </remarks>
+		/// <param name="code">The error code.</param>
+		/// <param name="command">The command that the server responded to.</param>
+		/// <param name="response">The server's response.</param>
+		/// <exception cref="System.ArgumentNullException">
+		/// <paramref name="response"/> is <see langword="null" />.
+		/// </exception>
+		public SmtpCommandException (SmtpErrorCode code, SmtpCommand command, SmtpResponse response) : base (GetResponseText (response))
+		{
+			ResponseText = response.ResponseText;
+			StatusCode = response.StatusCode;
+			Command = command;
+			ErrorCode = code;
+		}
 
 		/// <summary>
 		/// Initializes a new instance of the <see cref="MailKit.Net.Smtp.SmtpCommandException"/> class.
@@ -179,39 +171,54 @@ namespace MailKit.Net.Smtp {
 			ErrorCode = code;
 		}
 
-#if SERIALIZABLE
-		/// <summary>
-		/// When overridden in a derived class, sets the <see cref="System.Runtime.Serialization.SerializationInfo"/>
-		/// with information about the exception.
-		/// </summary>
-		/// <remarks>
-		/// Serializes the state of the <see cref="SmtpCommandException"/>.
-		/// </remarks>
-		/// <param name="info">The serialization info.</param>
-		/// <param name="context">The streaming context.</param>
-		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="info"/> is <c>null</c>.
-		/// </exception>
-		[SecurityCritical]
-		public override void GetObjectData (SerializationInfo info, StreamingContext context)
+		static string GetResponseText (SmtpResponse response)
 		{
-			base.GetObjectData (info, context);
+			if (response == null)
+				throw new ArgumentNullException (nameof (response));
 
-			if (Mailbox != null)
-				info.AddValue ("Mailbox", Mailbox.ToString ());
-			else
-				info.AddValue ("Mailbox", string.Empty);
-
-			info.AddValue ("ErrorCode", ErrorCode, typeof (SmtpErrorCode));
-			info.AddValue ("StatusCode", StatusCode, typeof (SmtpStatusCode));
+			return response.ResponseText;
 		}
-#endif
 
 		/// <summary>
-		/// Gets the error code which may provide additional information.
+		/// Get the command that resulted in the error.
 		/// </summary>
 		/// <remarks>
-		/// The error code can be used to programatically deal with the
+		/// <para>Gets the SMTP command that the server was responding to when the error occurred.</para>
+		/// <para>This value will be <see cref="SmtpCommand.Unknown"/> if the exception was created using
+		/// a constructor that does not take an <see cref="SmtpCommand"/> argument.</para>
+		/// </remarks>
+		/// <example>
+		/// <code language="c#" source="Examples\SmtpExamples.cs" region="ExceptionHandling"/>
+		/// </example>
+		/// <value>The command.</value>
+		public SmtpCommand Command {
+			get; internal set;
+		}
+
+		/// <summary>
+		/// Get the response text returned by the SMTP server.
+		/// </summary>
+		/// <remarks>
+		/// <para>Gets the raw response text (without the status code) returned by the SMTP server.</para>
+		/// <para>Unlike <see cref="Exception.Message"/>, this value is never decorated with additional
+		/// text and so it can be reliably used for logging or for parsing enhanced status codes.</para>
+		/// <para>This value will be <see langword="null" /> if the error was not the result of a server
+		/// response or if the exception was created using a constructor that does not take an
+		/// <see cref="SmtpResponse"/> argument.</para>
+		/// </remarks>
+		/// <example>
+		/// <code language="c#" source="Examples\SmtpExamples.cs" region="ExceptionHandling"/>
+		/// </example>
+		/// <value>The response text, if available; otherwise, <see langword="null" />.</value>
+		public string? ResponseText {
+			get; private set;
+		}
+
+		/// <summary>
+		/// Get the error code which may provide additional information.
+		/// </summary>
+		/// <remarks>
+		/// The error code can be used to programmatically deal with the
 		/// exception without necessarily needing to display the raw
 		/// exception message to the user.
 		/// </remarks>
@@ -224,7 +231,7 @@ namespace MailKit.Net.Smtp {
 		}
 
 		/// <summary>
-		/// Gets the mailbox that the error occurred on.
+		/// Get the mailbox that the error occurred on.
 		/// </summary>
 		/// <remarks>
 		/// This property will only be available when the <see cref="ErrorCode"/>
@@ -236,12 +243,12 @@ namespace MailKit.Net.Smtp {
 		/// <code language="c#" source="Examples\SmtpExamples.cs" region="ExceptionHandling"/>
 		/// </example>
 		/// <value>The mailbox.</value>
-		public MailboxAddress Mailbox {
+		public MailboxAddress? Mailbox {
 			get; private set;
 		}
 
 		/// <summary>
-		/// Gets the status code returned by the SMTP server.
+		/// Get the status code returned by the SMTP server.
 		/// </summary>
 		/// <remarks>
 		/// The raw SMTP status code that resulted in the <see cref="SmtpCommandException"/>
@@ -253,6 +260,35 @@ namespace MailKit.Net.Smtp {
 		/// <value>The status code.</value>
 		public SmtpStatusCode StatusCode {
 			get; private set;
+		}
+
+		/// <summary>
+		/// Get the type of command error.
+		/// </summary>
+		/// <remarks>
+		/// Gets the type of command error based on the <see cref="StatusCode"/>.
+		/// </remarks>
+		/// <value>The type of command error.</value>
+		public override CommandErrorType ErrorType {
+			get {
+				int code = (int) StatusCode;
+
+				switch (code) {
+				case 450: return CommandErrorType.InUse;
+				case 452: case 552: return CommandErrorType.QuotaExceeded;
+				case 500: case 501: case 503: return CommandErrorType.InvalidCommand;
+				case 502: case 504: case 555: return CommandErrorType.NotSupported;
+				case 530: case 534: case 535: case 538: return CommandErrorType.PermissionDenied;
+				}
+
+				if (code >= 400 && code < 500)
+					return CommandErrorType.TemporaryFailure;
+
+				if (code >= 500 && code < 600)
+					return CommandErrorType.Rejected;
+
+				return CommandErrorType.Unknown;
+			}
 		}
 	}
 }

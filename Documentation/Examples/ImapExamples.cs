@@ -1,9 +1,9 @@
 ﻿//
 // ImapExamples.cs
 //
-// Author: Jeffrey Stedfast <jeff@xamarin.com>
+// Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2016 Xamarin Inc. (www.xamarin.com)
+// Copyright (c) 2013-2023 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -72,7 +72,7 @@ namespace MailKit.Examples {
 
 				client.Authenticate ("username", "password");
 
-				if (client.Capabilities.HasFlag (ImapCapabilities.Id)) {
+				if (client.Capabilities.Contains (ImapCapability.Id)) {
 					var clientImplementation = new ImapImplementation { Name = "MailKit", Version = "1.0" };
 					var serverImplementation = client.Identify (clientImplementation);
 
@@ -81,7 +81,7 @@ namespace MailKit.Examples {
 						Console.WriteLine ("  {0} = {1}", property.Key, property.Value);
 				}
 
-				if (client.Capabilities.HasFlag (ImapCapabilities.Acl)) {
+				if (client.Capabilities.Contains (ImapCapability.Acl)) {
 					Console.WriteLine ("The IMAP server supports Access Control Lists.");
 
 					Console.WriteLine ("The IMAP server supports the following access rights: {0}", client.Rights);
@@ -95,22 +95,22 @@ namespace MailKit.Examples {
 					Console.WriteLine ("Your current rights for the Inbox folder are: {0}", myRights);
 				}
 
-				if (client.Capabilities.HasFlag (ImapCapabilities.Quota)) {
+				if (client.Capabilities.Contains (ImapCapability.Quota)) {
 					Console.WriteLine ("The IMAP server supports quotas.");
 
 					Console.WriteLine ("The current quota for the Inbox is:");
 					var quota = client.Inbox.GetQuota ();
 
-					if (quota.StorageLimit.HasValue && quota.StorageLimit.Value)
-						Console.WriteLine ("  Limited by storage space. Using {0} out of {1} bytes.", quota.CurrentStorageSize.Value, quota.StorageLimit.Value);
+					if (quota.StorageLimit.HasValue)
+						Console.WriteLine ("  Limited by storage space. Using {0} out of {1} kilobytes.", quota.CurrentStorageSize.Value, quota.StorageLimit.Value);
 
-					if (quota.MessageLimit.HasValue && quota.MessageLimit.Value)
-						Console.WriteLine ("  Limited by the number of messages. Using {0} out of {1} bytes.", quota.CurrentMessageCount.Value, quota.MessageLimit.Value);
+					if (quota.MessageLimit.HasValue)
+						Console.WriteLine ("  Limited by the number of messages. Using {0} out of {1} messages.", quota.CurrentMessageCount.Value, quota.MessageLimit.Value);
 
 					Console.WriteLine ("The quota root is: {0}", quota.QuotaRoot);
 				}
 
-				if (client.Capabilities.HasFlag (ImapCapabilities.Thread)) {
+				if (client.Capabilities.Contains (ImapCapability.Thread)) {
 					if (client.ThreadingAlgorithms.Contains (ThreadingAlgorithm.OrderedSubject))
 						Console.WriteLine ("The IMAP server supports threading by subject.");
 					if (client.ThreadingAlgorithms.Contains (ThreadingAlgorithm.References))
@@ -122,7 +122,42 @@ namespace MailKit.Examples {
 		}
 		#endregion
 
-		#region DownloadMessages
+		#region Namespaces
+		public static void ShowNamespaces ()
+		{
+			using (var client = new ImapClient ()) {
+				client.Connect ("imap.mail-server.com", 993, SecureSocketOptions.SslOnConnect);
+				client.Authenticate ("username", "password");
+
+				Console.WriteLine ("Personal namespaces:");
+				foreach (var ns in client.PersonalNamespaces)
+					Console.WriteLine ($"* \"{ns.Path}\" \"{ns.DirectorySeparator}\"");
+				Console.WriteLine ();
+				Console.WriteLine ("Shared namespaces:");
+				foreach (var ns in client.SharedNamespaces)
+					Console.WriteLine ($"* \"{ns.Path}\" \"{ns.DirectorySeparator}\"");
+				Console.WriteLine ();
+				Console.WriteLine ("Other namespaces:");
+				foreach (var ns in client.OtherNamespaces)
+					Console.WriteLine ($"* \"{ns.Path}\" \"{ns.DirectorySeparator}\"");
+				Console.WriteLine ();
+
+				// get the folder that represents the first personal namespace
+				var personal = client.GetFolder (client.PersonalNamespaces[0]);
+
+				// list the folders under the first personal namespace
+				var subfolders = personal.GetSubfolders ();
+
+				Console.WriteLine ("The list of folders that are direct children of the first personal namespace:");
+				foreach (var folder in subfolders)
+					Console.WriteLine ($"* {folder.Name}");
+
+				client.Disconnect (true);
+			}
+		}
+		#endregion
+
+		#region DownloadMessagesByUniqueId
 		public static void DownloadMessages ()
 		{
 			using (var client = new ImapClient ()) {
@@ -146,8 +181,8 @@ namespace MailKit.Examples {
 		}
 		#endregion
 
-		#region DownloadBodyParts
-		public static void DownloadBodyParts ()
+		#region DownloadMessageStreamsByUniqueId
+		public static void DownloadMessages ()
 		{
 			using (var client = new ImapClient ()) {
 				client.Connect ("imap.gmail.com", 993, SecureSocketOptions.SslOnConnect);
@@ -156,59 +191,79 @@ namespace MailKit.Examples {
 
 				client.Inbox.Open (FolderAccess.ReadOnly);
 
-				// search for messages where the Subject header contains either "MimeKit" or "MailKit"
-				var query = SearchQuery.SubjectContains ("MimeKit").Or (SearchQuery.SubjectContains ("MailKit"));
-				var uids = client.Inbox.Search (query);
+				var uids = client.Inbox.Search (SearchQuery.All);
 
-				// fetch summary information for the search results (we will want the UID and the BODYSTRUCTURE
-				// of each message so that we can extract the text body and the attachments)
-				var items = client.Inbox.Fetch (uids, MessageSummaryItems.UniqueId | MessageSummaryItems.BodyStructure);
-
-				foreach (var item in items) {
-					// determine a directory to save stuff in
-					var directory = Path.Combine (baseDirectory, item.UniqueId.ToString ());
-
-					// create the directory
-					Directory.CreateDirectory (directory);
-
-					// IMessageSummary.TextBody is a convenience property that finds the 'text/plain' body part for us
-					var bodyPart = item.TextBody;
-
-					// download the 'text/plain' body part
-					var body = (TextPart) client.Inbox.GetBodyPart (item.UniqueId, bodyPart);
-
-					// TextPart.Text is a convenience property that decodes the content and converts the result to
-					// a string for us
-					var text = body.Text;
-
-					File.WriteAllText (Path.Combine (directory, "body.txt"), text);
-
-					// now iterate over all of the attachments and save them to disk
-					foreach (var attachment in item.Attachments) {
-						// download the attachment just like we did with the body
-						var entity = client.Inbox.GetBodyPart (item.UniqueId, attachment);
-
-						// attachments can be either message/rfc822 parts or regular MIME parts
-						if (entity is MessagePart) {
-							var rfc822 = (MessagePart) entity;
-
-							var path = Path.Combine (directory, attachment.PartSpecifier + ".eml");
-
-							rfc822.Message.WriteTo (path);
-						} else {
-							var part = (MimePart) entity;
-
-							// note: it's possible for this to be null, but most will specify a filename
-							var fileName = part.FileName;
-
-							var path = Path.Combine (directory, fileName);
-
-							// decode and save the content to a file
-							using (var stream = File.Create (path))
-								part.Content.DecodeTo (stream);
-						}
+				foreach (var uid in uids) {
+					using (var stream = client.Inbox.GetStream (uid)) {
+						using (var output = File.Create ($"{uid}.eml"))
+							stream.CopyTo (output);
 					}
 				}
+
+				client.Disconnect (true);
+			}
+		}
+		#endregion
+
+		#region DownloadMessagesByIndex
+		public static void DownloadMessages ()
+		{
+			using (var client = new ImapClient ()) {
+				client.Connect ("imap.gmail.com", 993, SecureSocketOptions.SslOnConnect);
+
+				client.Authenticate ("username", "password");
+
+				client.Inbox.Open (FolderAccess.ReadOnly);
+
+				for (int index = 0; index < client.Inbox.Count; index++) {
+					var message = client.Inbox.GetMessage (index);
+
+					// write the message to a file
+					message.WriteTo (string.Format ("{0}.eml", index));
+				}
+
+				client.Disconnect (true);
+			}
+		}
+		#endregion
+
+		#region DownloadMessageStreamsByIndex
+		public static void DownloadMessages ()
+		{
+			using (var client = new ImapClient ()) {
+				client.Connect ("imap.gmail.com", 993, SecureSocketOptions.SslOnConnect);
+
+				client.Authenticate ("username", "password");
+
+				client.Inbox.Open (FolderAccess.ReadOnly);
+
+				for (int index = 0; index < client.Inbox.Count; index++) {
+					using (var stream = client.Inbox.GetStream (index)) {
+						using (var output = File.Create ($"{index}.eml"))
+							stream.CopyTo (output);
+					}
+				}
+
+				client.Disconnect (true);
+			}
+		}
+		#endregion
+
+		#region SslConnectionInformation
+		public static void PrintSslConnectionInfo (string host, int port)
+		{
+			using (var client = new ImapClient ()) {
+				client.Connect (host, port, SecureSocketOptions.Auto);
+
+				Console.WriteLine ($"Negotiated the following SSL options with {host}:");
+				Console.WriteLine ($"        Protocol Version: {client.SslProtocol}");
+				Console.WriteLine ($"            Cipher Suite: {client.SslCipherSuite}");
+
+				// Example Log:
+				//
+				// Negotiated the following SSL options with imap.gmail.com:
+				//         Protocol Version: Tls12
+				//             Cipher Suite: TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
 
 				client.Disconnect (true);
 			}

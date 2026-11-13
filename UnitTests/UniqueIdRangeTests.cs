@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -24,12 +24,8 @@
 // THE SOFTWARE.
 //
 
-using System;
-using System.Collections.Generic;
-
-using NUnit.Framework;
-
 using MailKit;
+using MailKit.Search;
 
 namespace UnitTests {
 	public class UniqueIdRangeTests
@@ -59,40 +55,41 @@ namespace UnitTests {
 			var copy = new UniqueId[20];
 			UniqueIdRange uids;
 
-			Assert.IsTrue (UniqueIdRange.TryParse (example, 20160117, out uids), "Failed to parse uids.");
-			Assert.AreEqual (20160117, uids.Validity, "Validity");
-			Assert.IsTrue (uids.IsReadOnly, "IsReadOnly");
-			Assert.AreEqual (1, uids.Start.Id, "Start");
-			Assert.AreEqual (20, uids.End.Id, "End");
-			Assert.AreEqual (1, uids.Min.Id, "Min");
-			Assert.AreEqual (20, uids.Max.Id, "Max");
-			Assert.AreEqual (example, uids.ToString (), "ToString");
-			Assert.AreEqual (20, uids.Count);
+			Assert.That (UniqueIdRange.TryParse (example, 20160117, out uids), Is.True, "Failed to parse uids.");
+			Assert.That (uids.SortOrder, Is.EqualTo (SortOrder.Ascending), "SortOrder");
+			Assert.That (uids.Validity, Is.EqualTo (20160117), "Validity");
+			Assert.That (uids.IsReadOnly, Is.True, "IsReadOnly");
+			Assert.That (uids.Start.Id, Is.EqualTo (1), "Start");
+			Assert.That (uids.End.Id, Is.EqualTo (20), "End");
+			Assert.That (uids.Min.Id, Is.EqualTo (1), "Min");
+			Assert.That (uids.Max.Id, Is.EqualTo (20), "Max");
+			Assert.That (uids.ToString (), Is.EqualTo (example), "ToString");
+			Assert.That (uids, Has.Count.EqualTo (20));
 
-			Assert.False (uids.Contains (new UniqueId (500)));
-			Assert.AreEqual (-1, uids.IndexOf (new UniqueId (500)));
+			Assert.That (uids, Does.Not.Contain (new UniqueId (500)));
+			Assert.That (uids.IndexOf (new UniqueId (500)), Is.EqualTo (-1));
 
 			for (int i = 0; i < uids.Count; i++) {
-				Assert.AreEqual (i, uids.IndexOf (uids[i]));
-				Assert.AreEqual (20160117, uids[i].Validity);
-				Assert.AreEqual (i + 1, uids[i].Id);
+				Assert.That (uids.IndexOf (uids[i]), Is.EqualTo (i));
+				Assert.That (uids[i].Validity, Is.EqualTo (20160117));
+				Assert.That (uids[i].Id, Is.EqualTo (i + 1));
 			}
 
 			uids.CopyTo (copy, 0);
 
 			for (int i = 0; i < copy.Length; i++) {
-				Assert.AreEqual (20160117, copy[i].Validity);
-				Assert.AreEqual (i + 1, copy[i].Id);
+				Assert.That (copy[i].Validity, Is.EqualTo (20160117));
+				Assert.That (copy[i].Id, Is.EqualTo (i + 1));
 			}
 
 			var list = new List<UniqueId> ();
 			foreach (var uid in uids) {
-				Assert.AreEqual (20160117, uid.Validity);
+				Assert.That (uid.Validity, Is.EqualTo (20160117));
 				list.Add (uid);
 			}
 
 			for (int i = 0; i < list.Count; i++)
-				Assert.AreEqual (i + 1, list[i].Id);
+				Assert.That (list[i].Id, Is.EqualTo (i + 1));
 		}
 
 		[Test]
@@ -102,40 +99,41 @@ namespace UnitTests {
 			var copy = new UniqueId[20];
 			UniqueIdRange uids;
 
-			Assert.IsTrue (UniqueIdRange.TryParse (example, 20160117, out uids), "Failed to parse uids.");
-			Assert.AreEqual (20160117, uids.Validity, "Validity");
-			Assert.IsTrue (uids.IsReadOnly, "IsReadOnly");
-			Assert.AreEqual (20, uids.Start.Id, "Start");
-			Assert.AreEqual (1, uids.End.Id, "End");
-			Assert.AreEqual (1, uids.Min.Id, "Min");
-			Assert.AreEqual (20, uids.Max.Id, "Max");
-			Assert.AreEqual (example, uids.ToString (), "ToString");
-			Assert.AreEqual (20, uids.Count);
+			Assert.That (UniqueIdRange.TryParse (example, 20160117, out uids), Is.True, "Failed to parse uids.");
+			Assert.That (uids.SortOrder, Is.EqualTo (SortOrder.Descending), "SortOrder");
+			Assert.That (uids.Validity, Is.EqualTo (20160117), "Validity");
+			Assert.That (uids.IsReadOnly, Is.True, "IsReadOnly");
+			Assert.That (uids.Start.Id, Is.EqualTo (20), "Start");
+			Assert.That (uids.End.Id, Is.EqualTo (1), "End");
+			Assert.That (uids.Min.Id, Is.EqualTo (1), "Min");
+			Assert.That (uids.Max.Id, Is.EqualTo (20), "Max");
+			Assert.That (uids.ToString (), Is.EqualTo (example), "ToString");
+			Assert.That (uids, Has.Count.EqualTo (20));
 
-			Assert.False (uids.Contains (new UniqueId (500)));
-			Assert.AreEqual (-1, uids.IndexOf (new UniqueId (500)));
+			Assert.That (uids, Does.Not.Contain (new UniqueId (500)));
+			Assert.That (uids.IndexOf (new UniqueId (500)), Is.EqualTo (-1));
 
 			for (int i = 0; i < uids.Count; i++) {
-				Assert.AreEqual (i, uids.IndexOf (uids[i]));
-				Assert.AreEqual (20160117, uids[i].Validity);
-				Assert.AreEqual (20 - i, uids[i].Id);
+				Assert.That (uids.IndexOf (uids[i]), Is.EqualTo (i));
+				Assert.That (uids[i].Validity, Is.EqualTo (20160117));
+				Assert.That (uids[i].Id, Is.EqualTo (20 - i));
 			}
 
 			uids.CopyTo (copy, 0);
 
 			for (int i = 0; i < copy.Length; i++) {
-				Assert.AreEqual (20160117, copy[i].Validity);
-				Assert.AreEqual (20 - i, copy[i].Id);
+				Assert.That (copy[i].Validity, Is.EqualTo (20160117));
+				Assert.That (copy[i].Id, Is.EqualTo (20 - i));
 			}
 
 			var list = new List<UniqueId> ();
 			foreach (var uid in uids) {
-				Assert.AreEqual (20160117, uid.Validity);
+				Assert.That (uid.Validity, Is.EqualTo (20160117));
 				list.Add (uid);
 			}
 
 			for (int i = 0; i < list.Count; i++)
-				Assert.AreEqual (20 - i, list[i].Id);
+				Assert.That (list[i].Id, Is.EqualTo (20 - i));
 		}
 
 		[Test]
@@ -154,16 +152,15 @@ namespace UnitTests {
 		[Test]
 		public void TestParser ()
 		{
-			UniqueIdRange range;
+			Assert.That (UniqueIdRange.TryParse ("xyz", out _), Is.False);
+			Assert.That (UniqueIdRange.TryParse ("1:xyz", out _), Is.False);
+			Assert.That (UniqueIdRange.TryParse ("1:*1", out _), Is.False);
+			Assert.That (UniqueIdRange.TryParse ("1:1x", out _), Is.False);
 
-			Assert.IsFalse (UniqueIdRange.TryParse ("xyz", out range));
-			Assert.IsFalse (UniqueIdRange.TryParse ("1:xyz", out range));
-			Assert.IsFalse (UniqueIdRange.TryParse ("1:*1", out range));
-			Assert.IsFalse (UniqueIdRange.TryParse ("1:1x", out range));
-
-			Assert.IsTrue (UniqueIdRange.TryParse ("1:*", out range));
-			Assert.AreEqual (UniqueId.MinValue, range.Min);
-			Assert.AreEqual (UniqueId.MaxValue, range.Max);
+			Assert.That (UniqueIdRange.TryParse ("1:*", out var range), Is.True);
+			Assert.That (range.SortOrder, Is.EqualTo (SortOrder.Ascending), "SortOrder");
+			Assert.That (range.Min, Is.EqualTo (UniqueId.MinValue));
+			Assert.That (range.Max, Is.EqualTo (UniqueId.MaxValue));
 		}
 	}
 }

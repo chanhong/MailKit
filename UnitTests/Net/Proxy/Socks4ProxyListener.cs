@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -24,16 +24,11 @@
 // THE SOFTWARE.
 //
 
-using System;
 using System.Net;
 using System.Text;
-using System.Threading;
 using System.Net.Sockets;
-using System.Threading.Tasks;
 
 using MailKit.Net;
-
-using NetworkStream = MailKit.Net.NetworkStream;
 
 namespace UnitTests.Net.Proxy {
 	class Socks4ProxyListener : ProxyListener
@@ -137,20 +132,16 @@ namespace UnitTests.Net.Proxy {
 			return response;
 		}
 
-		protected override async Task<Socket> ClientCommandReceived (NetworkStream client, byte[] buffer, int length, CancellationToken cancellationToken)
+		protected override async Task<Socket> ClientCommandReceived (Stream client, byte[] buffer, int length, CancellationToken cancellationToken)
 		{
 			Socket server = null;
-			Socks4Command cmd;
 			byte[] response;
-			IPAddress ip;
-			string user;
-			int port;
 
-			if (TryParse (buffer, length, out cmd, out port, out ip, out user)) {
+			if (TryParse (buffer, length, out var cmd, out var port, out var ip, out var user)) {
 				var host = ip.ToString ();
 
 				try {
-					server = await SocketUtils.ConnectAsync (host, port, null, true, cancellationToken).ConfigureAwait (false);
+					server = await SocketUtils.ConnectAsync (host, port, null, cancellationToken).ConfigureAwait (false);
 					var remote = (IPEndPoint) server.RemoteEndPoint;
 
 					response = GetResponse (Socks4Reply.RequestGranted, remote);

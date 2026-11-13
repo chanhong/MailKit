@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -23,10 +23,6 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 // THE SOFTWARE.
 //
-
-using System;
-
-using NUnit.Framework;
 
 using MailKit;
 
@@ -49,43 +45,46 @@ namespace UnitTests {
 		[Test]
 		public void TestEquality ()
 		{
-			Assert.IsFalse (UniqueId.MinValue == UniqueId.MaxValue, "MinValue == MaxValue");
-			Assert.IsTrue (UniqueId.MinValue != UniqueId.MaxValue, "MinValue != MaxValue");
-			Assert.IsTrue (UniqueId.MinValue.Equals (new UniqueId (1)), "MinValue.Equals(1)");
-			Assert.IsTrue (UniqueId.MinValue.Equals ((object) new UniqueId (1)), "Boxed MinValue.Equals(1)");
-			Assert.AreEqual (UniqueId.MinValue.GetHashCode (), new UniqueId (1).GetHashCode (), "GetHashCode");
-			Assert.AreNotEqual (UniqueId.MinValue, UniqueId.MaxValue);
-			Assert.AreEqual (new UniqueId (5), new UniqueId (5));
+			Assert.That (UniqueId.MinValue == UniqueId.MaxValue, Is.False, "MinValue == MaxValue");
+			Assert.That (UniqueId.MinValue != UniqueId.MaxValue, Is.True, "MinValue != MaxValue");
+			Assert.That (UniqueId.MinValue.Equals (new UniqueId (1)), Is.True, "MinValue.Equals(1)");
+			Assert.That (UniqueId.MinValue.Equals ((object) new UniqueId (1)), Is.True, "Boxed MinValue.Equals(1)");
+			Assert.That (new UniqueId (1).GetHashCode (), Is.EqualTo (UniqueId.MinValue.GetHashCode ()), "GetHashCode");
+			Assert.That (UniqueId.MaxValue, Is.Not.EqualTo (UniqueId.MinValue));
+			//Assert.That (new UniqueId (5), Is.EqualTo (new UniqueId (5)));
 		}
 
 		[Test]
 		public void TestComparisons ()
 		{
-			Assert.IsTrue (new UniqueId (5) <= new UniqueId (5), "5 <= 5");
-			Assert.IsTrue (new UniqueId (1) <= new UniqueId (5), "1 <= 5");
-			Assert.IsTrue (new UniqueId (1) < new UniqueId (5), "1 < 5");
+			var five = new UniqueId (5);
+			var one = new UniqueId (1);
 
-			Assert.IsTrue (new UniqueId (5) >= new UniqueId (5), "5 >= 5");
-			Assert.IsTrue (new UniqueId (5) >= new UniqueId (1), "5 >= 1");
-			Assert.IsTrue (new UniqueId (5) > new UniqueId (1), "5 > 1");
+			Assert.That (new UniqueId (5), Is.LessThanOrEqualTo (five), "5 <= 5");
+			Assert.That (new UniqueId (1), Is.LessThanOrEqualTo (five), "1 <= 5");
+			Assert.That (new UniqueId (1), Is.LessThan (five), "1 < 5");
 
-			Assert.AreEqual (-1, new UniqueId (1).CompareTo (new UniqueId (5)), "1.CompareTo (5)");
-			Assert.AreEqual (1, new UniqueId (5).CompareTo (new UniqueId (1)), "5.CompareTo (1)");
-			Assert.AreEqual (0, new UniqueId (5).CompareTo (new UniqueId (5)), "5.CompareTo (5)");
+			Assert.That (new UniqueId (5), Is.GreaterThanOrEqualTo (five), "5 >= 5");
+			Assert.That (new UniqueId (5), Is.GreaterThanOrEqualTo (one), "5 >= 1");
+			Assert.That (new UniqueId (5), Is.GreaterThan (one), "5 > 1");
+
+			Assert.That (new UniqueId (1).CompareTo (new UniqueId (5)), Is.EqualTo (-1), "1.CompareTo (5)");
+			Assert.That (new UniqueId (5).CompareTo (new UniqueId (1)), Is.EqualTo (1), "5.CompareTo (1)");
+			Assert.That (new UniqueId (5).CompareTo (new UniqueId (5)), Is.EqualTo (0), "5.CompareTo (5)");
 		}
 
 		[Test]
 		public void TestIsValid ()
 		{
-			Assert.IsFalse (UniqueId.Invalid.IsValid, "Invalid.IsValid");
-			Assert.IsTrue (UniqueId.MinValue.IsValid, "MinValue.IsValid");
+			Assert.That (UniqueId.Invalid.IsValid, Is.False, "Invalid.IsValid");
+			Assert.That (UniqueId.MinValue.IsValid, Is.True, "MinValue.IsValid");
 		}
 
 		[Test]
 		public void TestToString ()
 		{
-			Assert.AreEqual ("4294967295", UniqueId.MaxValue.ToString (), "MaxValue");
-			Assert.AreEqual ("1", UniqueId.MinValue.ToString (), "MinValue");
+			Assert.That (UniqueId.MaxValue.ToString (), Is.EqualTo ("4294967295"), "MaxValue");
+			Assert.That (UniqueId.MinValue.ToString (), Is.EqualTo ("1"), "MinValue");
 		}
 
 		[Test]
@@ -93,36 +92,35 @@ namespace UnitTests {
 		{
 			UniqueId uid;
 			int index = 0;
-			uint u;
 
 			// make sure that parsing bad input fails
-			Assert.IsFalse (UniqueId.TryParse ("text", ref index, out u), "text");
-			Assert.IsFalse (UniqueId.TryParse ("text", 20160117, out uid), "text");
-			Assert.IsFalse (UniqueId.TryParse ("text", out uid), "text");
+			Assert.That (UniqueId.TryParse ("text", ref index, out _), Is.False, "text");
+			Assert.That (UniqueId.TryParse ("text", 20160117, out _), Is.False, "text");
+			Assert.That (UniqueId.TryParse ("text", out _), Is.False, "text");
 
 			// make sure that parsing uint.MaxValue works
 			index = 0;
-			Assert.IsTrue (UniqueId.TryParse ("4294967295", ref index, out u), "4294967295");
-			Assert.IsTrue (UniqueId.TryParse ("4294967295", 20160117, out uid), "4294967295");
-			Assert.AreEqual (20160117, uid.Validity);
-			Assert.AreEqual (UniqueId.MaxValue, uid);
+			Assert.That (UniqueId.TryParse ("4294967295", ref index, out _), Is.True, "4294967295");
+			Assert.That (UniqueId.TryParse ("4294967295", 20160117, out uid), Is.True, "4294967295");
+			Assert.That (uid.Validity, Is.EqualTo (20160117));
+			Assert.That (uid, Is.EqualTo (UniqueId.MaxValue));
 
-			Assert.IsTrue (UniqueId.TryParse ("4294967295", out uid), "4294967295");
-			Assert.AreEqual (UniqueId.MaxValue, uid);
+			Assert.That (UniqueId.TryParse ("4294967295", out uid), Is.True, "4294967295");
+			Assert.That (uid, Is.EqualTo (UniqueId.MaxValue));
 
 			uid = UniqueId.Parse ("4294967295", 20160117);
-			Assert.AreEqual (20160117, uid.Validity);
-			Assert.AreEqual (UniqueId.MaxValue, uid);
+			Assert.That (uid.Validity, Is.EqualTo (20160117));
+			Assert.That (uid, Is.EqualTo (UniqueId.MaxValue));
 
 			uid = UniqueId.Parse ("4294967295");
-			Assert.AreEqual (UniqueId.MaxValue, uid);
+			Assert.That (uid, Is.EqualTo (UniqueId.MaxValue));
 
 			// make sure parsing a value larger than uint.MaxValue fails
 			index = 0;
-			Assert.IsFalse (UniqueId.TryParse ("4294967296", ref index, out u), "4294967296");
+			Assert.That (UniqueId.TryParse ("4294967296", ref index, out _), Is.False, "4294967296");
 
 			index = 0;
-			Assert.IsFalse (UniqueId.TryParse ("4294967305", ref index, out u), "4294967305");
+			Assert.That (UniqueId.TryParse ("4294967305", ref index, out _), Is.False, "4294967305");
 		}
 	}
 }

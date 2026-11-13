@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -44,8 +44,8 @@ namespace MailKit {
 	{
 		struct Range
 		{
-			public uint Start;
-			public uint End;
+			public readonly uint Start;
+			public readonly uint End;
 
 			public Range (uint start, uint end)
 			{
@@ -212,7 +212,7 @@ namespace MailKit {
 		/// <remarks>
 		/// Gets whether or not the set is read-only.
 		/// </remarks>
-		/// <value><c>true</c> if the set is read only; otherwise, <c>false</c>.</value>
+		/// <value><see langword="true" /> if the set is read only; otherwise, <see langword="false" />.</value>
 		public bool IsReadOnly {
 			get { return false; }
 		}
@@ -483,7 +483,7 @@ namespace MailKit {
 		/// <remarks>
 		/// Determines whether or not the set contains the specified unique id.
 		/// </remarks>
-		/// <returns><value>true</value> if the specified unique identifier is in the set; otherwise <value>false</value>.</returns>
+		/// <returns><see langword="true" /> if the specified unique identifier is in the set; otherwise, <see langword="false" />.</returns>
 		/// <param name="uid">The unique id.</param>
 		public bool Contains (UniqueId uid)
 		{
@@ -500,7 +500,7 @@ namespace MailKit {
 		/// <param name="array">The array to copy the unique ids to.</param>
 		/// <param name="arrayIndex">The index into the array.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="array"/> is <c>null</c>.
+		/// <paramref name="array"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <paramref name="arrayIndex"/> is out of set.
@@ -561,7 +561,7 @@ namespace MailKit {
 		/// <remarks>
 		/// Removes the unique identifier from the set.
 		/// </remarks>
-		/// <returns><value>true</value> if the unique identifier was removed; otherwise <value>false</value>.</returns>
+		/// <returns><see langword="true" /> if the unique identifier was removed; otherwise, <see langword="false" />.</returns>
 		/// <param name="uid">The unique identifier to remove.</param>
 		public bool Remove (UniqueId uid)
 		{
@@ -733,10 +733,7 @@ namespace MailKit {
 		/// <returns>A <see cref="System.String"/> that represents the current <see cref="UniqueIdSet"/>.</returns>
 		public override string ToString ()
 		{
-			foreach (var subset in EnumerateSerializedSubsets (int.MaxValue))
-				return subset;
-
-			return string.Empty;
+			return string.Join (",", ranges);
 		}
 
 		/// <summary>
@@ -748,66 +745,47 @@ namespace MailKit {
 		/// <returns>The string representation of the collection of unique identifiers.</returns>
 		/// <param name="uids">The unique identifiers.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="uids"/> is <c>null</c>.
+		/// <paramref name="uids"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ArgumentException">
 		/// One or more of the unique identifiers is invalid (has a value of <c>0</c>).
 		/// </exception>
 		public static string ToString (IList<UniqueId> uids)
 		{
-			foreach (var subset in EnumerateSerializedSubsets (uids, int.MaxValue))
-				return subset;
+			if (uids == null)
+				throw new ArgumentNullException (nameof (uids));
 
-			return string.Empty;
+			if (uids.Count == 0)
+				return string.Empty;
+
+			if (uids is UniqueIdRange range)
+				return range.ToString ();
+
+			if (uids is UniqueIdSet set)
+				return set.ToString ();
+
+			return string.Join (",", EnumerateRanges (uids));
 		}
 
-		/// <summary>
-		/// Format the set of unique identifiers as multiple strings that fit within the maximum defined character length.
-		/// </summary>
-		/// <remarks>
-		/// Formats the set of unique identifiers as multiple strings that fit within the maximum defined character length.
-		/// </remarks>
-		/// <returns>A list of strings representing the collection of unique identifiers.</returns>
-		/// <param name="maxLength">The maximum length of any returned string of UIDs.</param>
-		/// <exception cref="System.ArgumentOutOfRangeException">
-		/// <paramref name="maxLength"/> is negative.
-		/// </exception>
-		IEnumerable<string> EnumerateSerializedSubsets (int maxLength)
+		void AppendRange (Range range)
 		{
-			if (maxLength < 0)
-				throw new ArgumentOutOfRangeException (nameof (maxLength));
-
-			var builder = new StringBuilder ();
-
-			for (int i = 0; i < ranges.Count; i++) {
-				var range = ranges[i].ToString ();
-
-				if (builder.Length > 0) {
-					if (builder.Length + 1 + range.Length > maxLength) {
-						yield return builder.ToString ();
-						builder.Clear ();
-					} else {
-						builder.Append (',');
-					}
-				}
-
-				builder.Append (range);
-			}
-
-			yield return builder.ToString ();
+			ranges.Add (range);
+			count += range.Count;
 		}
 
 		/// <summary>
 		/// Format a generic list of unique identifiers as multiple strings that fit within the maximum defined character length.
 		/// </summary>
 		/// <remarks>
-		/// Formats a generic list of unique identifiers as multiple strings that fit within the maximum defined character length.
+		/// <para>Formats a generic list of unique identifiers as multiple strings that fit within the maximum defined character length.</para>
+		/// <para>Each serialized string is paired with a <see cref="UniqueIdSet"/> containing exactly the unique identifiers
+		/// represented by that string, in the same order.</para>
 		/// </remarks>
-		/// <returns>A list of strings representing the collection of unique identifiers.</returns>
+		/// <returns>A sequence of serialized subsets of the unique identifiers along with the corresponding subsets.</returns>
 		/// <param name="uids">The unique identifiers.</param>
 		/// <param name="maxLength">The maximum length of any returned string of UIDs.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="uids"/> is <c>null</c>.
+		/// <paramref name="uids"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ArgumentException">
 		/// One or more of the unique identifiers is invalid (has a value of <c>0</c>).
@@ -815,7 +793,7 @@ namespace MailKit {
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <paramref name="maxLength"/> is negative.
 		/// </exception>
-		internal static IEnumerable<string> EnumerateSerializedSubsets (IList<UniqueId> uids, int maxLength)
+		internal static IEnumerable<(string Serialized, UniqueIdSet Subset)> EnumerateSerializedSubsets (IList<UniqueId> uids, int maxLength)
 		{
 			if (uids == null)
 				throw new ArgumentNullException (nameof (uids));
@@ -824,24 +802,66 @@ namespace MailKit {
 				throw new ArgumentOutOfRangeException (nameof (maxLength));
 
 			if (uids.Count == 0) {
-				yield return string.Empty;
+				yield return (string.Empty, new UniqueIdSet ());
 				yield break;
 			}
 
-			var range = uids as UniqueIdRange;
-			if (range != null) {
-				yield return range.ToString ();
+			if (uids is UniqueIdRange range) {
+				var start = range.Start.Id;
+				var end = range.End.Id;
+				var subset = new UniqueIdSet (range.Validity, start <= end ? SortOrder.Ascending : SortOrder.Descending);
+
+				subset.AppendRange (new Range (start, end));
+
+				yield return (range.ToString (), subset);
 				yield break;
 			}
 
-			var set = uids as UniqueIdSet;
-			if (set != null) {
-				foreach (var subset in set.EnumerateSerializedSubsets (maxLength))
-					yield return subset;
-				yield break;
+			IEnumerable<Range> ranges;
+			SortOrder order;
+			uint validity;
+
+			if (uids is UniqueIdSet set) {
+				validity = set.Validity;
+				order = set.SortOrder;
+				ranges = set.ranges;
+			} else {
+				validity = uids[0].Validity;
+				order = SortOrder.None;
+				ranges = EnumerateRanges (uids);
 			}
 
+			foreach (var subset in EnumerateSerializedSubsets (ranges, validity, order, maxLength))
+				yield return subset;
+		}
+
+		static IEnumerable<(string Serialized, UniqueIdSet Subset)> EnumerateSerializedSubsets (IEnumerable<Range> ranges, uint validity, SortOrder order, int maxLength)
+		{
+			var subset = new UniqueIdSet (validity, order);
 			var builder = new StringBuilder ();
+
+			foreach (var range in ranges) {
+				var next = range.ToString ();
+
+				if (builder.Length > 0) {
+					if (builder.Length + 1 + next.Length > maxLength) {
+						yield return (builder.ToString (), subset);
+						subset = new UniqueIdSet (validity, order);
+						builder.Clear ();
+					} else {
+						builder.Append (',');
+					}
+				}
+
+				builder.Append (next);
+				subset.AppendRange (range);
+			}
+
+			yield return (builder.ToString (), subset);
+		}
+
+		static IEnumerable<Range> EnumerateRanges (IList<UniqueId> uids)
+		{
 			int index = 0;
 
 			while (index < uids.Count) {
@@ -870,26 +890,10 @@ namespace MailKit {
 					}
 				}
 
-				string next;
-				if (start != end)
-					next = string.Format (CultureInfo.InvariantCulture, "{0}:{1}", start, end);
-				else
-					next = start.ToString ();
+				yield return new Range (start, end);
 
-				if (builder.Length > 0) {
-					if (builder.Length + 1 + next.Length > maxLength) {
-						yield return builder.ToString ();
-						builder.Clear ();
-					} else {
-						builder.Append (',');
-					}
-				}
-
-				builder.Append (next);
 				index = i;
 			}
-
-			yield return builder.ToString ();
 		}
 
 		/// <summary>
@@ -898,35 +902,45 @@ namespace MailKit {
 		/// <remarks>
 		/// Attempts to parse the specified token as a set of unique identifiers.
 		/// </remarks>
-		/// <returns><c>true</c> if the set of unique identifiers were successfully parsed; otherwise, <c>false</c>.</returns>
+		/// <returns><see langword="true" /> if the set of unique identifiers were successfully parsed; otherwise, <see langword="false" />.</returns>
 		/// <param name="token">The token containing the set of unique identifiers.</param>
 		/// <param name="validity">The UIDVALIDITY value.</param>
 		/// <param name="uids">The set of unique identifiers.</param>
+		/// <param name="minValue">The minimum unique identifier value parsed.</param>
+		/// <param name="maxValue">The maximum unique identifier value parsed.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="token"/> is <c>null</c>.
+		/// <paramref name="token"/> is <see langword="null" />.
 		/// </exception>
-		public static bool TryParse (string token, uint validity, out UniqueIdSet uids)
+		internal static bool TryParse (string token, uint validity, out UniqueIdSet uids, out UniqueId? minValue, out UniqueId? maxValue)
 		{
 			if (token == null)
 				throw new ArgumentNullException (nameof (token));
 
 			uids = new UniqueIdSet (validity);
+			minValue = maxValue = null;
 
 			var order = SortOrder.None;
+			uint min = uint.MaxValue;
+			uint max = 0;
 			bool sorted = true;
-			uint start, end;
 			uint prev = 0;
 			int index = 0;
 
 			do {
-				if (!UniqueId.TryParse (token, ref index, out start))
+				if (!UniqueId.TryParse (token, ref index, out uint start))
 					return false;
+
+				min = Math.Min (min, start);
+				max = Math.Max (max, start);
 
 				if (index < token.Length && token[index] == ':') {
 					index++;
 
-					if (!UniqueId.TryParse (token, ref index, out end))
+					if (!UniqueId.TryParse (token, ref index, out uint end))
 						return false;
+
+					min = Math.Min (min, end);
+					max = Math.Max (max, end);
 
 					var range = new Range (start, end);
 					uids.count += range.Count;
@@ -934,7 +948,7 @@ namespace MailKit {
 
 					if (sorted) {
 						switch (order) {
-						default: sorted = true; order = start <= end ? SortOrder.Ascending : SortOrder.Descending; break;
+						default: order = start <= end ? SortOrder.Ascending : SortOrder.Descending; break;
 						case SortOrder.Descending: sorted = start >= end && start <= prev; break;
 						case SortOrder.Ascending: sorted = start <= end && start >= prev; break;
 						}
@@ -947,7 +961,7 @@ namespace MailKit {
 
 					if (sorted && uids.ranges.Count > 1) {
 						switch (order) {
-						default: sorted = true; order = start >= prev ? SortOrder.Ascending : SortOrder.Descending; break;
+						default: order = start >= prev ? SortOrder.Ascending : SortOrder.Descending; break;
 						case SortOrder.Descending: sorted = start <= prev; break;
 						case SortOrder.Ascending: sorted = start >= prev; break;
 						}
@@ -965,6 +979,11 @@ namespace MailKit {
 
 			uids.SortOrder = sorted ? order : SortOrder.None;
 
+			if (min <= max) {
+				minValue = new UniqueId (validity, min);
+				maxValue = new UniqueId (validity, max);
+			}
+
 			return true;
 		}
 
@@ -974,15 +993,33 @@ namespace MailKit {
 		/// <remarks>
 		/// Attempts to parse the specified token as a set of unique identifiers.
 		/// </remarks>
-		/// <returns><c>true</c> if the set of unique identifiers were successfully parsed; otherwise, <c>false</c>.</returns>
+		/// <returns><see langword="true" /> if the set of unique identifiers were successfully parsed; otherwise, <see langword="false" />.</returns>
+		/// <param name="token">The token containing the set of unique identifiers.</param>
+		/// <param name="validity">The UIDVALIDITY value.</param>
+		/// <param name="uids">The set of unique identifiers.</param>
+		/// <exception cref="System.ArgumentNullException">
+		/// <paramref name="token"/> is <see langword="null" />.
+		/// </exception>
+		public static bool TryParse (string token, uint validity, out UniqueIdSet uids)
+		{
+			return TryParse (token, validity, out uids, out _, out _);
+		}
+
+		/// <summary>
+		/// Attempt to parse the specified token as a set of unique identifiers.
+		/// </summary>
+		/// <remarks>
+		/// Attempts to parse the specified token as a set of unique identifiers.
+		/// </remarks>
+		/// <returns><see langword="true" /> if the set of unique identifiers were successfully parsed; otherwise, <see langword="false" />.</returns>
 		/// <param name="token">The token containing the set of unique identifiers.</param>
 		/// <param name="uids">The set of unique identifiers.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="token"/> is <c>null</c>.
+		/// <paramref name="token"/> is <see langword="null" />.
 		/// </exception>
 		public static bool TryParse (string token, out UniqueIdSet uids)
 		{
-			return TryParse (token, 0, out uids);
+			return TryParse (token, 0, out uids, out _, out _);
 		}
 	}
 }

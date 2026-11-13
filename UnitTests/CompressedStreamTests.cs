@@ -1,9 +1,9 @@
-﻿//
+//
 // CompressedStreamTests.cs
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -24,12 +24,7 @@
 // THE SOFTWARE.
 //
 
-using System;
-using System.IO;
 using System.Text;
-using System.Threading.Tasks;
-
-using NUnit.Framework;
 
 using MailKit;
 
@@ -48,7 +43,7 @@ namespace UnitTests {
 				Assert.Throws<ArgumentNullException> (() => stream.Read (null, 0, buffer.Length));
 				Assert.Throws<ArgumentOutOfRangeException> (() => stream.Read (buffer, -1, buffer.Length));
 				Assert.Throws<ArgumentOutOfRangeException> (() => stream.Read (buffer, 0, -1));
-				Assert.AreEqual (0, stream.Read (buffer, 0, 0));
+				Assert.That (stream.Read (buffer, 0, 0), Is.EqualTo (0));
 
 				Assert.ThrowsAsync<ArgumentNullException> (async () => await stream.ReadAsync (null, 0, buffer.Length));
 				Assert.ThrowsAsync<ArgumentOutOfRangeException> (async () => await stream.ReadAsync (buffer, -1, buffer.Length));
@@ -69,10 +64,10 @@ namespace UnitTests {
 		public void TestCanReadWriteSeek ()
 		{
 			using (var stream = new CompressedStream (new DummyNetworkStream ())) {
-				Assert.IsTrue (stream.CanRead);
-				Assert.IsTrue (stream.CanWrite);
-				Assert.IsFalse (stream.CanSeek);
-				Assert.IsTrue (stream.CanTimeout);
+				Assert.That (stream.CanRead, Is.True);
+				Assert.That (stream.CanWrite, Is.True);
+				Assert.That (stream.CanSeek, Is.False);
+				Assert.That (stream.CanTimeout, Is.True);
 			}
 		}
 
@@ -81,10 +76,10 @@ namespace UnitTests {
 		{
 			using (var stream = new CompressedStream (new DummyNetworkStream ())) {
 				stream.ReadTimeout = 5;
-				Assert.AreEqual (5, stream.ReadTimeout, "ReadTimeout");
+				Assert.That (stream.ReadTimeout, Is.EqualTo (5), "ReadTimeout");
 
 				stream.WriteTimeout = 7;
-				Assert.AreEqual (7, stream.WriteTimeout, "WriteTimeout");
+				Assert.That (stream.WriteTimeout, Is.EqualTo (7), "WriteTimeout");
 			}
 		}
 
@@ -94,22 +89,22 @@ namespace UnitTests {
 			using (var stream = new CompressedStream (new DummyNetworkStream ())) {
 				string command = "A00000001 APPEND INBOX (\\Seen \\Draft) {4096+}\r\nFrom: Sample Sender <sender@sample.com>\r\nTo: Sample Recipient <recipient@sample.com>\r\nSubject: This is a test message...\r\nDate: Mon, 22 Oct 2018 18:22:56 EDT\r\nMessage-Id: <msgid@localhost.com>\r\n\r\nTesting... 1. 2. 3.\r\nTesting.\r\nOver and out.\r\n";
 				var output = Encoding.ASCII.GetBytes (command);
-				const int compressedLength = 221;
 				var buffer = new byte[1024];
 				int n;
 
 				stream.Write (output, 0, output.Length);
 				stream.Flush ();
 
-				Assert.AreEqual (compressedLength, stream.InnerStream.Position, "Compressed output length");
+				// Note: The exact compressed length depends on the zlib implementation (e.g. zlib vs zlib-ng).
+				Assert.That (stream.InnerStream.Position, Is.GreaterThan (0).And.LessThan (output.Length), "Compressed output length");
 
 				stream.InnerStream.Position = 0;
 
 				n = stream.Read (buffer, 0, buffer.Length);
-				Assert.AreEqual (output.Length, n, "Decompressed input length");
+				Assert.That (n, Is.EqualTo (output.Length), "Decompressed input length");
 
 				var text = Encoding.ASCII.GetString (buffer, 0, n);
-				Assert.AreEqual (command, text);
+				Assert.That (text, Is.EqualTo (command));
 			}
 		}
 
@@ -119,22 +114,22 @@ namespace UnitTests {
 			using (var stream = new CompressedStream (new DummyNetworkStream ())) {
 				string command = "A00000001 APPEND INBOX (\\Seen \\Draft) {4096+}\r\nFrom: Sample Sender <sender@sample.com>\r\nTo: Sample Recipient <recipient@sample.com>\r\nSubject: This is a test message...\r\nDate: Mon, 22 Oct 2018 18:22:56 EDT\r\nMessage-Id: <msgid@localhost.com>\r\n\r\nTesting... 1. 2. 3.\r\nTesting.\r\nOver and out.\r\n";
 				var output = Encoding.ASCII.GetBytes (command);
-				const int compressedLength = 221;
 				var buffer = new byte[1024];
 				int n;
 
 				await stream.WriteAsync (output, 0, output.Length);
 				await stream.FlushAsync ();
 
-				Assert.AreEqual (compressedLength, stream.InnerStream.Position, "Compressed output length");
+				// Note: The exact compressed length depends on the zlib implementation (e.g. zlib vs zlib-ng).
+				Assert.That (stream.InnerStream.Position, Is.GreaterThan (0).And.LessThan (output.Length), "Compressed output length");
 
 				stream.InnerStream.Position = 0;
 
 				n = await stream.ReadAsync (buffer, 0, buffer.Length);
-				Assert.AreEqual (output.Length, n, "Decompressed input length");
+				Assert.That (n, Is.EqualTo (output.Length), "Decompressed input length");
 
 				var text = Encoding.ASCII.GetString (buffer, 0, n);
-				Assert.AreEqual (command, text);
+				Assert.That (text, Is.EqualTo (command));
 			}
 		}
 

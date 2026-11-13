@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -37,7 +37,8 @@ namespace MailKit {
 	/// </remarks>
 	public class AnnotationAttribute : IEquatable<AnnotationAttribute>
 	{
-		static readonly char[] Wildcards = { '*', '%' };
+		const string PrivateSuffix = ".priv";
+		const string SharedSuffix = ".shared";
 
 		/// <summary>
 		/// The annotation value.
@@ -101,36 +102,83 @@ namespace MailKit {
 		/// <summary>
 		/// Initializes a new instance of the <see cref="MailKit.AnnotationAttribute"/> class.
 		/// </summary>
+		/// <remarks>
+		/// Creates a new <see cref="AnnotationAttribute"/>.
+		/// </remarks>
 		/// <param name="specifier">The annotation attribute specifier.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="specifier"/> is <c>null</c>.
+		/// <paramref name="specifier"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ArgumentException">
-		/// <paramref name="specifier"/> contains illegal characters.
+		/// <para><paramref name="specifier"/> is empty.</para>
+		/// <para>-or-</para>
+		/// <para><paramref name="specifier"/> contains illegal characters such as <c>'*'</c>, <c>'%'</c>,
+		/// non-ASCII characters or the NUL character.</para>
+		/// <para>-or-</para>
+		/// <para><paramref name="specifier"/> contains an empty component (e.g. it begins or ends with
+		/// <c>'.'</c> or contains <c>".."</c>).</para>
+		/// <para>-or-</para>
+		/// <para><paramref name="specifier"/> contains a <c>"priv"</c> or <c>"shared"</c> component
+		/// other than as the scope suffix.</para>
 		/// </exception>
-		public AnnotationAttribute (string specifier)
+		public AnnotationAttribute (string specifier) : this (specifier, true)
+		{
+		}
+
+		internal AnnotationAttribute (string specifier, bool validate)
 		{
 			if (specifier == null)
 				throw new ArgumentNullException (nameof (specifier));
 
-			if (specifier.Length == 0)
-				throw new ArgumentException ("Annotation attribute specifiers cannot be empty.", nameof (specifier));
-
-			// TODO: improve validation
-			if (specifier.IndexOfAny (Wildcards) != -1)
-				throw new ArgumentException ("Annotation attribute specifiers cannot contain '*' or '%'.", nameof (specifier));
-
 			Specifier = specifier;
 
-			if (specifier.EndsWith (".shared", StringComparison.Ordinal)) {
-				Name = specifier.Substring (0, specifier.Length - ".shared".Length);
+			if (specifier.EndsWith (SharedSuffix, StringComparison.Ordinal)) {
+				Name = specifier.Substring (0, specifier.Length - SharedSuffix.Length);
 				Scope = AnnotationScope.Shared;
-			} else if (specifier.EndsWith (".priv", StringComparison.Ordinal)) {
-				Name = specifier.Substring (0, specifier.Length - ".priv".Length);
+			} else if (specifier.EndsWith (PrivateSuffix, StringComparison.Ordinal)) {
+				Name = specifier.Substring (0, specifier.Length - PrivateSuffix.Length);
 				Scope = AnnotationScope.Private;
 			} else {
 				Scope = AnnotationScope.Both;
 				Name = specifier;
+			}
+
+			if (validate)
+				ValidateName (Name, nameof (specifier));
+		}
+
+		// Validates an attribute name (minus the scope suffix) according to rfc5257, section 3.2.
+		static void ValidateName (string name, string paramName)
+		{
+			if (name.Length == 0)
+				throw new ArgumentException ("Annotation attribute specifiers cannot be empty.", paramName);
+
+			int startIndex = 0;
+
+			for (int i = 0; i <= name.Length; i++) {
+				if (i < name.Length) {
+					char c = name[i];
+
+					if (c == '*' || c == '%')
+						throw new ArgumentException ("Annotation attribute specifiers cannot contain '*' or '%'.", paramName);
+
+					if (c == '\0' || c > 127)
+						throw new ArgumentException ($"Invalid character in annotation attribute specifier: '{c}'.", paramName);
+
+					if (c != '.')
+						continue;
+				}
+
+				int length = i - startIndex;
+
+				if (length == 0)
+					throw new ArgumentException ("Annotation attribute specifiers cannot contain empty components.", paramName);
+
+				if ((length == 4 && string.CompareOrdinal (name, startIndex, "priv", 0, 4) == 0) ||
+					(length == 6 && string.CompareOrdinal (name, startIndex, "shared", 0, 6) == 0))
+					throw new ArgumentException ("Annotation attribute names cannot contain 'priv' or 'shared' components.", paramName);
+
+				startIndex = i + 1;
 			}
 		}
 
@@ -140,6 +188,7 @@ namespace MailKit {
 		/// <remarks>
 		/// Gets the name of the annotation attribute.
 		/// </remarks>
+		/// <value>The name of the annotation attribute.</value>
 		public string Name {
 			get; private set;
 		}
@@ -150,6 +199,7 @@ namespace MailKit {
 		/// <remarks>
 		/// Gets the scope of the annotation attribute.
 		/// </remarks>
+		/// <value>The scope of the annotation attribute.</value>
 		public AnnotationScope Scope {
 			get; private set;
 		}
@@ -160,6 +210,7 @@ namespace MailKit {
 		/// <remarks>
 		/// Gets the annotation attribute specifier.
 		/// </remarks>
+		/// <value>The annotation attribute specifier.</value>
 		public string Specifier {
 			get; private set;
 		}
@@ -173,9 +224,9 @@ namespace MailKit {
 		/// Determines whether the specified <see cref="MailKit.AnnotationAttribute"/> is equal to the current <see cref="MailKit.AnnotationAttribute"/>.
 		/// </remarks>
 		/// <param name="other">The <see cref="MailKit.AnnotationAttribute"/> to compare with the current <see cref="MailKit.AnnotationAttribute"/>.</param>
-		/// <returns><c>true</c> if the specified <see cref="MailKit.AnnotationAttribute"/> is equal to the current
-		/// <see cref="MailKit.AnnotationAttribute"/>; otherwise, <c>false</c>.</returns>
-		public bool Equals (AnnotationAttribute other)
+		/// <returns><see langword="true" /> if the specified <see cref="MailKit.AnnotationAttribute"/> is equal to the current
+		/// <see cref="MailKit.AnnotationAttribute"/>; otherwise, <see langword="false" />.</returns>
+		public bool Equals (AnnotationAttribute? other)
 		{
 			return other?.Specifier == Specifier;
 		}
@@ -188,7 +239,7 @@ namespace MailKit {
 		/// <remarks>
 		/// Determines whether two annotation attributes are equal.
 		/// </remarks>
-		/// <returns><c>true</c> if <paramref name="attr1"/> and <paramref name="attr2"/> are equal; otherwise, <c>false</c>.</returns>
+		/// <returns><see langword="true" /> if <paramref name="attr1"/> and <paramref name="attr2"/> are equal; otherwise, <see langword="false" />.</returns>
 		/// <param name="attr1">The first annotation attribute to compare.</param>
 		/// <param name="attr2">The second annotation attribute to compare.</param>
 		public static bool operator == (AnnotationAttribute attr1, AnnotationAttribute attr2)
@@ -202,7 +253,7 @@ namespace MailKit {
 		/// <remarks>
 		/// Determines whether two annotation attributes are not equal.
 		/// </remarks>
-		/// <returns><c>true</c> if <paramref name="attr1"/> and <paramref name="attr2"/> are not equal; otherwise, <c>false</c>.</returns>
+		/// <returns><see langword="true" /> if <paramref name="attr1"/> and <paramref name="attr2"/> are not equal; otherwise, <see langword="false" />.</returns>
 		/// <param name="attr1">The first annotation attribute to compare.</param>
 		/// <param name="attr2">The second annotation attribute to compare.</param>
 		public static bool operator != (AnnotationAttribute attr1, AnnotationAttribute attr2)
@@ -217,11 +268,11 @@ namespace MailKit {
 		/// Determines whether the specified <see cref="System.Object"/> is equal to the current <see cref="MailKit.AnnotationAttribute"/>.
 		/// </remarks>
 		/// <param name="obj">The <see cref="System.Object"/> to compare with the current <see cref="MailKit.AnnotationAttribute"/>.</param>
-		/// <returns><c>true</c> if the specified <see cref="System.Object"/> is equal to the current
-		/// <see cref="MailKit.AnnotationAttribute"/>; otherwise, <c>false</c>.</returns>
-		public override bool Equals (object obj)
+		/// <returns><see langword="true" /> if the specified <see cref="System.Object"/> is equal to the current
+		/// <see cref="MailKit.AnnotationAttribute"/>; otherwise, <see langword="false" />.</returns>
+		public override bool Equals (object? obj)
 		{
-			return obj is AnnotationAttribute && ((AnnotationAttribute) obj).Specifier == Specifier;
+			return obj != null && obj.GetType () == typeof (AnnotationAttribute) && ((AnnotationAttribute) obj).Specifier == Specifier;
 		}
 
 		/// <summary>

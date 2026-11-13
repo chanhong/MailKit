@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -24,11 +24,8 @@
 // THE SOFTWARE.
 //
 
-using System;
 using System.Net;
-using System.Threading;
 using System.Net.Sockets;
-using System.Threading.Tasks;
 using System.Collections;
 
 using NetworkStream = MailKit.Net.NetworkStream;
@@ -101,11 +98,18 @@ namespace UnitTests.Net.Proxy {
 			}
 		}
 
-		protected abstract Task<Socket> ClientCommandReceived (NetworkStream client, byte[] buffer, int length, CancellationToken cancellationToken);
+		protected abstract Task<Socket> ClientCommandReceived (Stream client, byte[] buffer, int length, CancellationToken cancellationToken);
+
+		protected virtual Task<Stream> GetClientStreamAsync (Socket socket, CancellationToken cancellationToken)
+		{
+			Stream stream = new NetworkStream (socket, true);
+
+			return Task.FromResult (stream);
+		}
 
 		async Task AcceptProxyConnection (Socket socket, CancellationToken cancellationToken)
 		{
-			using (var client = new NetworkStream (socket, true)) {
+			using (var client = await GetClientStreamAsync (socket, cancellationToken).ConfigureAwait (false)) {
 				var buffer = new byte[4096];
 				Socket remote = null;
 				int nread;
@@ -126,8 +130,8 @@ namespace UnitTests.Net.Proxy {
 				try {
 					using (var server = new NetworkStream (remote, true)) {
 						do {
-							while (client.DataAvailable || server.DataAvailable) {
-								if (client.DataAvailable) {
+							while (socket.Available > 0 || server.DataAvailable) {
+								if (socket.Available > 0) {
 									if ((nread = await client.ReadAsync (buffer, 0, buffer.Length, cancellationToken).ConfigureAwait (false)) > 0)
 										await server.WriteAsync (buffer, 0, nread, cancellationToken).ConfigureAwait (false);
 								}
@@ -138,13 +142,15 @@ namespace UnitTests.Net.Proxy {
 								}
 							}
 
-							var checkRead = new ArrayList ();
-							checkRead.Add (socket);
-							checkRead.Add (remote);
+							var checkRead = new ArrayList {
+								socket,
+								remote
+							};
 
-							var checkError = new ArrayList ();
-							checkError.Add (socket);
-							checkError.Add (remote);
+							var checkError = new ArrayList {
+								socket,
+								remote
+							};
 
 							Socket.Select (checkRead, null, checkError, 250000);
 
@@ -163,7 +169,7 @@ namespace UnitTests.Net.Proxy {
 		{
 			while (!cancellationToken.IsCancellationRequested) {
 				try {
-					using (var socket = await listener.AcceptSocketAsync ().ConfigureAwait (false))
+					using (var socket = await listener.AcceptSocketAsync (cancellationToken).ConfigureAwait (false))
 						await AcceptProxyConnection (socket, cancellationToken).ConfigureAwait (false);
 				} catch (ObjectDisposedException) {
 				}

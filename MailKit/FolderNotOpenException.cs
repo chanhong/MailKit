@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -25,9 +25,6 @@
 //
 
 using System;
-#if SERIALIZABLE
-using System.Runtime.Serialization;
-#endif
 
 namespace MailKit {
 	/// <summary>
@@ -40,37 +37,8 @@ namespace MailKit {
 	/// method will throw a <see cref="FolderNotOpenException"/> if the folder is not
 	/// current open.
 	/// </remarks>
-#if SERIALIZABLE
-	[Serializable]
-#endif
 	public class FolderNotOpenException : InvalidOperationException
 	{
-#if SERIALIZABLE
-		/// <summary>
-		/// Initializes a new instance of the <see cref="MailKit.FolderNotOpenException"/> class.
-		/// </summary>
-		/// <remarks>
-		/// Deserializes a <see cref="FolderNotOpenException"/>.
-		/// </remarks>
-		/// <param name="info">The serialization info.</param>
-		/// <param name="context">The streaming context.</param>
-		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="info"/> is <c>null</c>.
-		/// </exception>
-		protected FolderNotOpenException (SerializationInfo info, StreamingContext context) : base (info, context)
-		{
-			var value = info.GetString ("FolderAccess");
-			FolderAccess access;
-
-			if (!Enum.TryParse (value, out access))
-				FolderAccess = FolderAccess.ReadOnly;
-			else
-				FolderAccess = access;
-
-			FolderName = info.GetString ("FolderName");
-		}
-#endif
-
 		/// <summary>
 		/// Initializes a new instance of the <see cref="MailKit.FolderNotOpenException"/> class.
 		/// </summary>
@@ -82,7 +50,7 @@ namespace MailKit {
 		/// <param name="message">The error message.</param>
 		/// <param name="innerException">The inner exception.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="folderName"/> is <c>null</c>.
+		/// <paramref name="folderName"/> is <see langword="null" />.
 		/// </exception>
 		public FolderNotOpenException (string folderName, FolderAccess access, string message, Exception innerException) : base (message, innerException)
 		{
@@ -103,7 +71,7 @@ namespace MailKit {
 		/// <param name="access">The minimum folder access required by the operation.</param>
 		/// <param name="message">The error message.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="folderName"/> is <c>null</c>.
+		/// <paramref name="folderName"/> is <see langword="null" />.
 		/// </exception>
 		public FolderNotOpenException (string folderName, FolderAccess access, string message) : base (message)
 		{
@@ -123,7 +91,7 @@ namespace MailKit {
 		/// <param name="folderName">The folder name.</param>
 		/// <param name="access">The minimum folder access required by the operation.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="folderName"/> is <c>null</c>.
+		/// <paramref name="folderName"/> is <see langword="null" />.
 		/// </exception>
 		public FolderNotOpenException (string folderName, FolderAccess access) : this (folderName, access, GetDefaultMessage (access))
 		{
@@ -159,26 +127,5 @@ namespace MailKit {
 			return "The folder is not currently open.";
 		}
 
-#if SERIALIZABLE
-		/// <summary>
-		/// When overridden in a derived class, sets the <see cref="System.Runtime.Serialization.SerializationInfo"/>
-		/// with information about the exception.
-		/// </summary>
-		/// <remarks>
-		/// Serializes the state of the <see cref="FolderNotOpenException"/>.
-		/// </remarks>
-		/// <param name="info">The serialization info.</param>
-		/// <param name="context">The streaming context.</param>
-		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="info"/> is <c>null</c>.
-		/// </exception>
-		public override void GetObjectData (SerializationInfo info, StreamingContext context)
-		{
-			base.GetObjectData (info, context);
-
-			info.AddValue ("FolderAccess", FolderAccess.ToString ());
-			info.AddValue ("FolderName", FolderName);
-		}
-#endif
 	}
 }

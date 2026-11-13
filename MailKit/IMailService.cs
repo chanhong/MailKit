@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -33,6 +33,7 @@ using System.Net.Sockets;
 using System.Net.Security;
 using System.Threading.Tasks;
 using System.Collections.Generic;
+using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
 using SslProtocols = System.Security.Authentication.SslProtocols;
 
@@ -49,10 +50,10 @@ namespace MailKit {
 	/// <see cref="MailKit.Net.Pop3.Pop3Client"/> and
 	/// <see cref="MailKit.Net.Smtp.SmtpClient"/>.
 	/// </remarks>
-	public interface IMailService : IDisposable
+	public interface IMailService : IDisposable, IAsyncDisposable
 	{
 		/// <summary>
-		/// Gets an object that can be used to synchronize access to the folder.
+		/// Get an object that can be used to synchronize access to the folder.
 		/// </summary>
 		/// <remarks>
 		/// Gets an object that can be used to synchronize access to the folder.
@@ -61,32 +62,44 @@ namespace MailKit {
 		object SyncRoot { get; }
 
 		/// <summary>
-		/// Gets or sets the SSL and TLS protocol versions that the client is allowed to use.
+		/// Get or set the set of enabled SSL and/or TLS protocol versions that the client is allowed to use.
 		/// </summary>
 		/// <remarks>
-		/// <para>Gets or sets the SSL and TLS protocol versions that the client is allowed to use.</para>
-		/// <para>By default, MailKit initializes this value to support only TLS v1.0 and greater and
-		/// does not support any version of SSL due to those protocols no longer being considered
-		/// secure.</para>
-		/// <para>This property should be set before calling any of the
-		/// <a href="Overload_MailKit_IMailService_Connect.htm">Connect</a> methods.</para>
+		/// <para>Gets or sets the enabled SSL and/or TLS protocol versions that the client is allowed to use.</para>
+		/// <para>By default, MailKit initializes this value to <see cref="SslProtocols.None"/> which allows the
+		/// operating system to choose the best protocol to use and to block protocols that are not secure.</para>
+		/// <note type="note">This property should be set before calling any of the
+		/// <a href="Overload_MailKit_IMailService_Connect.htm">Connect</a> or
+		/// <a href="Overload_MailKit_IMailService_ConnectAsync.htm">ConnectAsync</a> methods.</note>
 		/// </remarks>
 		/// <value>The SSL and TLS protocol versions that are supported.</value>
 		SslProtocols SslProtocols { get; set; }
 
-#if NET50
+#if NET5_0_OR_GREATER
 		/// <summary>
-		/// Gets or sets the cipher suites allowed to be used when negotiating an SSL or TLS connection.
+		/// Get or set the cipher suites allowed to be used when negotiating an SSL or TLS connection.
 		/// </summary>
 		/// <remarks>
-		/// Specifies the cipher suites allowed to be used when negotiating an SSL or TLS connection.
-		/// When set to <c>null</c>, the operating system default is used. Use extreme caution when
-		/// changing this setting.
+		/// <para>Specifies the cipher suites allowed to be used when negotiating an SSL or TLS connection.
+		/// When set to <see langword="null" />, the operating system default is used. Use extreme caution when
+		/// changing this setting.</para>
+		/// <note type="note">This property should be set before calling any of the
+		/// <a href="Overload_MailKit_IMailService_Connect.htm">Connect</a> or
+		/// <a href="Overload_MailKit_IMailService_ConnectAsync.htm">ConnectAsync</a> methods.</note>
+		/// <note type="note">This property is only available on .NET 8.0 and later.</note>
 		/// </remarks>
 		/// <value>The cipher algorithms allowed for use when negotiating SSL or TLS encryption.</value>
-		public CipherSuitesPolicy SslCipherSuitesPolicy {
-			get; set;
-		}
+		CipherSuitesPolicy? SslCipherSuitesPolicy { get; set; }
+
+		/// <summary>
+		/// Get the negotiated SSL or TLS cipher suite.
+		/// </summary>
+		/// <remarks>
+		/// Gets the negotiated SSL or TLS cipher suite once an SSL or TLS connection has been made.
+		/// <note type="note">This property is only available on .NET 8.0 and later.</note>
+		/// </remarks>
+		/// <value>The negotiated SSL or TLS cipher suite.</value>
+		TlsCipherSuite? SslCipherSuite { get; }
 #endif
 
 		/// <summary>
@@ -95,43 +108,45 @@ namespace MailKit {
 		/// <remarks>
 		/// <para>Some servers may require the client SSL certificates in order
 		/// to allow the user to connect.</para>
-		/// <para>This property should be set before calling any of the
-		/// <a href="Overload_MailKit_IMailService_Connect.htm">Connect</a> methods.</para>
+		/// <note type="note">This property should be set before calling any of the
+		/// <a href="Overload_MailKit_IMailService_Connect.htm">Connect</a> or
+		/// <a href="Overload_MailKit_IMailService_ConnectAsync.htm">ConnectAsync</a> methods.</note>
 		/// </remarks>
 		/// <value>The client SSL certificates.</value>
-		X509CertificateCollection ClientCertificates { get; set; }
+		X509CertificateCollection? ClientCertificates { get; set; }
 
 		/// <summary>
 		/// Get or set whether connecting via SSL/TLS should check certificate revocation.
 		/// </summary>
 		/// <remarks>
 		/// <para>Gets or sets whether connecting via SSL/TLS should check certificate revocation.</para>
-		/// <para>Normally, the value of this property should be set to <c>true</c> (the default) for security
-		/// reasons, but there are times when it may be necessary to set it to <c>false</c>.</para>
+		/// <para>Normally, the value of this property should be set to <see langword="true" /> (the default) for security
+		/// reasons, but there are times when it may be necessary to set it to <see langword="false" />.</para>
 		/// <para>For example, most Certificate Authorities are probably pretty good at keeping their CRL and/or
 		/// OCSP servers up 24/7, but occasionally they do go down or are otherwise unreachable due to other
 		/// network problems between the client and the Certificate Authority. When this happens, it becomes
 		/// impossible to check the revocation status of one or more of the certificates in the chain
 		/// resulting in an <see cref="SslHandshakeException"/> being thrown in the
 		/// <a href="Overload_MailKit_IMailService_Connect.htm">Connect</a> method. If this becomes a problem,
-		/// it may become desirable to set <see cref="CheckCertificateRevocation"/> to <c>false</c>.</para>
+		/// it may become desirable to set <see cref="CheckCertificateRevocation"/> to <see langword="false" />.</para>
 		/// </remarks>
-		/// <value><c>true</c> if certificate revocation should be checked; otherwise, <c>false</c>.</value>
+		/// <value><see langword="true" /> if certificate revocation should be checked; otherwise, <see langword="false" />.</value>
 		bool CheckCertificateRevocation { get; set; }
 
 		/// <summary>
-		/// Get or sets a callback function to validate the server certificate.
+		/// Get or set a callback function to validate the server certificate.
 		/// </summary>
 		/// <remarks>
 		/// <para>Gets or sets a callback function to validate the server certificate.</para>
-		/// <para>This property should be set before calling any of the
-		/// <a href="Overload_MailKit_IMailService_Connect.htm">Connect</a> methods.</para>
+		/// <note type="note">This property should be set before calling any of the
+		/// <a href="Overload_MailKit_IMailService_Connect.htm">Connect</a> or
+		/// <a href="Overload_MailKit_IMailService_ConnectAsync.htm">ConnectAsync</a> methods.</note>
 		/// </remarks>
 		/// <example>
 		/// <code language="c#" source="Examples\SslCertificateValidation.cs"/>
 		/// </example>
 		/// <value>The server certificate validation callback function.</value>
-		RemoteCertificateValidationCallback ServerCertificateValidationCallback { get; set; }
+		RemoteCertificateValidationCallback? ServerCertificateValidationCallback { get; set; }
 
 		/// <summary>
 		/// Get or set the local IP end point to use when connecting to a remote host.
@@ -139,8 +154,8 @@ namespace MailKit {
 		/// <remarks>
 		/// Gets or sets the local IP end point to use when connecting to a remote host.
 		/// </remarks>
-		/// <value>The local IP end point or <c>null</c> to use the default end point.</value>
-		IPEndPoint LocalEndPoint { get; set; }
+		/// <value>The local IP end point or <see langword="null" /> to use the default end point.</value>
+		IPEndPoint? LocalEndPoint { get; set; }
 
 		/// <summary>
 		/// Get or set the proxy client to use when connecting to a remote host.
@@ -149,14 +164,17 @@ namespace MailKit {
 		/// Gets or sets the proxy client to use when connecting to a remote host via any of the
 		/// <a href="Overload_MailKit_IMailService_Connect.htm">Connect</a> methods.
 		/// </remarks>
+		/// <example>
+		/// <code language="c#" source="Examples\ProxyExamples.cs" region="ProxyClient" />
+		/// </example>
 		/// <value>The proxy client.</value>
-		IProxyClient ProxyClient { get; set; }
+		IProxyClient? ProxyClient { get; set; }
 
 		/// <summary>
 		/// Get the authentication mechanisms supported by the message service.
 		/// </summary>
 		/// <remarks>
-		/// The authentication mechanisms are queried durring the
+		/// The authentication mechanisms are queried during the
 		/// <a href="Overload_MailKit_IMailService_Connect.htm">Connect</a> method.
 		/// </remarks>
 		/// <value>The supported authentication mechanisms.</value>
@@ -171,23 +189,23 @@ namespace MailKit {
 		/// <a href="Overload_MailKit_MailService_Authenticate.htm">Authenticate</a> methods
 		/// or any of the Async alternatives.</para>
 		/// </remarks>
-		/// <value><c>true</c> if the client is authenticated; otherwise, <c>false</c>.</value>
+		/// <value><see langword="true" /> if the client is authenticated; otherwise, <see langword="false" />.</value>
 		bool IsAuthenticated { get; }
 
 		/// <summary>
 		/// Get whether or not the service is currently connected.
 		/// </summary>
 		/// <remarks>
-		/// <para>The <see cref="IsConnected"/> state is set to <c>true</c> immediately after
+		/// <para>The <see cref="IsConnected"/> state is set to <see langword="true" /> immediately after
 		/// one of the <a href="Overload_MailKit_IMailService_Connect.htm">Connect</a>
-		/// methods succeeds and is not set back to <c>false</c> until either the client
+		/// methods succeeds and is not set back to <see langword="false" /> until either the client
 		/// is disconnected via <see cref="Disconnect(bool,CancellationToken)"/> or until a
 		/// <see cref="ProtocolException"/> is thrown while attempting to read or write to
 		/// the underlying network socket.</para>
 		/// <para>When an <see cref="ProtocolException"/> is caught, the connection state of the
 		/// <see cref="IMailService"/> should be checked before continuing.</para>
 		/// </remarks>
-		/// <value><c>true</c> if the service connected; otherwise, <c>false</c>.</value>
+		/// <value><see langword="true" /> if the service connected; otherwise, <see langword="false" />.</value>
 		bool IsConnected { get; }
 
 		/// <summary>
@@ -196,7 +214,7 @@ namespace MailKit {
 		/// <remarks>
 		/// Gets whether or not the connection is secure (typically via SSL or TLS).
 		/// </remarks>
-		/// <value><c>true</c> if the connection is secure; otherwise, <c>false</c>.</value>
+		/// <value><see langword="true" /> if the connection is secure; otherwise, <see langword="false" />.</value>
 		bool IsSecure { get; }
 
 		/// <summary>
@@ -205,7 +223,7 @@ namespace MailKit {
 		/// <remarks>
 		/// Gets whether or not the connection is encrypted (typically via SSL or TLS).
 		/// </remarks>
-		/// <value><c>true</c> if the connection is encrypted; otherwise, <c>false</c>.</value>
+		/// <value><see langword="true" /> if the connection is encrypted; otherwise, <see langword="false" />.</value>
 		bool IsEncrypted { get; }
 
 		/// <summary>
@@ -214,8 +232,89 @@ namespace MailKit {
 		/// <remarks>
 		/// Gets whether or not the connection is signed (typically via SSL or TLS).
 		/// </remarks>
-		/// <value><c>true</c> if the connection is signed; otherwise, <c>false</c>.</value>
+		/// <value><see langword="true" /> if the connection is signed; otherwise, <see langword="false" />.</value>
 		bool IsSigned { get; }
+
+		/// <summary>
+		/// Get the negotiated SSL or TLS protocol version.
+		/// </summary>
+		/// <remarks>
+		/// <para>Gets the negotiated SSL or TLS protocol version once an SSL or TLS connection has been made.</para>
+		/// </remarks>
+		/// <value>The negotiated SSL or TLS protocol version.</value>
+		SslProtocols SslProtocol { get; }
+
+#if !NET10_0_OR_GREATER
+		/// <summary>
+		/// Get the negotiated SSL or TLS cipher algorithm.
+		/// </summary>
+		/// <remarks>
+		/// Gets the negotiated SSL or TLS cipher algorithm once an SSL or TLS connection has been made.
+		/// <note type="note">This property is not available on .NET 10.0 and later.</note>
+		/// </remarks>
+		/// <value>The negotiated SSL or TLS cipher algorithm.</value>
+		CipherAlgorithmType? SslCipherAlgorithm { get; }
+#endif
+
+#if !NET10_0_OR_GREATER
+		/// <summary>
+		/// Get the negotiated SSL or TLS cipher algorithm strength.
+		/// </summary>
+		/// <remarks>
+		/// Gets the negotiated SSL or TLS cipher algorithm strength once an SSL or TLS connection has been made.
+		/// <note type="note">This property is not available on .NET 10.0 and later.</note>
+		/// </remarks>
+		/// <value>The negotiated SSL or TLS cipher algorithm strength.</value>
+		int? SslCipherStrength { get; }
+#endif
+
+#if !NET10_0_OR_GREATER
+		/// <summary>
+		/// Get the negotiated SSL or TLS hash algorithm.
+		/// </summary>
+		/// <remarks>
+		/// Gets the negotiated SSL or TLS hash algorithm once an SSL or TLS connection has been made.
+		/// <note type="note">This property is not available on .NET 10.0 and later.</note>
+		/// </remarks>
+		/// <value>The negotiated SSL or TLS hash algorithm.</value>
+		HashAlgorithmType? SslHashAlgorithm { get; }
+#endif
+
+#if !NET10_0_OR_GREATER
+		/// <summary>
+		/// Get the negotiated SSL or TLS hash algorithm strength.
+		/// </summary>
+		/// <remarks>
+		/// Gets the negotiated SSL or TLS hash algorithm strength once an SSL or TLS connection has been made.
+		/// <note type="note">This property is not available on .NET 10.0 and later.</note>
+		/// </remarks>
+		/// <value>The negotiated SSL or TLS hash algorithm strength.</value>
+		int? SslHashStrength { get; }
+#endif
+
+#if !NET10_0_OR_GREATER
+		/// <summary>
+		/// Get the negotiated SSL or TLS key exchange algorithm.
+		/// </summary>
+		/// <remarks>
+		/// Gets the negotiated SSL or TLS key exchange algorithm once an SSL or TLS connection has been made.
+		/// <note type="note">This property is not available on .NET 10.0 and later.</note>
+		/// </remarks>
+		/// <value>The negotiated SSL or TLS key exchange algorithm.</value>
+		ExchangeAlgorithmType? SslKeyExchangeAlgorithm { get; }
+#endif
+
+#if !NET10_0_OR_GREATER
+		/// <summary>
+		/// Get the negotiated SSL or TLS key exchange algorithm strength.
+		/// </summary>
+		/// <remarks>
+		/// Gets the negotiated SSL or TLS key exchange algorithm strength once an SSL or TLS connection has been made.
+		/// <note type="note">This property is not available on .NET 10.0 and later.</note>
+		/// </remarks>
+		/// <value>The negotiated SSL or TLS key exchange algorithm strength.</value>
+		int? SslKeyExchangeStrength { get; }
+#endif
 
 		/// <summary>
 		/// Get or set the timeout for network streaming operations, in milliseconds.
@@ -237,10 +336,10 @@ namespace MailKit {
 		/// </remarks>
 		/// <param name="host">The host name to connect to.</param>
 		/// <param name="port">The port to connect to. If the specified port is <c>0</c>, then the default port will be used.</param>
-		/// <param name="useSsl"><value>true</value> if the client should make an SSL-wrapped connection to the server; otherwise, <value>false</value>.</param>
+		/// <param name="useSsl"><see langword="true" /> if the client should make an SSL-wrapped connection to the server; otherwise, <see langword="false" />.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="host"/> is <c>null</c>.
+		/// <paramref name="host"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <paramref name="port"/> is not between <c>0</c> and <c>65535</c>.
@@ -263,7 +362,7 @@ namespace MailKit {
 		/// <exception cref="ProtocolException">
 		/// The server responded with an unexpected token.
 		/// </exception>
-		void Connect (string host, int port, bool useSsl, CancellationToken cancellationToken = default (CancellationToken));
+		void Connect (string host, int port, bool useSsl, CancellationToken cancellationToken = default);
 
 		/// <summary>
 		/// Asynchronously establish a connection to the specified mail server.
@@ -276,10 +375,10 @@ namespace MailKit {
 		/// <returns>An asynchronous task context.</returns>
 		/// <param name="host">The host name to connect to.</param>
 		/// <param name="port">The port to connect to. If the specified port is <c>0</c>, then the default port will be used.</param>
-		/// <param name="useSsl"><value>true</value> if the client should make an SSL-wrapped connection to the server; otherwise, <value>false</value>.</param>
+		/// <param name="useSsl"><see langword="true" /> if the client should make an SSL-wrapped connection to the server; otherwise, <see langword="false" />.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// The <paramref name="host"/> is <c>null</c>.
+		/// The <paramref name="host"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <paramref name="port"/> is not between <c>0</c> and <c>65535</c>.
@@ -302,7 +401,7 @@ namespace MailKit {
 		/// <exception cref="ProtocolException">
 		/// A protocol error occurred.
 		/// </exception>
-		Task ConnectAsync (string host, int port, bool useSsl, CancellationToken cancellationToken = default (CancellationToken));
+		Task ConnectAsync (string host, int port, bool useSsl, CancellationToken cancellationToken = default);
 
 		/// <summary>
 		/// Establish a connection to the specified mail server.
@@ -317,7 +416,7 @@ namespace MailKit {
 		/// <param name="options">The secure socket options to when connecting.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="host"/> is <c>null</c>.
+		/// <paramref name="host"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <paramref name="port"/> is not between <c>0</c> and <c>65535</c>.
@@ -340,7 +439,7 @@ namespace MailKit {
 		/// <exception cref="ProtocolException">
 		/// The server responded with an unexpected token.
 		/// </exception>
-		void Connect (string host, int port = 0, SecureSocketOptions options = SecureSocketOptions.Auto, CancellationToken cancellationToken = default (CancellationToken));
+		void Connect (string host, int port = 0, SecureSocketOptions options = SecureSocketOptions.Auto, CancellationToken cancellationToken = default);
 
 		/// <summary>
 		/// Asynchronously establish a connection to the specified mail server.
@@ -356,7 +455,7 @@ namespace MailKit {
 		/// <param name="options">The secure socket options to when connecting.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// The <paramref name="host"/> is <c>null</c>.
+		/// The <paramref name="host"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <paramref name="port"/> is not between <c>0</c> and <c>65535</c>.
@@ -379,7 +478,7 @@ namespace MailKit {
 		/// <exception cref="ProtocolException">
 		/// A protocol error occurred.
 		/// </exception>
-		Task ConnectAsync (string host, int port = 0, SecureSocketOptions options = SecureSocketOptions.Auto, CancellationToken cancellationToken = default (CancellationToken));
+		Task ConnectAsync (string host, int port = 0, SecureSocketOptions options = SecureSocketOptions.Auto, CancellationToken cancellationToken = default);
 
 		/// <summary>
 		/// Establish a connection to the specified mail server using the provided socket.
@@ -395,9 +494,9 @@ namespace MailKit {
 		/// <param name="options">The secure socket options to when connecting.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <para><paramref name="socket"/> is <c>null</c>.</para>
+		/// <para><paramref name="socket"/> is <see langword="null" />.</para>
 		/// <para>-or-</para>
-		/// <para><paramref name="host"/> is <c>null</c>.</para>
+		/// <para><paramref name="host"/> is <see langword="null" />.</para>
 		/// </exception>
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <paramref name="port"/> is not between <c>0</c> and <c>65535</c>.
@@ -422,7 +521,7 @@ namespace MailKit {
 		/// <exception cref="ProtocolException">
 		/// The server responded with an unexpected token.
 		/// </exception>
-		void Connect (Socket socket, string host, int port = 0, SecureSocketOptions options = SecureSocketOptions.Auto, CancellationToken cancellationToken = default (CancellationToken));
+		void Connect (Socket socket, string host, int port = 0, SecureSocketOptions options = SecureSocketOptions.Auto, CancellationToken cancellationToken = default);
 
 		/// <summary>
 		/// Asynchronously establish a connection to the specified mail server using the provided socket.
@@ -439,9 +538,9 @@ namespace MailKit {
 		/// <param name="options">The secure socket options to when connecting.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <para><paramref name="socket"/> is <c>null</c>.</para>
+		/// <para><paramref name="socket"/> is <see langword="null" />.</para>
 		/// <para>-or-</para>
-		/// <para><paramref name="host"/> is <c>null</c>.</para>
+		/// <para><paramref name="host"/> is <see langword="null" />.</para>
 		/// </exception>
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <paramref name="port"/> is not between <c>0</c> and <c>65535</c>.
@@ -466,7 +565,7 @@ namespace MailKit {
 		/// <exception cref="ProtocolException">
 		/// The server responded with an unexpected token.
 		/// </exception>
-		Task ConnectAsync (Socket socket, string host, int port = 0, SecureSocketOptions options = SecureSocketOptions.Auto, CancellationToken cancellationToken = default (CancellationToken));
+		Task ConnectAsync (Socket socket, string host, int port = 0, SecureSocketOptions options = SecureSocketOptions.Auto, CancellationToken cancellationToken = default);
 
 		/// <summary>
 		/// Establish a connection to the specified mail server using the provided stream.
@@ -482,9 +581,9 @@ namespace MailKit {
 		/// <param name="options">The secure socket options to when connecting.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <para><paramref name="stream"/> is <c>null</c>.</para>
+		/// <para><paramref name="stream"/> is <see langword="null" />.</para>
 		/// <para>-or-</para>
-		/// <para><paramref name="host"/> is <c>null</c>.</para>
+		/// <para><paramref name="host"/> is <see langword="null" />.</para>
 		/// </exception>
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <paramref name="port"/> is not between <c>0</c> and <c>65535</c>.
@@ -507,7 +606,7 @@ namespace MailKit {
 		/// <exception cref="ProtocolException">
 		/// The server responded with an unexpected token.
 		/// </exception>
-		void Connect (Stream stream, string host, int port = 0, SecureSocketOptions options = SecureSocketOptions.Auto, CancellationToken cancellationToken = default (CancellationToken));
+		void Connect (Stream stream, string host, int port = 0, SecureSocketOptions options = SecureSocketOptions.Auto, CancellationToken cancellationToken = default);
 
 		/// <summary>
 		/// Asynchronously establish a connection to the specified mail server using the provided stream.
@@ -524,9 +623,9 @@ namespace MailKit {
 		/// <param name="options">The secure socket options to when connecting.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <para><paramref name="stream"/> is <c>null</c>.</para>
+		/// <para><paramref name="stream"/> is <see langword="null" />.</para>
 		/// <para>-or-</para>
-		/// <para><paramref name="host"/> is <c>null</c>.</para>
+		/// <para><paramref name="host"/> is <see langword="null" />.</para>
 		/// </exception>
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <paramref name="port"/> is not between <c>0</c> and <c>65535</c>.
@@ -549,7 +648,7 @@ namespace MailKit {
 		/// <exception cref="ProtocolException">
 		/// The server responded with an unexpected token.
 		/// </exception>
-		Task ConnectAsync (Stream stream, string host, int port = 0, SecureSocketOptions options = SecureSocketOptions.Auto, CancellationToken cancellationToken = default (CancellationToken));
+		Task ConnectAsync (Stream stream, string host, int port = 0, SecureSocketOptions options = SecureSocketOptions.Auto, CancellationToken cancellationToken = default);
 
 		/// <summary>
 		/// Authenticate using the supplied credentials.
@@ -557,9 +656,9 @@ namespace MailKit {
 		/// <remarks>
 		/// <para>Authenticates using the supplied credentials.</para>
 		/// <para>If the server supports one or more SASL authentication mechanisms, then
-		/// the SASL mechanisms that both the client and server support are tried
-		/// in order of greatest security to weakest security. Once a SASL
-		/// authentication mechanism is found that both client and server support,
+		/// the SASL mechanisms that both the client and server support (not including any
+		/// OAUTH mechanisms) are tried in order of greatest security to weakest security.
+		/// Once a SASL authentication mechanism is found that both client and server support,
 		/// the credentials are used to authenticate.</para>
 		/// <para>If the server does not support SASL or if no common SASL mechanisms
 		/// can be found, then the default login command is used as a fallback.</para>
@@ -567,7 +666,7 @@ namespace MailKit {
 		/// <param name="credentials">The user's credentials.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="credentials"/> is <c>null</c>.
+		/// <paramref name="credentials"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ObjectDisposedException">
 		/// The <see cref="IMailService"/> has been disposed.
@@ -593,7 +692,7 @@ namespace MailKit {
 		/// <exception cref="ProtocolException">
 		/// A protocol error occurred.
 		/// </exception>
-		void Authenticate (ICredentials credentials, CancellationToken cancellationToken = default (CancellationToken));
+		void Authenticate (ICredentials credentials, CancellationToken cancellationToken = default);
 
 		/// <summary>
 		/// Asynchronously authenticate using the supplied credentials.
@@ -601,9 +700,9 @@ namespace MailKit {
 		/// <remarks>
 		/// <para>Asynchronously authenticates using the supplied credentials.</para>
 		/// <para>If the server supports one or more SASL authentication mechanisms, then
-		/// the SASL mechanisms that both the client and server support are tried
-		/// in order of greatest security to weakest security. Once a SASL
-		/// authentication mechanism is found that both client and server support,
+		/// the SASL mechanisms that both the client and server support (not including any
+		/// OAUTH mechanisms) are tried in order of greatest security to weakest security.
+		/// Once a SASL authentication mechanism is found that both client and server support,
 		/// the credentials are used to authenticate.</para>
 		/// <para>If the server does not support SASL or if no common SASL mechanisms
 		/// can be found, then the default login command is used as a fallback.</para>
@@ -612,7 +711,7 @@ namespace MailKit {
 		/// <param name="credentials">The user's credentials.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="credentials"/> is <c>null</c>.
+		/// <paramref name="credentials"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ObjectDisposedException">
 		/// The <see cref="IMailService"/> has been disposed.
@@ -638,7 +737,7 @@ namespace MailKit {
 		/// <exception cref="ProtocolException">
 		/// A protocol error occurred.
 		/// </exception>
-		Task AuthenticateAsync (ICredentials credentials, CancellationToken cancellationToken = default (CancellationToken));
+		Task AuthenticateAsync (ICredentials credentials, CancellationToken cancellationToken = default);
 
 		/// <summary>
 		/// Authenticate using the supplied credentials.
@@ -646,9 +745,9 @@ namespace MailKit {
 		/// <remarks>
 		/// <para>Authenticates using the supplied credentials.</para>
 		/// <para>If the server supports one or more SASL authentication mechanisms, then
-		/// the SASL mechanisms that both the client and server support are tried
-		/// in order of greatest security to weakest security. Once a SASL
-		/// authentication mechanism is found that both client and server support,
+		/// the SASL mechanisms that both the client and server support (not including any
+		/// OAUTH mechanisms) are tried in order of greatest security to weakest security.
+		/// Once a SASL authentication mechanism is found that both client and server support,
 		/// the credentials are used to authenticate.</para>
 		/// <para>If the server does not support SASL or if no common SASL mechanisms
 		/// can be found, then the default login command is used as a fallback.</para>
@@ -657,9 +756,9 @@ namespace MailKit {
 		/// <param name="credentials">The user's credentials.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <para><paramref name="encoding"/> is <c>null</c>.</para>
+		/// <para><paramref name="encoding"/> is <see langword="null" />.</para>
 		/// <para>-or-</para>
-		/// <para><paramref name="credentials"/> is <c>null</c>.</para>
+		/// <para><paramref name="credentials"/> is <see langword="null" />.</para>
 		/// </exception>
 		/// <exception cref="System.ObjectDisposedException">
 		/// The <see cref="IMailService"/> has been disposed.
@@ -685,7 +784,7 @@ namespace MailKit {
 		/// <exception cref="ProtocolException">
 		/// A protocol error occurred.
 		/// </exception>
-		void Authenticate (Encoding encoding, ICredentials credentials, CancellationToken cancellationToken = default (CancellationToken));
+		void Authenticate (Encoding encoding, ICredentials credentials, CancellationToken cancellationToken = default);
 
 		/// <summary>
 		/// Asynchronously authenticate using the supplied credentials.
@@ -693,9 +792,9 @@ namespace MailKit {
 		/// <remarks>
 		/// <para>Asynchronously authenticates using the supplied credentials.</para>
 		/// <para>If the server supports one or more SASL authentication mechanisms, then
-		/// the SASL mechanisms that both the client and server support are tried
-		/// in order of greatest security to weakest security. Once a SASL
-		/// authentication mechanism is found that both client and server support,
+		/// the SASL mechanisms that both the client and server support (not including any
+		/// OAUTH mechanisms) are tried in order of greatest security to weakest security.
+		/// Once a SASL authentication mechanism is found that both client and server support,
 		/// the credentials are used to authenticate.</para>
 		/// <para>If the server does not support SASL or if no common SASL mechanisms
 		/// can be found, then the default login command is used as a fallback.</para>
@@ -705,9 +804,9 @@ namespace MailKit {
 		/// <param name="credentials">The user's credentials.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <para><paramref name="encoding"/> is <c>null</c>.</para>
+		/// <para><paramref name="encoding"/> is <see langword="null" />.</para>
 		/// <para>-or-</para>
-		/// <para><paramref name="credentials"/> is <c>null</c>.</para>
+		/// <para><paramref name="credentials"/> is <see langword="null" />.</para>
 		/// </exception>
 		/// <exception cref="System.ObjectDisposedException">
 		/// The <see cref="IMailService"/> has been disposed.
@@ -733,16 +832,17 @@ namespace MailKit {
 		/// <exception cref="ProtocolException">
 		/// A protocol error occurred.
 		/// </exception>
-		Task AuthenticateAsync (Encoding encoding, ICredentials credentials, CancellationToken cancellationToken = default (CancellationToken));
+		Task AuthenticateAsync (Encoding encoding, ICredentials credentials, CancellationToken cancellationToken = default);
 
 		/// <summary>
 		/// Authenticate using the specified user name and password.
 		/// </summary>
 		/// <remarks>
-		/// <para>If the server supports one or more SASL authentication mechanisms,
-		/// then the SASL mechanisms that both the client and server support are tried
-		/// in order of greatest security to weakest security. Once a SASL
-		/// authentication mechanism is found that both client and server support,
+		/// <para>Authenticates using the supplied credentials.</para>
+		/// <para>If the server supports one or more SASL authentication mechanisms, then
+		/// the SASL mechanisms that both the client and server support (not including any
+		/// OAUTH mechanisms) are tried in order of greatest security to weakest security.
+		/// Once a SASL authentication mechanism is found that both client and server support,
 		/// the credentials are used to authenticate.</para>
 		/// <para>If the server does not support SASL or if no common SASL mechanisms
 		/// can be found, then the default login command is used as a fallback.</para>
@@ -755,11 +855,11 @@ namespace MailKit {
 		/// <param name="password">The password.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <para><paramref name="encoding"/> is <c>null</c>.</para>
+		/// <para><paramref name="encoding"/> is <see langword="null" />.</para>
 		/// <para>-or-</para>
-		/// <para><paramref name="userName"/> is <c>null</c>.</para>
+		/// <para><paramref name="userName"/> is <see langword="null" />.</para>
 		/// <para>-or-</para>
-		/// <para><paramref name="password"/> is <c>null</c>.</para>
+		/// <para><paramref name="password"/> is <see langword="null" />.</para>
 		/// </exception>
 		/// <exception cref="System.ObjectDisposedException">
 		/// The <see cref="MailService"/> has been disposed.
@@ -782,16 +882,17 @@ namespace MailKit {
 		/// <exception cref="ProtocolException">
 		/// A protocol error occurred.
 		/// </exception>
-		void Authenticate (Encoding encoding, string userName, string password, CancellationToken cancellationToken = default (CancellationToken));
+		void Authenticate (Encoding encoding, string userName, string password, CancellationToken cancellationToken = default);
 
 		/// <summary>
 		/// Asynchronously authenticate using the specified user name and password.
 		/// </summary>
 		/// <remarks>
-		/// <para>If the server supports one or more SASL authentication mechanisms,
-		/// then the SASL mechanisms that both the client and server support are tried
-		/// in order of greatest security to weakest security. Once a SASL
-		/// authentication mechanism is found that both client and server support,
+		/// <para>Asynchronously authenticates using the supplied credentials.</para>
+		/// <para>If the server supports one or more SASL authentication mechanisms, then
+		/// the SASL mechanisms that both the client and server support (not including any
+		/// OAUTH mechanisms) are tried in order of greatest security to weakest security.
+		/// Once a SASL authentication mechanism is found that both client and server support,
 		/// the credentials are used to authenticate.</para>
 		/// <para>If the server does not support SASL or if no common SASL mechanisms
 		/// can be found, then the default login command is used as a fallback.</para>
@@ -805,11 +906,11 @@ namespace MailKit {
 		/// <param name="password">The password.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <para><paramref name="encoding"/> is <c>null</c>.</para>
+		/// <para><paramref name="encoding"/> is <see langword="null" />.</para>
 		/// <para>-or-</para>
-		/// <para><paramref name="userName"/> is <c>null</c>.</para>
+		/// <para><paramref name="userName"/> is <see langword="null" />.</para>
 		/// <para>-or-</para>
-		/// <para><paramref name="password"/> is <c>null</c>.</para>
+		/// <para><paramref name="password"/> is <see langword="null" />.</para>
 		/// </exception>
 		/// <exception cref="System.ObjectDisposedException">
 		/// The <see cref="MailService"/> has been disposed.
@@ -832,16 +933,17 @@ namespace MailKit {
 		/// <exception cref="ProtocolException">
 		/// A protocol error occurred.
 		/// </exception>
-		Task AuthenticateAsync (Encoding encoding, string userName, string password, CancellationToken cancellationToken = default (CancellationToken));
+		Task AuthenticateAsync (Encoding encoding, string userName, string password, CancellationToken cancellationToken = default);
 
 		/// <summary>
 		/// Authenticate using the specified user name and password.
 		/// </summary>
 		/// <remarks>
-		/// <para>If the server supports one or more SASL authentication mechanisms,
-		/// then the SASL mechanisms that both the client and server support are tried
-		/// in order of greatest security to weakest security. Once a SASL
-		/// authentication mechanism is found that both client and server support,
+		/// <para>Authenticates using the supplied credentials.</para>
+		/// <para>If the server supports one or more SASL authentication mechanisms, then
+		/// the SASL mechanisms that both the client and server support (not including any
+		/// OAUTH mechanisms) are tried in order of greatest security to weakest security.
+		/// Once a SASL authentication mechanism is found that both client and server support,
 		/// the credentials are used to authenticate.</para>
 		/// <para>If the server does not support SASL or if no common SASL mechanisms
 		/// can be found, then the default login command is used as a fallback.</para>
@@ -856,9 +958,9 @@ namespace MailKit {
 		/// <param name="password">The password.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <para><paramref name="userName"/> is <c>null</c>.</para>
+		/// <para><paramref name="userName"/> is <see langword="null" />.</para>
 		/// <para>-or-</para>
-		/// <para><paramref name="password"/> is <c>null</c>.</para>
+		/// <para><paramref name="password"/> is <see langword="null" />.</para>
 		/// </exception>
 		/// <exception cref="System.ObjectDisposedException">
 		/// The <see cref="MailService"/> has been disposed.
@@ -881,16 +983,17 @@ namespace MailKit {
 		/// <exception cref="ProtocolException">
 		/// A protocol error occurred.
 		/// </exception>
-		void Authenticate (string userName, string password, CancellationToken cancellationToken = default (CancellationToken));
+		void Authenticate (string userName, string password, CancellationToken cancellationToken = default);
 
 		/// <summary>
 		/// Asynchronously authenticate using the specified user name and password.
 		/// </summary>
 		/// <remarks>
-		/// <para>If the server supports one or more SASL authentication mechanisms,
-		/// then the SASL mechanisms that both the client and server support are tried
-		/// in order of greatest security to weakest security. Once a SASL
-		/// authentication mechanism is found that both client and server support,
+		/// <para>Asynchronously authenticates using the supplied credentials.</para>
+		/// <para>If the server supports one or more SASL authentication mechanisms, then
+		/// the SASL mechanisms that both the client and server support (not including any
+		/// OAUTH mechanisms) are tried in order of greatest security to weakest security.
+		/// Once a SASL authentication mechanism is found that both client and server support,
 		/// the credentials are used to authenticate.</para>
 		/// <para>If the server does not support SASL or if no common SASL mechanisms
 		/// can be found, then the default login command is used as a fallback.</para>
@@ -903,9 +1006,9 @@ namespace MailKit {
 		/// <param name="password">The password.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <para><paramref name="userName"/> is <c>null</c>.</para>
+		/// <para><paramref name="userName"/> is <see langword="null" />.</para>
 		/// <para>-or-</para>
-		/// <para><paramref name="password"/> is <c>null</c>.</para>
+		/// <para><paramref name="password"/> is <see langword="null" />.</para>
 		/// </exception>
 		/// <exception cref="System.ObjectDisposedException">
 		/// The <see cref="MailService"/> has been disposed.
@@ -928,7 +1031,7 @@ namespace MailKit {
 		/// <exception cref="ProtocolException">
 		/// A protocol error occurred.
 		/// </exception>
-		Task AuthenticateAsync (string userName, string password, CancellationToken cancellationToken = default (CancellationToken));
+		Task AuthenticateAsync (string userName, string password, CancellationToken cancellationToken = default);
 
 		/// <summary>
 		/// Authenticate using the specified SASL mechanism.
@@ -942,7 +1045,7 @@ namespace MailKit {
 		/// <param name="mechanism">The SASL mechanism.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="mechanism"/> is <c>null</c>.
+		/// <paramref name="mechanism"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ObjectDisposedException">
 		/// The <see cref="MailService"/> has been disposed.
@@ -965,7 +1068,7 @@ namespace MailKit {
 		/// <exception cref="ProtocolException">
 		/// A protocol error occurred.
 		/// </exception>
-		void Authenticate (SaslMechanism mechanism, CancellationToken cancellationToken = default (CancellationToken));
+		void Authenticate (SaslMechanism mechanism, CancellationToken cancellationToken = default);
 
 		/// <summary>
 		/// Asynchronously authenticate using the specified SASL mechanism.
@@ -980,7 +1083,7 @@ namespace MailKit {
 		/// <param name="mechanism">The SASL mechanism.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="mechanism"/> is <c>null</c>.
+		/// <paramref name="mechanism"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ObjectDisposedException">
 		/// The <see cref="MailService"/> has been disposed.
@@ -1003,16 +1106,16 @@ namespace MailKit {
 		/// <exception cref="ProtocolException">
 		/// A protocol error occurred.
 		/// </exception>
-		Task AuthenticateAsync (SaslMechanism mechanism, CancellationToken cancellationToken = default (CancellationToken));
+		Task AuthenticateAsync (SaslMechanism mechanism, CancellationToken cancellationToken = default);
 
 		/// <summary>
 		/// Disconnect the service.
 		/// </summary>
 		/// <remarks>
 		/// <para>Disconnects from the service.</para>
-		/// <para>If <paramref name="quit"/> is <c>true</c>, a "QUIT" command will be issued in order to disconnect cleanly.</para>
+		/// <para>If <paramref name="quit"/> is <see langword="true" />, a "QUIT" command will be issued in order to disconnect cleanly.</para>
 		/// </remarks>
-		/// <param name="quit">If set to <c>true</c>, a "QUIT" command will be issued in order to disconnect cleanly.</param>
+		/// <param name="quit">If set to <see langword="true" />, a "QUIT" command will be issued in order to disconnect cleanly.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ObjectDisposedException">
 		/// The <see cref="IMailService"/> has been disposed.
@@ -1032,17 +1135,17 @@ namespace MailKit {
 		/// <exception cref="ProtocolException">
 		/// The server responded with an unexpected token.
 		/// </exception>
-		void Disconnect (bool quit, CancellationToken cancellationToken = default (CancellationToken));
+		void Disconnect (bool quit, CancellationToken cancellationToken = default);
 
 		/// <summary>
 		/// Asynchronously disconnect the service.
 		/// </summary>
 		/// <remarks>
 		/// <para>Asynchronously disconnects from the service.</para>
-		/// <para>If <paramref name="quit"/> is <c>true</c>, a "QUIT" command will be issued in order to disconnect cleanly.</para>
+		/// <para>If <paramref name="quit"/> is <see langword="true" />, a "QUIT" command will be issued in order to disconnect cleanly.</para>
 		/// </remarks>
 		/// <returns>An asynchronous task context.</returns>
-		/// <param name="quit">If set to <c>true</c>, a logout/quit command will be issued in order to disconnect cleanly.</param>
+		/// <param name="quit">If set to <see langword="true" />, a logout/quit command will be issued in order to disconnect cleanly.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ObjectDisposedException">
 		/// The <see cref="IMailService"/> has been disposed.
@@ -1062,7 +1165,7 @@ namespace MailKit {
 		/// <exception cref="ProtocolException">
 		/// The server responded with an unexpected token.
 		/// </exception>
-		Task DisconnectAsync (bool quit, CancellationToken cancellationToken = default (CancellationToken));
+		Task DisconnectAsync (bool quit, CancellationToken cancellationToken = default);
 
 		/// <summary>
 		/// Ping the message service to keep the connection alive.
@@ -1089,7 +1192,7 @@ namespace MailKit {
 		/// <exception cref="ProtocolException">
 		/// The server responded with an unexpected token.
 		/// </exception>
-		void NoOp (CancellationToken cancellationToken = default (CancellationToken));
+		void NoOp (CancellationToken cancellationToken = default);
 
 		/// <summary>
 		/// Asynchronously ping the mail server to keep the connection alive.
@@ -1120,7 +1223,7 @@ namespace MailKit {
 		/// <exception cref="ProtocolException">
 		/// The server responded with an unexpected token.
 		/// </exception>
-		Task NoOpAsync (CancellationToken cancellationToken = default (CancellationToken));
+		Task NoOpAsync (CancellationToken cancellationToken = default);
 
 		/// <summary>
 		/// Occurs when the client has been successfully connected.
@@ -1129,7 +1232,7 @@ namespace MailKit {
 		/// The <see cref="Connected"/> event is raised when the client
 		/// successfully connects to the mail server.
 		/// </remarks>
-		event EventHandler<ConnectedEventArgs> Connected;
+		event EventHandler<ConnectedEventArgs>? Connected;
 
 		/// <summary>
 		/// Occurs when the client has been disconnected.
@@ -1138,7 +1241,7 @@ namespace MailKit {
 		/// The <see cref="Disconnected"/> event is raised whenever the client
 		/// has been disconnected.
 		/// </remarks>
-		event EventHandler<DisconnectedEventArgs> Disconnected;
+		event EventHandler<DisconnectedEventArgs>? Disconnected;
 
 		/// <summary>
 		/// Occurs when the client has been successfully authenticated.
@@ -1147,6 +1250,6 @@ namespace MailKit {
 		/// The <see cref="Authenticated"/> event is raised whenever the client
 		/// has been authenticated.
 		/// </remarks>
-		event EventHandler<AuthenticatedEventArgs> Authenticated;
+		event EventHandler<AuthenticatedEventArgs>? Authenticated;
 	}
 }

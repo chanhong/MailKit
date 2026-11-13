@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -26,14 +26,13 @@
 
 using System;
 using System.IO;
-using System.Linq;
 using System.Text;
 using System.Buffers;
 using System.Threading;
 using System.Globalization;
 using System.Threading.Tasks;
 using System.Collections.Generic;
-using System.Collections.ObjectModel;
+using System.Diagnostics.CodeAnalysis;
 
 using MimeKit;
 using MimeKit.IO;
@@ -46,18 +45,81 @@ namespace MailKit.Net.Imap
 {
 	public partial class ImapFolder
 	{
-		internal static readonly HashSet<string> EmptyHeaderFields = new HashSet<string> ();
 		const int PreviewHtmlLength = 16 * 1024;
 		const int PreviewTextLength = 512;
 		const int BufferSize = 4096;
+
+		sealed class IndexRange : IList<int>, IReadOnlyList<int>
+		{
+			readonly int start;
+
+			public IndexRange (int min, int max)
+			{
+				start = min;
+				Count = max >= min ? (max - min) + 1 : 0;
+			}
+
+			public int Count { get; }
+
+			public bool IsReadOnly => true;
+
+			public int this[int index] {
+				get {
+					if (index < 0 || index >= Count)
+						throw new ArgumentOutOfRangeException (nameof (index));
+
+					return start + index;
+				}
+				set => throw new NotSupportedException ();
+			}
+
+			public int IndexOf (int item)
+			{
+				return item >= start && item - start < Count ? item - start : -1;
+			}
+
+			public bool Contains (int item)
+			{
+				return IndexOf (item) != -1;
+			}
+
+			public void CopyTo (int[] array, int arrayIndex)
+			{
+				if (array == null)
+					throw new ArgumentNullException (nameof (array));
+
+				if (arrayIndex < 0 || arrayIndex > array.Length - Count)
+					throw new ArgumentOutOfRangeException (nameof (arrayIndex));
+
+				for (int i = 0; i < Count; i++)
+					array[arrayIndex + i] = start + i;
+			}
+
+			public IEnumerator<int> GetEnumerator ()
+			{
+				for (int i = 0; i < Count; i++)
+					yield return start + i;
+			}
+
+			System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator ()
+			{
+				return GetEnumerator ();
+			}
+
+			public void Add (int item) => throw new NotSupportedException ();
+			public void Clear () => throw new NotSupportedException ();
+			public void Insert (int index, int item) => throw new NotSupportedException ();
+			public bool Remove (int item) => throw new NotSupportedException ();
+			public void RemoveAt (int index) => throw new NotSupportedException ();
+		}
 
 		class FetchSummaryContext
 		{
 			public readonly List<IMessageSummary> Messages;
 
-			public FetchSummaryContext ()
+			public FetchSummaryContext (int capacity)
 			{
-				Messages = new List<IMessageSummary> ();
+				Messages = new List<IMessageSummary> (capacity);
 			}
 
 			int BinarySearch (int index, bool insert)
@@ -66,6 +128,9 @@ namespace MailKit.Net.Imap
 
 				if (max == 0)
 					return insert ? 0 : -1;
+
+				if (insert && index > Messages[max - 1].Index)
+					return max;
 
 				do {
 					int i = min + ((max - min) / 2);
@@ -93,7 +158,7 @@ namespace MailKit.Net.Imap
 					Messages.Add (message);
 			}
 
-			public bool TryGetValue (int index, out MessageSummary message)
+			public bool TryGetValue (int index, [NotNullWhen (true)] out MessageSummary? message)
 			{
 				int i;
 
@@ -107,15 +172,14 @@ namespace MailKit.Net.Imap
 				return true;
 			}
 
-			public void OnMessageExpunged (object sender, MessageEventArgs args)
+			public void OnMessageExpunged (object? sender, MessageEventArgs args)
 			{
-				int index = BinarySearch (args.Index, true);
+				int index = BinarySearch (args.Index, false);
 
-				if (index >= Messages.Count)
+				if (index == -1)
 					return;
 
-				if (Messages[index].Index == args.Index)
-					Messages.RemoveAt (index);
+				Messages.RemoveAt (index);
 
 				for (int i = index; i < Messages.Count; i++) {
 					var message = (MessageSummary) Messages[i];
@@ -124,47 +188,85 @@ namespace MailKit.Net.Imap
 			}
 		}
 
-		static async Task ReadLiteralDataAsync (ImapEngine engine, bool doAsync, CancellationToken cancellationToken)
+		static void ReadLiteralData (ImapEngine engine, CancellationToken cancellationToken)
 		{
 			var buf = ArrayPool<byte>.Shared.Rent (BufferSize);
 			int nread;
 
 			try {
 				do {
-					if (doAsync)
-						nread = await engine.Stream.ReadAsync (buf, 0, BufferSize, cancellationToken).ConfigureAwait (false);
-					else
-						nread = engine.Stream.Read (buf, 0, BufferSize, cancellationToken);
+					nread = engine.Stream!.Read (buf, 0, BufferSize, cancellationToken);
 				} while (nread > 0);
 			} finally {
 				ArrayPool<byte>.Shared.Return (buf);
 			}
 		}
 
-		static async Task SkipParenthesizedList (ImapEngine engine, bool doAsync, CancellationToken cancellationToken)
+		static async Task ReadLiteralDataAsync (ImapEngine engine, CancellationToken cancellationToken)
 		{
+			var buf = ArrayPool<byte>.Shared.Rent (BufferSize);
+			int nread;
+
+			try {
+				do {
+					nread = await engine.Stream!.ReadAsync (buf, 0, BufferSize, cancellationToken).ConfigureAwait (false);
+				} while (nread > 0);
+			} finally {
+				ArrayPool<byte>.Shared.Return (buf);
+			}
+		}
+
+		static void SkipParenthesizedList (ImapEngine engine, CancellationToken cancellationToken)
+		{
+			int depth = 1;
+
 			do {
-				var token = await engine.PeekTokenAsync (doAsync, cancellationToken).ConfigureAwait (false);
+				var token = engine.PeekToken (cancellationToken);
 
 				if (token.Type == ImapTokenType.Eoln)
 					return;
 
 				// token is safe to read, so pop it off the queue
-				await engine.ReadTokenAsync (doAsync, cancellationToken).ConfigureAwait (false);
+				token = engine.ReadToken (cancellationToken);
 
-				if (token.Type == ImapTokenType.CloseParen)
-					break;
-
-				if (token.Type == ImapTokenType.OpenParen) {
-					// skip the inner parenthesized list
-					await SkipParenthesizedList (engine, doAsync, cancellationToken).ConfigureAwait (false);
+				if (token.Type == ImapTokenType.CloseParen) {
+					depth--;
+				} else if (token.Type == ImapTokenType.OpenParen) {
+					depth++;
+				} else if (token.Type == ImapTokenType.Literal) {
+					// consume the literal string
+					ReadLiteralData (engine, cancellationToken);
 				}
-			} while (true);
+			} while (depth > 0);
 		}
 
-		async Task<DateTimeOffset?> ReadDateTimeOffsetTokenAsync (ImapEngine engine, string atom, bool doAsync, CancellationToken cancellationToken)
+		static async Task SkipParenthesizedListAsync (ImapEngine engine, CancellationToken cancellationToken)
 		{
-			var token = await engine.ReadTokenAsync (doAsync, cancellationToken).ConfigureAwait (false);
+			int depth = 1;
+
+			do {
+				var token = await engine.PeekTokenAsync (cancellationToken).ConfigureAwait (false);
+
+				if (token.Type == ImapTokenType.Eoln)
+					return;
+
+				// token is safe to read, so pop it off the queue
+				token = await engine.ReadTokenAsync (cancellationToken).ConfigureAwait (false);
+
+				if (token.Type == ImapTokenType.CloseParen) {
+					depth--;
+				} else if (token.Type == ImapTokenType.OpenParen) {
+					depth++;
+				} else if (token.Type == ImapTokenType.Literal) {
+					// consume the literal string
+					await ReadLiteralDataAsync (engine, cancellationToken).ConfigureAwait (false);
+				}
+			} while (depth > 0);
+		}
+
+		static DateTimeOffset? ReadDateTimeOffsetToken (ImapEngine engine, string atom, CancellationToken cancellationToken)
+		{
+			var token = engine.ReadToken (cancellationToken);
 
 			switch (token.Type) {
 			case ImapTokenType.QString:
@@ -177,14 +279,31 @@ namespace MailKit.Net.Imap
 			}
 		}
 
-		async Task FetchSummaryItemsAsync (ImapEngine engine, MessageSummary message, bool doAsync, CancellationToken cancellationToken)
+		static async Task<DateTimeOffset?> ReadDateTimeOffsetTokenAsync (ImapEngine engine, string atom, CancellationToken cancellationToken)
 		{
-			var token = await engine.ReadTokenAsync (doAsync, cancellationToken).ConfigureAwait (false);
+			var token = await engine.ReadTokenAsync (cancellationToken).ConfigureAwait (false);
+
+			switch (token.Type) {
+			case ImapTokenType.QString:
+			case ImapTokenType.Atom:
+				return ImapUtils.ParseInternalDate ((string) token.Value);
+			case ImapTokenType.Nil:
+				return null;
+			default:
+				throw ImapEngine.UnexpectedToken (ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
+			}
+		}
+
+		delegate void FetchSummaryItemsCompletedCallback (MessageSummary message);
+
+		void ParseSummaryItems (ImapEngine engine, MessageSummary message, FetchSummaryItemsCompletedCallback completed, CancellationToken cancellationToken)
+		{
+			var token = engine.ReadToken (cancellationToken);
 
 			ImapEngine.AssertToken (token, ImapTokenType.OpenParen, ImapEngine.GenericUntaggedResponseSyntaxErrorFormat, "FETCH", token);
 
 			do {
-				token = await engine.ReadTokenAsync (doAsync, cancellationToken).ConfigureAwait (false);
+				token = engine.ReadToken (cancellationToken);
 
 				if (token.Type == ImapTokenType.CloseParen || token.Type == ImapTokenType.Eoln)
 					break;
@@ -195,7 +314,7 @@ namespace MailKit.Net.Imap
 					// response within an extra set of parenthesis.
 					//
 					// See https://github.com/jstedfast/MailKit/issues/943 for details.
-					token = await engine.ReadTokenAsync (doAsync, cancellationToken).ConfigureAwait (false);
+					token = engine.ReadToken (cancellationToken);
 					parenthesized = true;
 				}
 
@@ -207,28 +326,23 @@ namespace MailKit.Net.Imap
 				uint value;
 				int idx;
 
-				switch (atom.ToUpperInvariant ()) {
-				case "INTERNALDATE":
-					message.InternalDate = await ReadDateTimeOffsetTokenAsync (engine, atom, doAsync, cancellationToken).ConfigureAwait (false);
+				if (atom.Equals ("INTERNALDATE", StringComparison.OrdinalIgnoreCase)) {
+					message.InternalDate = ReadDateTimeOffsetToken (engine, atom, cancellationToken);
 					message.Fields |= MessageSummaryItems.InternalDate;
-					break;
-				case "SAVEDATE":
-					message.SaveDate = await ReadDateTimeOffsetTokenAsync (engine, atom, doAsync, cancellationToken).ConfigureAwait (false);
+				} else if (atom.Equals ("SAVEDATE", StringComparison.OrdinalIgnoreCase)) {
+					message.SaveDate = ReadDateTimeOffsetToken (engine, atom, cancellationToken);
 					message.Fields |= MessageSummaryItems.SaveDate;
-					break;
-				case "RFC822.SIZE":
-					token = await engine.ReadTokenAsync (doAsync, cancellationToken).ConfigureAwait (false);
+				} else if (atom.Equals ("RFC822.SIZE", StringComparison.OrdinalIgnoreCase)) {
+					token = engine.ReadToken (cancellationToken);
 
-					message.Size = ImapEngine.ParseNumber (token, false, ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
+					message.Size = ImapEngine.ParseNumber63 (token, false, ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
 					message.Fields |= MessageSummaryItems.Size;
-					break;
-				case "BODYSTRUCTURE":
+				} else if (atom.Equals ("BODYSTRUCTURE", StringComparison.OrdinalIgnoreCase)) {
 					format = string.Format (ImapEngine.GenericItemSyntaxErrorFormat, "BODYSTRUCTURE", "{0}");
-					message.Body = await ImapUtils.ParseBodyAsync (engine, format, string.Empty, doAsync, cancellationToken).ConfigureAwait (false);
+					message.Body = ImapUtils.ParseBody (engine, format, string.Empty, cancellationToken);
 					message.Fields |= MessageSummaryItems.BodyStructure;
-					break;
-				case "BODY":
-					token = await engine.PeekTokenAsync (doAsync, cancellationToken).ConfigureAwait (false);
+				} else if (atom.Equals ("BODY", StringComparison.OrdinalIgnoreCase)) {
+					token = engine.PeekToken (cancellationToken);
 					format = ImapEngine.FetchBodySyntaxErrorFormat;
 
 					if (token.Type == ImapTokenType.OpenBracket) {
@@ -236,29 +350,29 @@ namespace MailKit.Net.Imap
 						var headerFields = false;
 
 						// consume the '['
-						token = await engine.ReadTokenAsync (doAsync, cancellationToken).ConfigureAwait (false);
+						token = engine.ReadToken (cancellationToken);
 
 						ImapEngine.AssertToken (token, ImapTokenType.OpenBracket, format, token);
 
 						// References and/or other headers were requested...
 
 						do {
-							token = await engine.ReadTokenAsync (doAsync, cancellationToken).ConfigureAwait (false);
+							token = engine.ReadToken (cancellationToken);
 
 							if (token.Type == ImapTokenType.CloseBracket)
 								break;
 
 							if (token.Type == ImapTokenType.OpenParen) {
 								do {
-									token = await engine.ReadTokenAsync (doAsync, cancellationToken).ConfigureAwait (false);
+									token = engine.ReadToken (cancellationToken);
 
 									if (token.Type == ImapTokenType.CloseParen)
 										break;
 
 									// the header field names will generally be atoms or qstrings but may also be literals
-									engine.Stream.UngetToken (token);
+									engine.UngetToken (token);
 
-									var field = await ImapUtils.ReadStringTokenAsync (engine, format, doAsync, cancellationToken).ConfigureAwait (false);
+									var field = ImapUtils.ReadStringToken (engine, format, cancellationToken);
 
 									if (headerFields && !referencesField && field.Equals ("REFERENCES", StringComparison.OrdinalIgnoreCase))
 										referencesField = true;
@@ -268,29 +382,30 @@ namespace MailKit.Net.Imap
 
 								atom = (string) token.Value;
 
-								headerFields = atom.Equals ("HEADER.FIELDS", StringComparison.OrdinalIgnoreCase);
-
-								if (!headerFields && atom.Equals ("HEADER", StringComparison.OrdinalIgnoreCase)) {
+								if (atom.Equals ("HEADER", StringComparison.OrdinalIgnoreCase)) {
 									// if we're fetching *all* headers, then it will include the References header (if it exists)
 									referencesField = true;
+									headerFields = false;
+								} else {
+									headerFields = atom.Equals ("HEADER.FIELDS", StringComparison.OrdinalIgnoreCase);
 								}
 							}
 						} while (true);
 
 						ImapEngine.AssertToken (token, ImapTokenType.CloseBracket, format, token);
 
-						token = await engine.ReadTokenAsync (doAsync, cancellationToken).ConfigureAwait (false);
+						token = engine.ReadToken (cancellationToken);
 
 						ImapEngine.AssertToken (token, ImapTokenType.Literal, format, token);
 
 						try {
-							message.Headers = await engine.ParseHeadersAsync (engine.Stream, doAsync, cancellationToken).ConfigureAwait (false);
+							message.Headers = engine.ParseHeaders (engine.Stream!, cancellationToken);
 						} catch (FormatException) {
 							message.Headers = new HeaderList ();
 						}
 
 						// consume any remaining literal data... (typically extra blank lines)
-						await ReadLiteralDataAsync (engine, doAsync, cancellationToken).ConfigureAwait (false);
+						ReadLiteralData (engine, cancellationToken);
 
 						message.References = new MessageIdList ();
 
@@ -307,73 +422,74 @@ namespace MailKit.Net.Imap
 						if (referencesField)
 							message.Fields |= MessageSummaryItems.References;
 					} else {
-						message.Body = await ImapUtils.ParseBodyAsync (engine, format, string.Empty, doAsync, cancellationToken).ConfigureAwait (false);
+						message.Body = ImapUtils.ParseBody (engine, format, string.Empty, cancellationToken);
 						message.Fields |= MessageSummaryItems.Body;
 					}
-					break;
-				case "ENVELOPE":
-					message.Envelope = await ImapUtils.ParseEnvelopeAsync (engine, doAsync, cancellationToken).ConfigureAwait (false);
+				} else if (atom.Equals ("ENVELOPE", StringComparison.OrdinalIgnoreCase)) {
+					message.Envelope = ImapUtils.ParseEnvelope (engine, cancellationToken);
 					message.Fields |= MessageSummaryItems.Envelope;
-					break;
-				case "FLAGS":
-					message.Flags = await ImapUtils.ParseFlagsListAsync (engine, atom, message.Keywords, doAsync, cancellationToken).ConfigureAwait (false);
+				} else if (atom.Equals ("FLAGS", StringComparison.OrdinalIgnoreCase)) {
+					message.Flags = ImapUtils.ParseFlagsList (engine, atom, (HashSet<string>) message.Keywords, cancellationToken);
 					message.Fields |= MessageSummaryItems.Flags;
-					break;
-				case "MODSEQ":
-					token = await engine.ReadTokenAsync (doAsync, cancellationToken).ConfigureAwait (false);
+				} else if (atom.Equals ("MODSEQ", StringComparison.OrdinalIgnoreCase)) {
+					token = engine.ReadToken (cancellationToken);
 
 					ImapEngine.AssertToken (token, ImapTokenType.OpenParen, ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
 
-					token = await engine.ReadTokenAsync (doAsync, cancellationToken).ConfigureAwait (false);
+					token = engine.ReadToken (cancellationToken);
 
-					value64 = ImapEngine.ParseNumber64 (token, false, ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
+					ImapEngine.AssertToken (token, ImapTokenType.Atom, ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
 
-					token = await engine.ReadTokenAsync (doAsync, cancellationToken).ConfigureAwait (false);
+					// Note: Some IMAP servers (such as Zoho Mail) will return a MODSEQ of -1 in some cases (not sure why).
+					//
+					// If we get an invalid value, just ignore it.
+					//
+					// See https://github.com/jstedfast/MailKit/issues/1686 for details.
+					if (ImapEngine.TryParseNumber64 (token, out value64)) {
+						message.Fields |= MessageSummaryItems.ModSeq;
+						message.ModSeq = value64;
+
+						if (value64 > HighestModSeq)
+							UpdateHighestModSeq (value64);
+					}
+
+					token = engine.ReadToken (cancellationToken);
 
 					ImapEngine.AssertToken (token, ImapTokenType.CloseParen, ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
-
-					message.Fields |= MessageSummaryItems.ModSeq;
-					message.ModSeq = value64;
-
-					if (value64 > HighestModSeq)
-						UpdateHighestModSeq (value64);
-					break;
-				case "UID":
-					token = await engine.ReadTokenAsync (doAsync, cancellationToken).ConfigureAwait (false);
+				} else if (atom.Equals ("UID", StringComparison.OrdinalIgnoreCase)) {
+					token = engine.ReadToken (cancellationToken);
 
 					value = ImapEngine.ParseNumber (token, true, ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
 
 					message.UniqueId = new UniqueId (UidValidity, value);
 					message.Fields |= MessageSummaryItems.UniqueId;
-					break;
-				case "EMAILID":
-					token = await engine.ReadTokenAsync (doAsync, cancellationToken).ConfigureAwait (false);
+				} else if (atom.Equals ("EMAILID", StringComparison.OrdinalIgnoreCase)) {
+					token = engine.ReadToken (cancellationToken);
 
 					ImapEngine.AssertToken (token, ImapTokenType.OpenParen, ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
 
-					token = await engine.ReadTokenAsync (doAsync, cancellationToken).ConfigureAwait (false);
+					token = engine.ReadToken (cancellationToken);
 
 					ImapEngine.AssertToken (token, ImapTokenType.Atom, ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
 
 					message.Fields |= MessageSummaryItems.EmailId;
 					message.EmailId = (string) token.Value;
 
-					token = await engine.ReadTokenAsync (doAsync, cancellationToken).ConfigureAwait (false);
+					token = engine.ReadToken (cancellationToken);
 
 					ImapEngine.AssertToken (token, ImapTokenType.CloseParen, ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
-					break;
-				case "THREADID":
-					token = await engine.ReadTokenAsync (doAsync, cancellationToken).ConfigureAwait (false);
+				} else if (atom.Equals ("THREADID", StringComparison.OrdinalIgnoreCase)) {
+					token = engine.ReadToken (cancellationToken);
 
 					if (token.Type == ImapTokenType.OpenParen) {
-						token = await engine.ReadTokenAsync (doAsync, cancellationToken).ConfigureAwait (false);
+						token = engine.ReadToken (cancellationToken);
 
 						ImapEngine.AssertToken (token, ImapTokenType.Atom, ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
 
 						message.Fields |= MessageSummaryItems.ThreadId;
 						message.ThreadId = (string) token.Value;
 
-						token = await engine.ReadTokenAsync (doAsync, cancellationToken).ConfigureAwait (false);
+						token = engine.ReadToken (cancellationToken);
 
 						ImapEngine.AssertToken (token, ImapTokenType.CloseParen, ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
 					} else {
@@ -382,69 +498,324 @@ namespace MailKit.Net.Imap
 						message.Fields |= MessageSummaryItems.ThreadId;
 						message.ThreadId = null;
 					}
-					break;
-				case "X-GM-MSGID":
-					token = await engine.ReadTokenAsync (doAsync, cancellationToken).ConfigureAwait (false);
+				} else if (atom.Equals ("X-GM-MSGID", StringComparison.OrdinalIgnoreCase)) {
+					token = engine.ReadToken (cancellationToken);
 
 					value64 = ImapEngine.ParseNumber64 (token, true, ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
 					message.Fields |= MessageSummaryItems.GMailMessageId;
 					message.GMailMessageId = value64;
-					break;
-				case "X-GM-THRID":
-					token = await engine.ReadTokenAsync (doAsync, cancellationToken).ConfigureAwait (false);
+				} else if (atom.Equals ("X-GM-THRID", StringComparison.OrdinalIgnoreCase)) {
+					token = engine.ReadToken (cancellationToken);
 
 					value64 = ImapEngine.ParseNumber64 (token, true, ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
 					message.Fields |= MessageSummaryItems.GMailThreadId;
 					message.GMailThreadId = value64;
-					break;
-				case "X-GM-LABELS":
-					message.GMailLabels = await ImapUtils.ParseLabelsListAsync (engine, doAsync, cancellationToken).ConfigureAwait (false);
+				} else if (atom.Equals ("X-GM-LABELS", StringComparison.OrdinalIgnoreCase)) {
+					message.GMailLabels = ImapUtils.ParseLabelsList (engine, cancellationToken);
 					message.Fields |= MessageSummaryItems.GMailLabels;
-					break;
-				case "ANNOTATION":
-					message.Annotations = await ImapUtils.ParseAnnotationsAsync (engine, doAsync, cancellationToken).ConfigureAwait (false);
+				} else if (atom.Equals ("ANNOTATION", StringComparison.OrdinalIgnoreCase)) {
+					message.Annotations = ImapUtils.ParseAnnotations (engine, cancellationToken);
 					message.Fields |= MessageSummaryItems.Annotations;
-					break;
-				default:
+				} else if (atom.Equals ("PREVIEW", StringComparison.OrdinalIgnoreCase)) {
+					format = string.Format (ImapEngine.GenericItemSyntaxErrorFormat, "PREVIEW", "{0}");
+					message.PreviewText = ImapUtils.ReadNStringToken (engine, format, false, cancellationToken);
+					message.Fields |= MessageSummaryItems.PreviewText;
+				} else {
 					// Unexpected or unknown token (such as XAOL.SPAM.REASON or XAOL-MSGID). Simply read 1 more token (the argument) and ignore.
-					token = await engine.ReadTokenAsync (doAsync, cancellationToken).ConfigureAwait (false);
+					token = engine.ReadToken (cancellationToken);
 
 					if (token.Type == ImapTokenType.OpenParen)
-						await SkipParenthesizedList (engine, doAsync, cancellationToken).ConfigureAwait (false);
-					break;
+						SkipParenthesizedList (engine, cancellationToken);
 				}
 
 				if (parenthesized) {
 					// Note: This is the second half of the Lotus Domino IMAP server work-around.
-					token = await engine.ReadTokenAsync (doAsync, cancellationToken).ConfigureAwait (false);
+					token = engine.ReadToken (cancellationToken);
 					ImapEngine.AssertToken (token, ImapTokenType.CloseParen, ImapEngine.GenericUntaggedResponseSyntaxErrorFormat, "FETCH", token);
 				}
 			} while (true);
 
 			ImapEngine.AssertToken (token, ImapTokenType.CloseParen, ImapEngine.GenericUntaggedResponseSyntaxErrorFormat, "FETCH", token);
+
+			completed (message);
 		}
 
-		async Task FetchSummaryItemsAsync (ImapEngine engine, ImapCommand ic, int index, bool doAsync)
+		async Task ParseSummaryItemsAsync (ImapEngine engine, MessageSummary message, FetchSummaryItemsCompletedCallback completed, CancellationToken cancellationToken)
 		{
-			var ctx = (FetchSummaryContext) ic.UserData;
-			MessageSummary message;
+			var token = await engine.ReadTokenAsync (cancellationToken).ConfigureAwait (false);
 
-			if (!ctx.TryGetValue (index, out message)) {
-				message = new MessageSummary (this, index);
+			ImapEngine.AssertToken (token, ImapTokenType.OpenParen, ImapEngine.GenericUntaggedResponseSyntaxErrorFormat, "FETCH", token);
+
+			do {
+				token = await engine.ReadTokenAsync (cancellationToken).ConfigureAwait (false);
+
+				if (token.Type == ImapTokenType.CloseParen || token.Type == ImapTokenType.Eoln)
+					break;
+
+				bool parenthesized = false;
+				if (engine.QuirksMode == ImapQuirksMode.Domino && token.Type == ImapTokenType.OpenParen) {
+					// Note: Lotus Domino IMAP will (sometimes?) encapsulate the `ENVELOPE` segment of the
+					// response within an extra set of parenthesis.
+					//
+					// See https://github.com/jstedfast/MailKit/issues/943 for details.
+					token = await engine.ReadTokenAsync (cancellationToken).ConfigureAwait (false);
+					parenthesized = true;
+				}
+
+				ImapEngine.AssertToken (token, ImapTokenType.Atom, ImapEngine.GenericUntaggedResponseSyntaxErrorFormat, "FETCH", token);
+
+				var atom = (string) token.Value;
+				string format;
+				ulong value64;
+				uint value;
+				int idx;
+
+				if (atom.Equals ("INTERNALDATE", StringComparison.OrdinalIgnoreCase)) {
+					message.InternalDate = await ReadDateTimeOffsetTokenAsync (engine, atom, cancellationToken).ConfigureAwait (false);
+					message.Fields |= MessageSummaryItems.InternalDate;
+				} else if (atom.Equals ("SAVEDATE", StringComparison.OrdinalIgnoreCase)) {
+					message.SaveDate = await ReadDateTimeOffsetTokenAsync (engine, atom, cancellationToken).ConfigureAwait (false);
+					message.Fields |= MessageSummaryItems.SaveDate;
+				} else if (atom.Equals ("RFC822.SIZE", StringComparison.OrdinalIgnoreCase)) {
+					token = await engine.ReadTokenAsync (cancellationToken).ConfigureAwait (false);
+
+					message.Size = ImapEngine.ParseNumber63 (token, false, ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
+					message.Fields |= MessageSummaryItems.Size;
+				} else if (atom.Equals ("BODYSTRUCTURE", StringComparison.OrdinalIgnoreCase)) {
+					format = string.Format (ImapEngine.GenericItemSyntaxErrorFormat, "BODYSTRUCTURE", "{0}");
+					message.Body = await ImapUtils.ParseBodyAsync (engine, format, string.Empty, cancellationToken).ConfigureAwait (false);
+					message.Fields |= MessageSummaryItems.BodyStructure;
+				} else if (atom.Equals ("BODY", StringComparison.OrdinalIgnoreCase)) {
+					token = await engine.PeekTokenAsync (cancellationToken).ConfigureAwait (false);
+					format = ImapEngine.FetchBodySyntaxErrorFormat;
+
+					if (token.Type == ImapTokenType.OpenBracket) {
+						var referencesField = false;
+						var headerFields = false;
+
+						// consume the '['
+						token = await engine.ReadTokenAsync (cancellationToken).ConfigureAwait (false);
+
+						ImapEngine.AssertToken (token, ImapTokenType.OpenBracket, format, token);
+
+						// References and/or other headers were requested...
+
+						do {
+							token = await engine.ReadTokenAsync (cancellationToken).ConfigureAwait (false);
+
+							if (token.Type == ImapTokenType.CloseBracket)
+								break;
+
+							if (token.Type == ImapTokenType.OpenParen) {
+								do {
+									token = await engine.ReadTokenAsync (cancellationToken).ConfigureAwait (false);
+
+									if (token.Type == ImapTokenType.CloseParen)
+										break;
+
+									// the header field names will generally be atoms or qstrings but may also be literals
+									engine.UngetToken (token);
+
+									var field = await ImapUtils.ReadStringTokenAsync (engine, format, cancellationToken).ConfigureAwait (false);
+
+									if (headerFields && !referencesField && field.Equals ("REFERENCES", StringComparison.OrdinalIgnoreCase))
+										referencesField = true;
+								} while (true);
+							} else {
+								ImapEngine.AssertToken (token, ImapTokenType.Atom, format, token);
+
+								atom = (string) token.Value;
+
+								if (atom.Equals ("HEADER", StringComparison.OrdinalIgnoreCase)) {
+									// if we're fetching *all* headers, then it will include the References header (if it exists)
+									referencesField = true;
+									headerFields = false;
+								} else {
+									headerFields = atom.Equals ("HEADER.FIELDS", StringComparison.OrdinalIgnoreCase);
+								}
+							}
+						} while (true);
+
+						ImapEngine.AssertToken (token, ImapTokenType.CloseBracket, format, token);
+
+						token = await engine.ReadTokenAsync (cancellationToken).ConfigureAwait (false);
+
+						ImapEngine.AssertToken (token, ImapTokenType.Literal, format, token);
+
+						try {
+							message.Headers = await engine.ParseHeadersAsync (engine.Stream!, cancellationToken).ConfigureAwait (false);
+						} catch (FormatException) {
+							message.Headers = new HeaderList ();
+						}
+
+						// consume any remaining literal data... (typically extra blank lines)
+						await ReadLiteralDataAsync (engine, cancellationToken).ConfigureAwait (false);
+
+						message.References = new MessageIdList ();
+
+						if ((idx = message.Headers.IndexOf (HeaderId.References)) != -1) {
+							var references = message.Headers[idx];
+							var rawValue = references.RawValue;
+
+							foreach (var msgid in MimeUtils.EnumerateReferences (rawValue, 0, rawValue.Length))
+								message.References.Add (msgid);
+						}
+
+						message.Fields |= MessageSummaryItems.Headers;
+
+						if (referencesField)
+							message.Fields |= MessageSummaryItems.References;
+					} else {
+						message.Body = await ImapUtils.ParseBodyAsync (engine, format, string.Empty, cancellationToken).ConfigureAwait (false);
+						message.Fields |= MessageSummaryItems.Body;
+					}
+				} else if (atom.Equals ("ENVELOPE", StringComparison.OrdinalIgnoreCase)) {
+					message.Envelope = await ImapUtils.ParseEnvelopeAsync (engine, cancellationToken).ConfigureAwait (false);
+					message.Fields |= MessageSummaryItems.Envelope;
+				} else if (atom.Equals ("FLAGS", StringComparison.OrdinalIgnoreCase)) {
+					message.Flags = await ImapUtils.ParseFlagsListAsync (engine, atom, (HashSet<string>) message.Keywords, cancellationToken).ConfigureAwait (false);
+					message.Fields |= MessageSummaryItems.Flags;
+				} else if (atom.Equals ("MODSEQ", StringComparison.OrdinalIgnoreCase)) {
+					token = await engine.ReadTokenAsync (cancellationToken).ConfigureAwait (false);
+
+					ImapEngine.AssertToken (token, ImapTokenType.OpenParen, ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
+
+					token = await engine.ReadTokenAsync (cancellationToken).ConfigureAwait (false);
+
+					ImapEngine.AssertToken (token, ImapTokenType.Atom, ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
+
+					// Note: Some IMAP servers (such as Zoho Mail) will return a MODSEQ of -1 in some cases (not sure why).
+					//
+					// If we get an invalid value, just ignore it.
+					//
+					// See https://github.com/jstedfast/MailKit/issues/1686 for details.
+					if (ImapEngine.TryParseNumber64 (token, out value64)) {
+						message.Fields |= MessageSummaryItems.ModSeq;
+						message.ModSeq = value64;
+
+						if (value64 > HighestModSeq)
+							UpdateHighestModSeq (value64);
+					}
+
+					token = await engine.ReadTokenAsync (cancellationToken).ConfigureAwait (false);
+
+					ImapEngine.AssertToken (token, ImapTokenType.CloseParen, ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
+				} else if (atom.Equals ("UID", StringComparison.OrdinalIgnoreCase)) {
+					token = await engine.ReadTokenAsync (cancellationToken).ConfigureAwait (false);
+
+					value = ImapEngine.ParseNumber (token, true, ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
+
+					message.UniqueId = new UniqueId (UidValidity, value);
+					message.Fields |= MessageSummaryItems.UniqueId;
+				} else if (atom.Equals ("EMAILID", StringComparison.OrdinalIgnoreCase)) {
+					token = await engine.ReadTokenAsync (cancellationToken).ConfigureAwait (false);
+
+					ImapEngine.AssertToken (token, ImapTokenType.OpenParen, ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
+
+					token = await engine.ReadTokenAsync (cancellationToken).ConfigureAwait (false);
+
+					ImapEngine.AssertToken (token, ImapTokenType.Atom, ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
+
+					message.Fields |= MessageSummaryItems.EmailId;
+					message.EmailId = (string) token.Value;
+
+					token = await engine.ReadTokenAsync (cancellationToken).ConfigureAwait (false);
+
+					ImapEngine.AssertToken (token, ImapTokenType.CloseParen, ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
+				} else if (atom.Equals ("THREADID", StringComparison.OrdinalIgnoreCase)) {
+					token = await engine.ReadTokenAsync (cancellationToken).ConfigureAwait (false);
+
+					if (token.Type == ImapTokenType.OpenParen) {
+						token = await engine.ReadTokenAsync (cancellationToken).ConfigureAwait (false);
+
+						ImapEngine.AssertToken (token, ImapTokenType.Atom, ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
+
+						message.Fields |= MessageSummaryItems.ThreadId;
+						message.ThreadId = (string) token.Value;
+
+						token = await engine.ReadTokenAsync (cancellationToken).ConfigureAwait (false);
+
+						ImapEngine.AssertToken (token, ImapTokenType.CloseParen, ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
+					} else {
+						ImapEngine.AssertToken (token, ImapTokenType.Nil, ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
+
+						message.Fields |= MessageSummaryItems.ThreadId;
+						message.ThreadId = null;
+					}
+				} else if (atom.Equals ("X-GM-MSGID", StringComparison.OrdinalIgnoreCase)) {
+					token = await engine.ReadTokenAsync (cancellationToken).ConfigureAwait (false);
+
+					value64 = ImapEngine.ParseNumber64 (token, true, ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
+					message.Fields |= MessageSummaryItems.GMailMessageId;
+					message.GMailMessageId = value64;
+				} else if (atom.Equals ("X-GM-THRID", StringComparison.OrdinalIgnoreCase)) {
+					token = await engine.ReadTokenAsync (cancellationToken).ConfigureAwait (false);
+
+					value64 = ImapEngine.ParseNumber64 (token, true, ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
+					message.Fields |= MessageSummaryItems.GMailThreadId;
+					message.GMailThreadId = value64;
+				} else if (atom.Equals ("X-GM-LABELS", StringComparison.OrdinalIgnoreCase)) {
+					message.GMailLabels = await ImapUtils.ParseLabelsListAsync (engine, cancellationToken).ConfigureAwait (false);
+					message.Fields |= MessageSummaryItems.GMailLabels;
+				} else if (atom.Equals ("ANNOTATION", StringComparison.OrdinalIgnoreCase)) {
+					message.Annotations = await ImapUtils.ParseAnnotationsAsync (engine, cancellationToken).ConfigureAwait (false);
+					message.Fields |= MessageSummaryItems.Annotations;
+				} else if (atom.Equals ("PREVIEW", StringComparison.OrdinalIgnoreCase)) {
+					format = string.Format (ImapEngine.GenericItemSyntaxErrorFormat, "PREVIEW", "{0}");
+					message.PreviewText = await ImapUtils.ReadNStringTokenAsync (engine, format, false, cancellationToken).ConfigureAwait (false);
+					message.Fields |= MessageSummaryItems.PreviewText;
+				} else {
+					// Unexpected or unknown token (such as XAOL.SPAM.REASON or XAOL-MSGID). Simply read 1 more token (the argument) and ignore.
+					token = await engine.ReadTokenAsync (cancellationToken).ConfigureAwait (false);
+
+					if (token.Type == ImapTokenType.OpenParen)
+						await SkipParenthesizedListAsync (engine, cancellationToken).ConfigureAwait (false);
+				}
+
+				if (parenthesized) {
+					// Note: This is the second half of the Lotus Domino IMAP server work-around.
+					token = await engine.ReadTokenAsync (cancellationToken).ConfigureAwait (false);
+					ImapEngine.AssertToken (token, ImapTokenType.CloseParen, ImapEngine.GenericUntaggedResponseSyntaxErrorFormat, "FETCH", token);
+				}
+			} while (true);
+
+			ImapEngine.AssertToken (token, ImapTokenType.CloseParen, ImapEngine.GenericUntaggedResponseSyntaxErrorFormat, "FETCH", token);
+
+			completed (message);
+		}
+
+		Task UntaggedFetchSummaryItemsHandler (ImapEngine engine, ImapCommand ic, int index, bool doAsync)
+		{
+			var ctx = (FetchSummaryContext) ic.UserData!;
+
+			if (!ctx.TryGetValue (index, out var message)) {
+				message = new MessageSummary (index);
 				ctx.Add (index, message);
 			}
 
-			await FetchSummaryItemsAsync (engine, message, doAsync, ic.CancellationToken).ConfigureAwait (false);
+			if (doAsync)
+				return ParseSummaryItemsAsync (engine, message, OnMessageSummaryFetched, ic.CancellationToken);
 
-			OnMessageSummaryFetched (message);
+			ParseSummaryItems (engine, message, OnMessageSummaryFetched, ic.CancellationToken);
+
+			return Task.CompletedTask;
 		}
 
-		internal static string FormatSummaryItems (ImapEngine engine, ref MessageSummaryItems items, HashSet<string> headers, out bool previewText, bool isNotify = false)
+		static bool IsEmptyExclude (HeaderSet headers, bool requestReferences)
 		{
-			if ((items & MessageSummaryItems.PreviewText) != 0) {
+			// return whether or not we've got an empty set of excluded headers or if the user has requested the References header *and* asked us to exclude only the References header.
+			return headers.Exclude && (headers.Count == 0 || (headers.Count == 1 && requestReferences && headers.Contains ("REFERENCES")));
+		}
+
+		internal static string FormatSummaryItems (ImapEngine engine, IFetchRequest request, out bool previewText, bool isNotify = false)
+		{
+			var items = request.Items;
+
+			if (!engine.Capabilities.Contains (ImapCapability.Preview) && (items & MessageSummaryItems.PreviewText) != 0) {
 				// if the user wants the preview text, we will also need the UIDs and BODYSTRUCTUREs
 				// so that we can request a preview of the body text in subsequent FETCH requests.
 				items |= MessageSummaryItems.BodyStructure | MessageSummaryItems.UniqueId;
+				items &= ~MessageSummaryItems.PreviewText;
 				previewText = true;
 			} else {
 				previewText = false;
@@ -456,16 +827,13 @@ namespace MailKit.Net.Imap
 			}
 
 			if (engine.QuirksMode != ImapQuirksMode.GMail && !isNotify) {
-				// first, eliminate the aliases...
-				var alias = items & ~MessageSummaryItems.PreviewText;
-
-				if (alias == MessageSummaryItems.All)
+				if (items == MessageSummaryItems.All)
 					return "ALL";
 
-				if (alias == MessageSummaryItems.Full)
+				if (items == MessageSummaryItems.Full)
 					return "FULL";
 
-				if (alias == MessageSummaryItems.Fast)
+				if (items == MessageSummaryItems.Fast)
 					return "FAST";
 			}
 
@@ -487,29 +855,42 @@ namespace MailKit.Net.Imap
 			if ((items & MessageSummaryItems.Body) != 0)
 				tokens.Add ("BODY");
 
-			if ((engine.Capabilities & ImapCapabilities.CondStore) != 0) {
+			if (engine.Capabilities.Contains (ImapCapability.CondStore)) {
 				if ((items & MessageSummaryItems.ModSeq) != 0)
 					tokens.Add ("MODSEQ");
 			}
 
-			if ((engine.Capabilities & ImapCapabilities.Annotate) != 0) {
+			if (engine.Capabilities.Contains (ImapCapability.Annotate)) {
 				if ((items & MessageSummaryItems.Annotations) != 0)
 					tokens.Add ("ANNOTATION (/* (value size))");
 			}
 
-			if ((engine.Capabilities & ImapCapabilities.ObjectID) != 0) {
+			if (engine.Capabilities.Contains (ImapCapability.ObjectID)) {
 				if ((items & MessageSummaryItems.EmailId) != 0)
 					tokens.Add ("EMAILID");
 				if ((items & MessageSummaryItems.ThreadId) != 0)
 					tokens.Add ("THREADID");
 			}
 
-			if ((engine.Capabilities & ImapCapabilities.SaveDate) != 0) {
+			if (engine.Capabilities.Contains (ImapCapability.SaveDate)) {
 				if ((items & MessageSummaryItems.SaveDate) != 0)
 					tokens.Add ("SAVEDATE");
 			}
 
-			if ((engine.Capabilities & ImapCapabilities.GMailExt1) != 0) {
+			if (engine.Capabilities.Contains (ImapCapability.Preview)) {
+				if ((items & MessageSummaryItems.PreviewText) != 0) {
+#if ENABLE_LAZY_PREVIEW_API
+					if (request.PreviewOptions == PreviewOptions.Lazy)
+						tokens.Add ("PREVIEW (LAZY)");
+					else
+						tokens.Add ("PREVIEW");
+#else
+					tokens.Add ("PREVIEW");
+#endif
+				}
+			}
+
+			if (engine.Capabilities.Contains (ImapCapability.GMailExt1)) {
 				// now for the GMail extension items
 				if ((items & MessageSummaryItems.GMailMessageId) != 0)
 					tokens.Add ("X-GM-MSGID");
@@ -519,47 +900,52 @@ namespace MailKit.Net.Imap
 					tokens.Add ("X-GM-LABELS");
 			}
 
-			if ((items & MessageSummaryItems.Headers) != 0) {
-				tokens.Add ("BODY.PEEK[HEADER]");
-			} else if ((items & MessageSummaryItems.References) != 0 || headers.Count > 0) {
-				var headerFields = new StringBuilder ("BODY.PEEK[HEADER.FIELDS (");
-				var references = false;
+			if (request.Headers != null) {
+				bool requestReferences = (items & MessageSummaryItems.References) != 0;
 
-				foreach (var header in headers) {
-					if (header.Equals ("REFERENCES", StringComparison.OrdinalIgnoreCase))
-						references = true;
+				if (IsEmptyExclude (request.Headers, requestReferences)) {
+					tokens.Add ("BODY.PEEK[HEADER]");
+				} else if (request.Headers.Exclude) {
+					var headerFields = new StringBuilder ("BODY.PEEK[HEADER.FIELDS.NOT (");
 
-					headerFields.Append (header);
-					headerFields.Append (' ');
+					foreach (var header in request.Headers) {
+						if (requestReferences && header.Equals ("REFERENCES", StringComparison.Ordinal))
+							continue;
+
+						headerFields.Append (header);
+						headerFields.Append (' ');
+					}
+
+					headerFields[headerFields.Length - 1] = ')';
+					headerFields.Append (']');
+
+					tokens.Add (headerFields.ToString ());
+				} else {
+					var headerFields = new StringBuilder ("BODY.PEEK[HEADER.FIELDS (");
+
+					foreach (var header in request.Headers) {
+						headerFields.Append (header);
+						headerFields.Append (' ');
+					}
+
+					if (requestReferences && !request.Headers.Contains ("REFERENCES"))
+						headerFields.Append ("REFERENCES ");
+
+					headerFields[headerFields.Length - 1] = ')';
+					headerFields.Append (']');
+
+					tokens.Add (headerFields.ToString ());
 				}
-
-				if ((items & MessageSummaryItems.References) != 0 && !references)
-					headerFields.Append ("REFERENCES ");
-
-				headerFields[headerFields.Length - 1] = ')';
-				headerFields.Append (']');
-
-				tokens.Add (headerFields.ToString ());
+			} else if ((items & MessageSummaryItems.Headers) != 0) {
+				tokens.Add ("BODY.PEEK[HEADER]");
+			} else if ((items & MessageSummaryItems.References) != 0) {
+				tokens.Add ("BODY.PEEK[HEADER.FIELDS (REFERENCES)]");
 			}
 
 			if (tokens.Count == 1 && !isNotify)
 				return tokens[0];
 
 			return string.Format ("({0})", string.Join (" ", tokens));
-		}
-
-		string FormatSummaryItems (ref MessageSummaryItems items, HashSet<string> headers, out bool previewText)
-		{
-			return FormatSummaryItems (Engine, ref items, headers, out previewText);
-		}
-
-		static IList<IMessageSummary> AsReadOnly (ICollection<IMessageSummary> collection)
-		{
-			var array = new IMessageSummary[collection.Count];
-
-			collection.CopyTo (array, 0);
-
-			return new ReadOnlyCollection<IMessageSummary> (array);
 		}
 
 		class FetchPreviewTextContext : FetchStreamContextBase
@@ -576,12 +962,10 @@ namespace MailKit.Net.Imap
 				this.ctx = ctx;
 			}
 
-			public override Task AddAsync (Section section, bool doAsync, CancellationToken cancellationToken)
+			public override void Add (Section section, CancellationToken cancellationToken)
 			{
-				MessageSummary message;
-
-				if (!ctx.TryGetValue (section.Index, out message))
-					return Complete;
+				if (!ctx.TryGetValue (section.Index, out var message))
+					return;
 
 				var body = message.TextBody;
 				TextPreviewer previewer;
@@ -594,20 +978,18 @@ namespace MailKit.Net.Imap
 				}
 
 				if (body == null)
-					return Complete;
+					return;
 
 				var charset = body.ContentType.Charset ?? "utf-8";
 				ContentEncoding encoding;
 
-				if (!string.IsNullOrEmpty (body.ContentTransferEncoding))
-					MimeUtils.TryParse (body.ContentTransferEncoding, out encoding);
-				else
-					encoding = ContentEncoding.Default;
+				if (string.IsNullOrEmpty (body.ContentTransferEncoding) || !MimeUtils.TryParse (body.ContentTransferEncoding, out encoding))
+					encoding = ContentEncoding.Unspecified;
 
 				using (var memory = new MemoryStream ()) {
 					var content = new MimeContent (section.Stream, encoding);
 
-					content.DecodeTo (memory);
+					content.DecodeTo (memory, cancellationToken);
 					memory.Position = 0;
 
 					try {
@@ -615,73 +997,92 @@ namespace MailKit.Net.Imap
 					} catch (DecoderFallbackException) {
 						memory.Position = 0;
 
-						message.PreviewText = previewer.GetPreviewText (memory, ImapEngine.Latin1);
+						message.PreviewText = previewer.GetPreviewText (memory, TextEncodings.Latin1);
 					}
 
 					message.Fields |= MessageSummaryItems.PreviewText;
 					folder.OnMessageSummaryFetched (message);
 				}
 
-				return Complete;
+				return;
 			}
 
-			public override Task SetUniqueIdAsync (int index, UniqueId uid, bool doAsync, CancellationToken cancellationToken)
+			public override void SetUniqueId (int index, UniqueId uid, CancellationToken cancellationToken)
 			{
-				return Complete;
+				// no-op
 			}
 		}
 
-		async Task FetchPreviewTextAsync (FetchSummaryContext sctx, Dictionary<string, UniqueIdSet> bodies, int octets, bool doAsync, CancellationToken cancellationToken)
+		void ProcessFetchResponse (ImapCommand ic)
+		{
+			ProcessResponseCodes (ic, null);
+
+			ic.ThrowIfNotOk ("FETCH");
+		}
+
+		ImapCommand QueueFetchPreviewTextCommand (FetchSummaryContext sctx, KeyValuePair<string, UniqueIdSet> pair, int octets, CancellationToken cancellationToken)
+		{
+			var uids = pair.Value;
+			string specifier;
+
+			if (!string.IsNullOrEmpty (pair.Key))
+				specifier = pair.Key;
+			else
+				specifier = "TEXT";
+
+			var command = string.Format (CultureInfo.InvariantCulture, "UID FETCH {0} (BODY.PEEK[{1}]<0.{2}>)\r\n", uids, specifier, octets);
+			var ic = new ImapCommand (Engine, cancellationToken, this, command);
+			var ctx = new FetchPreviewTextContext (this, sctx);
+
+			ic.RegisterUntaggedHandler ("FETCH", FetchStreamHandler);
+			ic.UserData = ctx;
+
+			Engine.QueueCommand (ic);
+
+			return ic;
+		}
+
+		void FetchPreviewText (FetchSummaryContext sctx, Dictionary<string, UniqueIdSet> bodies, int octets, CancellationToken cancellationToken)
 		{
 			foreach (var pair in bodies) {
-				var uids = pair.Value;
-				string specifier;
-
-				if (!string.IsNullOrEmpty (pair.Key))
-					specifier = pair.Key;
-				else
-					specifier = "TEXT";
-
-				// TODO: if the IMAP server supports the CONVERT extension, we could possibly use the
-				// CONVERT command instead to decode *and* convert (html) into utf-8 plain text.
-				//
-				// e.g. "UID CONVERT {0} (\"text/plain\" (\"charset\" \"utf-8\")) BINARY[{1}]<0.{2}>\r\n"
-				//
-				// This would allow us to more accurately fetch X number of characters because we wouldn't
-				// need to guestimate accounting for base64/quoted-printable decoding.
-
-				var command = string.Format (CultureInfo.InvariantCulture, "UID FETCH {0} (BODY.PEEK[{1}]<0.{2}>)\r\n", uids, specifier, octets);
-				var ic = new ImapCommand (Engine, cancellationToken, this, command);
-				var ctx = new FetchPreviewTextContext (this, sctx);
-
-				ic.RegisterUntaggedHandler ("FETCH", FetchStreamAsync);
-				ic.UserData = ctx;
-
-				Engine.QueueCommand (ic);
+				var ic = QueueFetchPreviewTextCommand (sctx, pair, octets, cancellationToken);
+				var ctx = (FetchPreviewTextContext) ic.UserData!;
 
 				try {
-					await Engine.RunAsync (ic, doAsync).ConfigureAwait (false);
+					Engine.Run (ic);
 
-					ProcessResponseCodes (ic, null);
-
-					if (ic.Response != ImapCommandResponse.Ok)
-						throw ImapCommandException.Create ("FETCH", ic);
+					ProcessFetchResponse (ic);
 				} finally {
 					ctx.Dispose ();
 				}
 			}
 		}
 
-		async Task GetPreviewTextAsync (FetchSummaryContext sctx, bool doAsync, CancellationToken cancellationToken)
+		async Task FetchPreviewTextAsync (FetchSummaryContext sctx, Dictionary<string, UniqueIdSet> bodies, int octets, CancellationToken cancellationToken)
 		{
-			var textBodies = new Dictionary<string, UniqueIdSet> ();
-			var htmlBodies = new Dictionary<string, UniqueIdSet> ();
+			foreach (var pair in bodies) {
+				var ic = QueueFetchPreviewTextCommand (sctx, pair, octets, cancellationToken);
+				var ctx = (FetchPreviewTextContext) ic.UserData!;
+
+				try {
+					await Engine.RunAsync (ic).ConfigureAwait (false);
+
+					ProcessFetchResponse (ic);
+				} finally {
+					ctx.Dispose ();
+				}
+			}
+		}
+
+		void CreateFetchPreviewTextMappings (FetchSummaryContext sctx, out Dictionary<string, UniqueIdSet> textBodies, out Dictionary<string, UniqueIdSet> htmlBodies)
+		{
+			textBodies = new Dictionary<string, UniqueIdSet> ();
+			htmlBodies = new Dictionary<string, UniqueIdSet> ();
 
 			foreach (var item in sctx.Messages) {
 				Dictionary<string, UniqueIdSet> bodies;
 				var message = (MessageSummary) item;
 				var body = message.TextBody;
-				UniqueIdSet uids;
 
 				if (body == null) {
 					body = message.HtmlBody;
@@ -690,217 +1091,134 @@ namespace MailKit.Net.Imap
 					bodies = textBodies;
 				}
 
-				if (body == null) {
+				if (body == null || body.Octets == 0) {
 					message.Fields |= MessageSummaryItems.PreviewText;
 					message.PreviewText = string.Empty;
 					OnMessageSummaryFetched (message);
 					continue;
 				}
 
-				if (!bodies.TryGetValue (body.PartSpecifier, out uids)) {
+				if (!bodies.TryGetValue (body.PartSpecifier, out var uids)) {
 					uids = new UniqueIdSet (SortOrder.Ascending);
 					bodies.Add (body.PartSpecifier, uids);
 				}
 
 				uids.Add (message.UniqueId);
 			}
+		}
+
+		void GetPreviewText (FetchSummaryContext sctx, CancellationToken cancellationToken)
+		{
+			CreateFetchPreviewTextMappings (sctx, out var textBodies, out var htmlBodies);
 
 			MessageExpunged += sctx.OnMessageExpunged;
 
 			try {
-				await FetchPreviewTextAsync (sctx, textBodies, PreviewTextLength, doAsync, cancellationToken).ConfigureAwait (false);
-				await FetchPreviewTextAsync (sctx, htmlBodies, PreviewHtmlLength, doAsync, cancellationToken).ConfigureAwait (false);
+				FetchPreviewText (sctx, textBodies, PreviewTextLength, cancellationToken);
+				FetchPreviewText (sctx, htmlBodies, PreviewHtmlLength, cancellationToken);
 			} finally {
 				MessageExpunged -= sctx.OnMessageExpunged;
 			}
 		}
 
-		async Task<IList<IMessageSummary>> FetchAsync (IList<UniqueId> uids, MessageSummaryItems items, bool doAsync, CancellationToken cancellationToken)
+		async Task GetPreviewTextAsync (FetchSummaryContext sctx, CancellationToken cancellationToken)
 		{
-			bool previewText;
+			CreateFetchPreviewTextMappings (sctx, out var textBodies, out var htmlBodies);
 
-			if (uids == null)
-				throw new ArgumentNullException (nameof (uids));
-
-			if (items == MessageSummaryItems.None)
-				throw new ArgumentOutOfRangeException (nameof (items));
-
-			CheckState (true, false);
-
-			if (uids.Count == 0)
-				return new IMessageSummary[0];
-
-			var query = FormatSummaryItems (ref items, EmptyHeaderFields, out previewText);
-			var command = string.Format ("UID FETCH %s {0}\r\n", query);
-			var ctx = new FetchSummaryContext ();
-
-			MessageExpunged += ctx.OnMessageExpunged;
+			MessageExpunged += sctx.OnMessageExpunged;
 
 			try {
-				foreach (var ic in Engine.CreateCommands (cancellationToken, this, command, uids)) {
-					ic.RegisterUntaggedHandler ("FETCH", FetchSummaryItemsAsync);
-					ic.UserData = ctx;
-
-					Engine.QueueCommand (ic);
-
-					await Engine.RunAsync (ic, doAsync).ConfigureAwait (false);
-
-					ProcessResponseCodes (ic, null);
-
-					if (ic.Response != ImapCommandResponse.Ok)
-						throw ImapCommandException.Create ("FETCH", ic);
-				}
+				await FetchPreviewTextAsync (sctx, textBodies, PreviewTextLength, cancellationToken).ConfigureAwait (false);
+				await FetchPreviewTextAsync (sctx, htmlBodies, PreviewHtmlLength, cancellationToken).ConfigureAwait (false);
 			} finally {
-				MessageExpunged -= ctx.OnMessageExpunged;
+				MessageExpunged -= sctx.OnMessageExpunged;
 			}
-
-			if (previewText)
-				await GetPreviewTextAsync (ctx, doAsync, cancellationToken).ConfigureAwait (false);
-
-			return AsReadOnly (ctx.Messages);
 		}
 
-		async Task<IList<IMessageSummary>> FetchAsync (IList<UniqueId> uids, MessageSummaryItems items, IEnumerable<string> headers, bool doAsync, CancellationToken cancellationToken)
+		internal static bool IsEmptyFetchRequest (IFetchRequest request)
 		{
-			bool previewText;
+			return request.Items == MessageSummaryItems.None && (request.Headers == null || (request.Headers.Count == 0 && !request.Headers.Exclude));
+		}
 
+		bool CheckCanFetch (IList<UniqueId> uids, IFetchRequest request)
+		{
 			if (uids == null)
 				throw new ArgumentNullException (nameof (uids));
 
-			var headerFields = ImapUtils.GetUniqueHeaders (headers);
+			if (request == null)
+				throw new ArgumentNullException (nameof (request));
 
-			CheckState (true, false);
-
-			if (uids.Count == 0)
-				return new IMessageSummary[0];
-
-			var query = FormatSummaryItems (ref items, headerFields, out previewText);
-			var command = string.Format ("UID FETCH %s {0}\r\n", query);
-			var ctx = new FetchSummaryContext ();
-
-			MessageExpunged += ctx.OnMessageExpunged;
-
-			try {
-				foreach (var ic in Engine.CreateCommands (cancellationToken, this, command, uids)) {
-					ic.RegisterUntaggedHandler ("FETCH", FetchSummaryItemsAsync);
-					ic.UserData = ctx;
-
-					Engine.QueueCommand (ic);
-
-					await Engine.RunAsync (ic, doAsync).ConfigureAwait (false);
-
-					ProcessResponseCodes (ic, null);
-
-					if (ic.Response != ImapCommandResponse.Ok)
-						throw ImapCommandException.Create ("FETCH", ic);
-				}
-			} finally {
-				MessageExpunged -= ctx.OnMessageExpunged;
-			}
-
-			if (previewText)
-				await GetPreviewTextAsync (ctx, doAsync, cancellationToken).ConfigureAwait (false);
-
-			return AsReadOnly (ctx.Messages);
-		}
-
-		async Task<IList<IMessageSummary>> FetchAsync (IList<UniqueId> uids, ulong modseq, MessageSummaryItems items, bool doAsync, CancellationToken cancellationToken)
-		{
-			bool previewText;
-
-			if (uids == null)
-				throw new ArgumentNullException (nameof (uids));
-
-			if (items == MessageSummaryItems.None)
-				throw new ArgumentOutOfRangeException (nameof (items));
-
-			if (!supportsModSeq)
+			if (request.ChangedSince.HasValue && !supportsModSeq)
 				throw new NotSupportedException ("The ImapFolder does not support mod-sequences.");
 
+			if (request.PartialRange.HasValue && !Engine.Capabilities.Contains (ImapCapability.Partial))
+				throw new NotSupportedException ("The IMAP server does not support the PARTIAL extension.");
+
 			CheckState (true, false);
 
-			if (uids.Count == 0)
-				return new IMessageSummary[0];
-
-			var query = FormatSummaryItems (ref items, EmptyHeaderFields, out previewText);
-			var vanished = Engine.QResyncEnabled ? " VANISHED" : string.Empty;
-			var modseqValue = modseq.ToString (CultureInfo.InvariantCulture);
-			var command = string.Format ("UID FETCH %s {0} (CHANGEDSINCE {1}{2})\r\n", query, modseqValue, vanished);
-			var ctx = new FetchSummaryContext ();
-
-			MessageExpunged += ctx.OnMessageExpunged;
-
-			try {
-				foreach (var ic in Engine.CreateCommands (cancellationToken, this, command, uids)) {
-					ic.RegisterUntaggedHandler ("FETCH", FetchSummaryItemsAsync);
-					ic.UserData = ctx;
-
-					Engine.QueueCommand (ic);
-
-					await Engine.RunAsync (ic, doAsync).ConfigureAwait (false);
-
-					ProcessResponseCodes (ic, null);
-
-					if (ic.Response != ImapCommandResponse.Ok)
-						throw ImapCommandException.Create ("FETCH", ic);
-				}
-			} finally {
-				MessageExpunged -= ctx.OnMessageExpunged;
-			}
-
-			if (previewText)
-				await GetPreviewTextAsync (ctx, doAsync, cancellationToken).ConfigureAwait (false);
-
-			return AsReadOnly (ctx.Messages);
+			return uids.Count > 0 && !IsEmptyFetchRequest (request);
 		}
 
-		async Task<IList<IMessageSummary>> FetchAsync (IList<UniqueId> uids, ulong modseq, MessageSummaryItems items, IEnumerable<string> headers, bool doAsync, CancellationToken cancellationToken)
+		string CreateFetchCommand (IList<UniqueId> uids, IFetchRequest request, out bool previewText)
 		{
-			bool previewText;
+			var query = FormatSummaryItems (Engine, request, out previewText);
+			var command = new StringBuilder ("UID FETCH %s ");
 
-			if (uids == null)
-				throw new ArgumentNullException (nameof (uids));
+			command.Append (query);
 
-			var headerFields = ImapUtils.GetUniqueHeaders (headers);
+			if (request.ChangedSince.HasValue || request.PartialRange.HasValue) {
+				command.Append (" (");
 
-			if (!supportsModSeq)
-				throw new NotSupportedException ("The ImapFolder does not support mod-sequences.");
+				if (request.ChangedSince.HasValue) {
+					command.AppendFormat (CultureInfo.InvariantCulture, "CHANGEDSINCE {0}", request.ChangedSince.Value);
 
-			CheckState (true, false);
+					if (Engine.QResyncEnabled)
+						command.Append (" VANISHED");
 
-			if (uids.Count == 0)
-				return new IMessageSummary[0];
-
-			var query = FormatSummaryItems (ref items, headerFields, out previewText);
-			var vanished = Engine.QResyncEnabled ? " VANISHED" : string.Empty;
-			var modseqValue = modseq.ToString (CultureInfo.InvariantCulture);
-			var command = string.Format ("UID FETCH %s {0} (CHANGEDSINCE {1}{2})\r\n", query, modseqValue, vanished);
-			var ctx = new FetchSummaryContext ();
-
-			MessageExpunged += ctx.OnMessageExpunged;
-
-			try {
-				foreach (var ic in Engine.CreateCommands (cancellationToken, this, command, uids)) {
-					ic.RegisterUntaggedHandler ("FETCH", FetchSummaryItemsAsync);
-					ic.UserData = ctx;
-
-					Engine.QueueCommand (ic);
-
-					await Engine.RunAsync (ic, doAsync).ConfigureAwait (false);
-
-					ProcessResponseCodes (ic, null);
-
-					if (ic.Response != ImapCommandResponse.Ok)
-						throw ImapCommandException.Create ("FETCH", ic);
+					if (request.PartialRange.HasValue)
+						command.Append (' ');
 				}
-			} finally {
-				MessageExpunged -= ctx.OnMessageExpunged;
+
+				if (request.PartialRange.HasValue)
+					command.Append ("PARTIAL ").Append (request.PartialRange.Value);
+
+				command.Append (')');
 			}
 
-			if (previewText)
-				await GetPreviewTextAsync (ctx, doAsync, cancellationToken).ConfigureAwait (false);
+			command.Append ("\r\n");
 
-			return AsReadOnly (ctx.Messages);
+			return command.ToString ();
+		}
+
+		IEnumerable<ImapCommand> CreateFetchCommands (IList<UniqueId> uids, IFetchRequest request, string command, CancellationToken cancellationToken)
+		{
+			var commands = Engine.CreateCommands (cancellationToken, this, command, uids);
+
+			if (request.PartialRange.HasValue) {
+				// Note: The PARTIAL fetch modifier applies to each FETCH command individually, so splitting the
+				// set of UIDs into multiple FETCH commands would change the semantics of the request.
+				var list = new List<ImapCommand> (commands);
+
+				if (list.Count > 1)
+					throw new NotSupportedException ("The set of unique identifiers is too large to fetch with a partial range.");
+
+				return list;
+			}
+
+			return commands;
+		}
+
+		static int EstimateInitialCapacity (IList<UniqueId> uids)
+		{
+			if (uids is UniqueIdRange || uids is UniqueIdSet) {
+				// UniqueIdRange is likely to refer to UIDs that have not yet been assigned or have been expunged,
+				// so cap our maximum initial capacity to 1024 (a reasonable limit?).
+				return Math.Min (uids.Count, 1024);
+			}
+
+			// If the user supplied an exact set of UIDs, then we'll assume they all exist
+			// and therefore we can use the capacity of `uids` as our initial capacity.
+			return uids.Count;
 		}
 
 		/// <summary>
@@ -916,17 +1234,16 @@ namespace MailKit.Net.Imap
 		/// not requested at all.</para>
 		/// </remarks>
 		/// <example>
-		/// <code language="c#" source="Examples\ImapExamples.cs" region="DownloadBodyParts"/>
+		/// <code language="c#" source="Examples\ImapBodyPartExamples.cs" region="GetBodyPartsByUniqueId"/>
 		/// </example>
 		/// <returns>An enumeration of summaries for the requested messages.</returns>
 		/// <param name="uids">The UIDs.</param>
-		/// <param name="items">The message summary items to fetch.</param>
+		/// <param name="request">The fetch request.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="uids"/> is <c>null</c>.
-		/// </exception>
-		/// <exception cref="System.ArgumentOutOfRangeException">
-		/// <paramref name="items"/> is empty.
+		/// <para><paramref name="uids"/> is <see langword="null" />.</para>
+		/// <para>-or-</para>
+		/// <para><paramref name="request"/> is <see langword="null" />.</para>
 		/// </exception>
 		/// <exception cref="System.ArgumentException">
 		/// One or more of the <paramref name="uids"/> is invalid.
@@ -946,6 +1263,13 @@ namespace MailKit.Net.Imap
 		/// <exception cref="System.OperationCanceledException">
 		/// The operation was canceled via the cancellation token.
 		/// </exception>
+		/// <exception cref="System.NotSupportedException">
+		/// <para>The <see cref="ImapFolder"/> does not support mod-sequences.</para>
+		/// <para>-or-</para>
+		/// <para>The IMAP server does not support the PARTIAL extension.</para>
+		/// <para>-or-</para>
+		/// <para>The set of unique identifiers is too large to fetch with a partial range.</para>
+		/// </exception>
 		/// <exception cref="System.IO.IOException">
 		/// An I/O error occurred.
 		/// </exception>
@@ -955,9 +1279,42 @@ namespace MailKit.Net.Imap
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override IList<IMessageSummary> Fetch (IList<UniqueId> uids, MessageSummaryItems items, CancellationToken cancellationToken = default (CancellationToken))
+		public override IList<IMessageSummary> Fetch (IList<UniqueId> uids, IFetchRequest request, CancellationToken cancellationToken = default)
 		{
-			return FetchAsync (uids, items, false, cancellationToken).GetAwaiter ().GetResult ();
+			if (!CheckCanFetch (uids, request))
+				return Array.Empty<IMessageSummary> ();
+
+			var command = CreateFetchCommand (uids, request, out bool previewText);
+			var ctx = new FetchSummaryContext (EstimateInitialCapacity (uids));
+
+			MessageExpunged += ctx.OnMessageExpunged;
+
+			try {
+				foreach (var ic in CreateFetchCommands (uids, request, command, cancellationToken)) {
+					var chunk = ic.UniqueIds!;
+
+					ic.RegisterUntaggedHandler ("FETCH", UntaggedFetchSummaryItemsHandler);
+					ic.UserData = ctx;
+
+					request.OnStarted (this, chunk);
+
+					ic.InProgressHandler = (processed, total) => request.OnProgress (this, processed, total);
+					Engine.QueueCommand (ic);
+
+					Engine.Run (ic);
+
+					ProcessFetchResponse (ic);
+
+					request.OnCompleted (this, chunk);
+				}
+			} finally {
+				MessageExpunged -= ctx.OnMessageExpunged;
+			}
+
+			if (previewText)
+				GetPreviewText (ctx, cancellationToken);
+
+			return ctx.Messages.AsReadOnly ();
 		}
 
 		/// <summary>
@@ -973,17 +1330,16 @@ namespace MailKit.Net.Imap
 		/// not requested at all.</para>
 		/// </remarks>
 		/// <example>
-		/// <code language="c#" source="Examples\ImapExamples.cs" region="DownloadBodyParts"/>
+		/// <code language="c#" source="Examples\ImapBodyPartExamples.cs" region="GetBodyPartsByUniqueId"/>
 		/// </example>
 		/// <returns>An enumeration of summaries for the requested messages.</returns>
 		/// <param name="uids">The UIDs.</param>
-		/// <param name="items">The message summary items to fetch.</param>
+		/// <param name="request">The fetch request.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="uids"/> is <c>null</c>.
-		/// </exception>
-		/// <exception cref="System.ArgumentOutOfRangeException">
-		/// <paramref name="items"/> is empty.
+		/// <para><paramref name="uids"/> is <see langword="null" />.</para>
+		/// <para>-or-</para>
+		/// <para><paramref name="request"/> is <see langword="null" />.</para>
 		/// </exception>
 		/// <exception cref="System.ArgumentException">
 		/// One or more of the <paramref name="uids"/> is invalid.
@@ -1002,290 +1358,13 @@ namespace MailKit.Net.Imap
 		/// </exception>
 		/// <exception cref="System.OperationCanceledException">
 		/// The operation was canceled via the cancellation token.
-		/// </exception>
-		/// <exception cref="System.IO.IOException">
-		/// An I/O error occurred.
-		/// </exception>
-		/// <exception cref="ImapProtocolException">
-		/// The server's response contained unexpected tokens.
-		/// </exception>
-		/// <exception cref="ImapCommandException">
-		/// The server replied with a NO or BAD response.
-		/// </exception>
-		public override Task<IList<IMessageSummary>> FetchAsync (IList<UniqueId> uids, MessageSummaryItems items, CancellationToken cancellationToken = default (CancellationToken))
-		{
-			return FetchAsync (uids, items, true, cancellationToken);
-		}
-
-		/// <summary>
-		/// Fetches the message summaries for the specified message UIDs.
-		/// </summary>
-		/// <remarks>
-		/// <para>Fetches the message summaries for the specified message UIDs.</para>
-		/// <para>It should be noted that if another client has modified any message
-		/// in the folder, the IMAP server may choose to return information that was
-		/// not explicitly requested. It is therefore important to be prepared to
-		/// handle both additional fields on a <see cref="IMessageSummary"/> for
-		/// messages that were requested as well as summaries for messages that were
-		/// not requested at all.</para>
-		/// </remarks>
-		/// <returns>An enumeration of summaries for the requested messages.</returns>
-		/// <param name="uids">The UIDs.</param>
-		/// <param name="items">The message summary items to fetch.</param>
-		/// <param name="headers">The desired header fields.</param>
-		/// <param name="cancellationToken">The cancellation token.</param>
-		/// <exception cref="System.ArgumentNullException">
-		/// <para><paramref name="uids"/> is <c>null</c>.</para>
-		/// <para>-or-</para>
-		/// <para><paramref name="headers"/> is <c>null</c>.</para>
-		/// </exception>
-		/// <exception cref="System.ArgumentException">
-		/// One or more of the <paramref name="uids"/> is invalid.
-		/// </exception>
-		/// <exception cref="System.ObjectDisposedException">
-		/// The <see cref="ImapClient"/> has been disposed.
-		/// </exception>
-		/// <exception cref="ServiceNotConnectedException">
-		/// The <see cref="ImapClient"/> is not connected.
-		/// </exception>
-		/// <exception cref="ServiceNotAuthenticatedException">
-		/// The <see cref="ImapClient"/> is not authenticated.
-		/// </exception>
-		/// <exception cref="FolderNotOpenException">
-		/// The <see cref="ImapFolder"/> is not currently open.
-		/// </exception>
-		/// <exception cref="System.OperationCanceledException">
-		/// The operation was canceled via the cancellation token.
-		/// </exception>
-		/// <exception cref="System.IO.IOException">
-		/// An I/O error occurred.
-		/// </exception>
-		/// <exception cref="ImapProtocolException">
-		/// The server's response contained unexpected tokens.
-		/// </exception>
-		/// <exception cref="ImapCommandException">
-		/// The server replied with a NO or BAD response.
-		/// </exception>
-		public override IList<IMessageSummary> Fetch (IList<UniqueId> uids, MessageSummaryItems items, IEnumerable<HeaderId> headers, CancellationToken cancellationToken = default (CancellationToken))
-		{
-			return Fetch (uids, items, ImapUtils.GetUniqueHeaders (headers), cancellationToken);
-		}
-
-		/// <summary>
-		/// Asynchronously fetches the message summaries for the specified message UIDs.
-		/// </summary>
-		/// <remarks>
-		/// <para>Fetches the message summaries for the specified message UIDs.</para>
-		/// <para>It should be noted that if another client has modified any message
-		/// in the folder, the IMAP server may choose to return information that was
-		/// not explicitly requested. It is therefore important to be prepared to
-		/// handle both additional fields on a <see cref="IMessageSummary"/> for
-		/// messages that were requested as well as summaries for messages that were
-		/// not requested at all.</para>
-		/// </remarks>
-		/// <returns>An enumeration of summaries for the requested messages.</returns>
-		/// <param name="uids">The UIDs.</param>
-		/// <param name="items">The message summary items to fetch.</param>
-		/// <param name="headers">The desired header fields.</param>
-		/// <param name="cancellationToken">The cancellation token.</param>
-		/// <exception cref="System.ArgumentNullException">
-		/// <para><paramref name="uids"/> is <c>null</c>.</para>
-		/// <para>-or-</para>
-		/// <para><paramref name="headers"/> is <c>null</c>.</para>
-		/// </exception>
-		/// <exception cref="System.ArgumentException">
-		/// One or more of the <paramref name="uids"/> is invalid.
-		/// </exception>
-		/// <exception cref="System.ObjectDisposedException">
-		/// The <see cref="ImapClient"/> has been disposed.
-		/// </exception>
-		/// <exception cref="ServiceNotConnectedException">
-		/// The <see cref="ImapClient"/> is not connected.
-		/// </exception>
-		/// <exception cref="ServiceNotAuthenticatedException">
-		/// The <see cref="ImapClient"/> is not authenticated.
-		/// </exception>
-		/// <exception cref="FolderNotOpenException">
-		/// The <see cref="ImapFolder"/> is not currently open.
-		/// </exception>
-		/// <exception cref="System.OperationCanceledException">
-		/// The operation was canceled via the cancellation token.
-		/// </exception>
-		/// <exception cref="System.IO.IOException">
-		/// An I/O error occurred.
-		/// </exception>
-		/// <exception cref="ImapProtocolException">
-		/// The server's response contained unexpected tokens.
-		/// </exception>
-		/// <exception cref="ImapCommandException">
-		/// The server replied with a NO or BAD response.
-		/// </exception>
-		public override Task<IList<IMessageSummary>> FetchAsync (IList<UniqueId> uids, MessageSummaryItems items, IEnumerable<HeaderId> headers, CancellationToken cancellationToken = default (CancellationToken))
-		{
-			return FetchAsync (uids, items, ImapUtils.GetUniqueHeaders (headers), cancellationToken);
-		}
-
-		/// <summary>
-		/// Fetches the message summaries for the specified message UIDs.
-		/// </summary>
-		/// <remarks>
-		/// <para>Fetches the message summaries for the specified message UIDs.</para>
-		/// <para>It should be noted that if another client has modified any message
-		/// in the folder, the IMAP server may choose to return information that was
-		/// not explicitly requested. It is therefore important to be prepared to
-		/// handle both additional fields on a <see cref="IMessageSummary"/> for
-		/// messages that were requested as well as summaries for messages that were
-		/// not requested at all.</para>
-		/// </remarks>
-		/// <returns>An enumeration of summaries for the requested messages.</returns>
-		/// <param name="uids">The UIDs.</param>
-		/// <param name="items">The message summary items to fetch.</param>
-		/// <param name="headers">The desired header fields.</param>
-		/// <param name="cancellationToken">The cancellation token.</param>
-		/// <exception cref="System.ArgumentNullException">
-		/// <para><paramref name="uids"/> is <c>null</c>.</para>
-		/// <para>-or-</para>
-		/// <para><paramref name="headers"/> is <c>null</c>.</para>
-		/// </exception>
-		/// <exception cref="System.ArgumentException">
-		/// <para>One or more of the <paramref name="uids"/> is invalid.</para>
-		/// <para>-or-</para>
-		/// <para>One or more of the specified <paramref name="headers"/> is invalid.</para>
-		/// </exception>
-		/// <exception cref="System.ObjectDisposedException">
-		/// The <see cref="ImapClient"/> has been disposed.
-		/// </exception>
-		/// <exception cref="ServiceNotConnectedException">
-		/// The <see cref="ImapClient"/> is not connected.
-		/// </exception>
-		/// <exception cref="ServiceNotAuthenticatedException">
-		/// The <see cref="ImapClient"/> is not authenticated.
-		/// </exception>
-		/// <exception cref="FolderNotOpenException">
-		/// The <see cref="ImapFolder"/> is not currently open.
-		/// </exception>
-		/// <exception cref="System.OperationCanceledException">
-		/// The operation was canceled via the cancellation token.
-		/// </exception>
-		/// <exception cref="System.IO.IOException">
-		/// An I/O error occurred.
-		/// </exception>
-		/// <exception cref="ImapProtocolException">
-		/// The server's response contained unexpected tokens.
-		/// </exception>
-		/// <exception cref="ImapCommandException">
-		/// The server replied with a NO or BAD response.
-		/// </exception>
-		public override IList<IMessageSummary> Fetch (IList<UniqueId> uids, MessageSummaryItems items, IEnumerable<string> headers, CancellationToken cancellationToken = default (CancellationToken))
-		{
-			return FetchAsync (uids, items, headers, false, cancellationToken).GetAwaiter ().GetResult ();
-		}
-
-		/// <summary>
-		/// Asynchronously fetches the message summaries for the specified message UIDs.
-		/// </summary>
-		/// <remarks>
-		/// <para>Fetches the message summaries for the specified message UIDs.</para>
-		/// <para>It should be noted that if another client has modified any message
-		/// in the folder, the IMAP server may choose to return information that was
-		/// not explicitly requested. It is therefore important to be prepared to
-		/// handle both additional fields on a <see cref="IMessageSummary"/> for
-		/// messages that were requested as well as summaries for messages that were
-		/// not requested at all.</para>
-		/// </remarks>
-		/// <returns>An enumeration of summaries for the requested messages.</returns>
-		/// <param name="uids">The UIDs.</param>
-		/// <param name="items">The message summary items to fetch.</param>
-		/// <param name="headers">The desired header fields.</param>
-		/// <param name="cancellationToken">The cancellation token.</param>
-		/// <exception cref="System.ArgumentNullException">
-		/// <para><paramref name="uids"/> is <c>null</c>.</para>
-		/// <para>-or-</para>
-		/// <para><paramref name="headers"/> is <c>null</c>.</para>
-		/// </exception>
-		/// <exception cref="System.ArgumentException">
-		/// <para>One or more of the <paramref name="uids"/> is invalid.</para>
-		/// <para>-or-</para>
-		/// <para>One or more of the specified <paramref name="headers"/> is invalid.</para>
-		/// </exception>
-		/// <exception cref="System.ObjectDisposedException">
-		/// The <see cref="ImapClient"/> has been disposed.
-		/// </exception>
-		/// <exception cref="ServiceNotConnectedException">
-		/// The <see cref="ImapClient"/> is not connected.
-		/// </exception>
-		/// <exception cref="ServiceNotAuthenticatedException">
-		/// The <see cref="ImapClient"/> is not authenticated.
-		/// </exception>
-		/// <exception cref="FolderNotOpenException">
-		/// The <see cref="ImapFolder"/> is not currently open.
-		/// </exception>
-		/// <exception cref="System.OperationCanceledException">
-		/// The operation was canceled via the cancellation token.
-		/// </exception>
-		/// <exception cref="System.IO.IOException">
-		/// An I/O error occurred.
-		/// </exception>
-		/// <exception cref="ImapProtocolException">
-		/// The server's response contained unexpected tokens.
-		/// </exception>
-		/// <exception cref="ImapCommandException">
-		/// The server replied with a NO or BAD response.
-		/// </exception>
-		public override Task<IList<IMessageSummary>> FetchAsync (IList<UniqueId> uids, MessageSummaryItems items, IEnumerable<string> headers, CancellationToken cancellationToken = default (CancellationToken))
-		{
-			return FetchAsync (uids, items, headers, true, cancellationToken);
-		}
-
-		/// <summary>
-		/// Fetches the message summaries for the specified message UIDs that have a
-		/// higher mod-sequence value than the one specified.
-		/// </summary>
-		/// <remarks>
-		/// <para>Fetches the message summaries for the specified message UIDs that
-		/// have a higher mod-sequence value than the one specified.</para>
-		/// <para>If the IMAP server supports the QRESYNC extension and the application has
-		/// enabled this feature via <see cref="ImapClient.EnableQuickResync(CancellationToken)"/>,
-		/// then this method will emit <see cref="MailFolder.MessagesVanished"/> events for messages
-		/// that have vanished since the specified mod-sequence value.</para>
-		/// <para>It should be noted that if another client has modified any message
-		/// in the folder, the IMAP server may choose to return information that was
-		/// not explicitly requested. It is therefore important to be prepared to
-		/// handle both additional fields on a <see cref="IMessageSummary"/> for
-		/// messages that were requested as well as summaries for messages that were
-		/// not requested at all.</para>
-		/// </remarks>
-		/// <returns>An enumeration of summaries for the requested messages.</returns>
-		/// <param name="uids">The UIDs.</param>
-		/// <param name="modseq">The mod-sequence value.</param>
-		/// <param name="items">The message summary items to fetch.</param>
-		/// <param name="cancellationToken">The cancellation token.</param>
-		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="uids"/> is <c>null</c>.
-		/// </exception>
-		/// <exception cref="System.ArgumentOutOfRangeException">
-		/// <paramref name="items"/> is empty.
-		/// </exception>
-		/// <exception cref="System.ArgumentException">
-		/// One or more of the <paramref name="uids"/> is invalid.
-		/// </exception>
-		/// <exception cref="System.ObjectDisposedException">
-		/// The <see cref="ImapClient"/> has been disposed.
-		/// </exception>
-		/// <exception cref="ServiceNotConnectedException">
-		/// The <see cref="ImapClient"/> is not connected.
-		/// </exception>
-		/// <exception cref="ServiceNotAuthenticatedException">
-		/// The <see cref="ImapClient"/> is not authenticated.
-		/// </exception>
-		/// <exception cref="FolderNotOpenException">
-		/// The <see cref="ImapFolder"/> is not currently open.
 		/// </exception>
 		/// <exception cref="System.NotSupportedException">
-		/// The <see cref="ImapFolder"/> does not support mod-sequences.
-		/// </exception>
-		/// <exception cref="System.OperationCanceledException">
-		/// The operation was canceled via the cancellation token.
+		/// <para>The <see cref="ImapFolder"/> does not support mod-sequences.</para>
+		/// <para>-or-</para>
+		/// <para>The IMAP server does not support the PARTIAL extension.</para>
+		/// <para>-or-</para>
+		/// <para>The set of unique identifiers is too large to fetch with a partial range.</para>
 		/// </exception>
 		/// <exception cref="System.IO.IOException">
 		/// An I/O error occurred.
@@ -1296,553 +1375,159 @@ namespace MailKit.Net.Imap
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override IList<IMessageSummary> Fetch (IList<UniqueId> uids, ulong modseq, MessageSummaryItems items, CancellationToken cancellationToken = default (CancellationToken))
+		public override async Task<IList<IMessageSummary>> FetchAsync (IList<UniqueId> uids, IFetchRequest request, CancellationToken cancellationToken = default)
 		{
-			return FetchAsync (uids, modseq, items, false, cancellationToken).GetAwaiter ().GetResult ();
-		}
+			if (!CheckCanFetch (uids, request))
+				return Array.Empty<IMessageSummary> ();
 
-		/// <summary>
-		/// Asynchronously fetches the message summaries for the specified message UIDs that have a
-		/// higher mod-sequence value than the one specified.
-		/// </summary>
-		/// <remarks>
-		/// <para>Fetches the message summaries for the specified message UIDs that
-		/// have a higher mod-sequence value than the one specified.</para>
-		/// <para>If the IMAP server supports the QRESYNC extension and the application has
-		/// enabled this feature via <see cref="ImapClient.EnableQuickResync(CancellationToken)"/>,
-		/// then this method will emit <see cref="MailFolder.MessagesVanished"/> events for messages
-		/// that have vanished since the specified mod-sequence value.</para>
-		/// <para>It should be noted that if another client has modified any message
-		/// in the folder, the IMAP server may choose to return information that was
-		/// not explicitly requested. It is therefore important to be prepared to
-		/// handle both additional fields on a <see cref="IMessageSummary"/> for
-		/// messages that were requested as well as summaries for messages that were
-		/// not requested at all.</para>
-		/// </remarks>
-		/// <returns>An enumeration of summaries for the requested messages.</returns>
-		/// <param name="uids">The UIDs.</param>
-		/// <param name="modseq">The mod-sequence value.</param>
-		/// <param name="items">The message summary items to fetch.</param>
-		/// <param name="cancellationToken">The cancellation token.</param>
-		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="uids"/> is <c>null</c>.
-		/// </exception>
-		/// <exception cref="System.ArgumentOutOfRangeException">
-		/// <paramref name="items"/> is empty.
-		/// </exception>
-		/// <exception cref="System.ArgumentException">
-		/// One or more of the <paramref name="uids"/> is invalid.
-		/// </exception>
-		/// <exception cref="System.ObjectDisposedException">
-		/// The <see cref="ImapClient"/> has been disposed.
-		/// </exception>
-		/// <exception cref="ServiceNotConnectedException">
-		/// The <see cref="ImapClient"/> is not connected.
-		/// </exception>
-		/// <exception cref="ServiceNotAuthenticatedException">
-		/// The <see cref="ImapClient"/> is not authenticated.
-		/// </exception>
-		/// <exception cref="FolderNotOpenException">
-		/// The <see cref="ImapFolder"/> is not currently open.
-		/// </exception>
-		/// <exception cref="System.NotSupportedException">
-		/// The <see cref="ImapFolder"/> does not support mod-sequences.
-		/// </exception>
-		/// <exception cref="System.OperationCanceledException">
-		/// The operation was canceled via the cancellation token.
-		/// </exception>
-		/// <exception cref="System.IO.IOException">
-		/// An I/O error occurred.
-		/// </exception>
-		/// <exception cref="ImapProtocolException">
-		/// The server's response contained unexpected tokens.
-		/// </exception>
-		/// <exception cref="ImapCommandException">
-		/// The server replied with a NO or BAD response.
-		/// </exception>
-		public override Task<IList<IMessageSummary>> FetchAsync (IList<UniqueId> uids, ulong modseq, MessageSummaryItems items, CancellationToken cancellationToken = default (CancellationToken))
-		{
-			return FetchAsync (uids, modseq, items, true, cancellationToken);
-		}
+			var command = CreateFetchCommand (uids, request, out bool previewText);
+			var ctx = new FetchSummaryContext (EstimateInitialCapacity (uids));
 
-		/// <summary>
-		/// Fetches the message summaries for the specified message UIDs that have a
-		/// higher mod-sequence value than the one specified.
-		/// </summary>
-		/// <remarks>
-		/// <para>Fetches the message summaries for the specified message UIDs that
-		/// have a higher mod-sequence value than the one specified.</para>
-		/// <para>If the IMAP server supports the QRESYNC extension and the application has
-		/// enabled this feature via <see cref="ImapClient.EnableQuickResync(CancellationToken)"/>,
-		/// then this method will emit <see cref="MailFolder.MessagesVanished"/> events for messages
-		/// that have vanished since the specified mod-sequence value.</para>
-		/// <para>It should be noted that if another client has modified any message
-		/// in the folder, the IMAP server may choose to return information that was
-		/// not explicitly requested. It is therefore important to be prepared to
-		/// handle both additional fields on a <see cref="IMessageSummary"/> for
-		/// messages that were requested as well as summaries for messages that were
-		/// not requested at all.</para>
-		/// </remarks>
-		/// <returns>An enumeration of summaries for the requested messages.</returns>
-		/// <param name="uids">The UIDs.</param>
-		/// <param name="modseq">The mod-sequence value.</param>
-		/// <param name="items">The message summary items to fetch.</param>
-		/// <param name="headers">The desired header fields.</param>
-		/// <param name="cancellationToken">The cancellation token.</param>
-		/// <exception cref="System.ArgumentNullException">
-		/// <para><paramref name="uids"/> is <c>null</c>.</para>
-		/// <para>-or-</para>
-		/// <para><paramref name="headers"/> is <c>null</c>.</para>
-		/// </exception>
-		/// <exception cref="System.ArgumentException">
-		/// One or more of the <paramref name="uids"/> is invalid.
-		/// </exception>
-		/// <exception cref="System.ObjectDisposedException">
-		/// The <see cref="ImapClient"/> has been disposed.
-		/// </exception>
-		/// <exception cref="ServiceNotConnectedException">
-		/// The <see cref="ImapClient"/> is not connected.
-		/// </exception>
-		/// <exception cref="ServiceNotAuthenticatedException">
-		/// The <see cref="ImapClient"/> is not authenticated.
-		/// </exception>
-		/// <exception cref="FolderNotOpenException">
-		/// The <see cref="ImapFolder"/> is not currently open.
-		/// </exception>
-		/// <exception cref="System.NotSupportedException">
-		/// The <see cref="ImapFolder"/> does not support mod-sequences.
-		/// </exception>
-		/// <exception cref="System.OperationCanceledException">
-		/// The operation was canceled via the cancellation token.
-		/// </exception>
-		/// <exception cref="System.IO.IOException">
-		/// An I/O error occurred.
-		/// </exception>
-		/// <exception cref="ImapProtocolException">
-		/// The server's response contained unexpected tokens.
-		/// </exception>
-		/// <exception cref="ImapCommandException">
-		/// The server replied with a NO or BAD response.
-		/// </exception>
-		public override IList<IMessageSummary> Fetch (IList<UniqueId> uids, ulong modseq, MessageSummaryItems items, IEnumerable<HeaderId> headers, CancellationToken cancellationToken = default (CancellationToken))
-		{
-			return Fetch (uids, modseq, items, ImapUtils.GetUniqueHeaders (headers), cancellationToken);
-		}
+			MessageExpunged += ctx.OnMessageExpunged;
 
-		/// <summary>
-		/// Asynchronously fetches the message summaries for the specified message UIDs that have a
-		/// higher mod-sequence value than the one specified.
-		/// </summary>
-		/// <remarks>
-		/// <para>Fetches the message summaries for the specified message UIDs that
-		/// have a higher mod-sequence value than the one specified.</para>
-		/// <para>If the IMAP server supports the QRESYNC extension and the application has
-		/// enabled this feature via <see cref="ImapClient.EnableQuickResync(CancellationToken)"/>,
-		/// then this method will emit <see cref="MailFolder.MessagesVanished"/> events for messages
-		/// that have vanished since the specified mod-sequence value.</para>
-		/// <para>It should be noted that if another client has modified any message
-		/// in the folder, the IMAP server may choose to return information that was
-		/// not explicitly requested. It is therefore important to be prepared to
-		/// handle both additional fields on a <see cref="IMessageSummary"/> for
-		/// messages that were requested as well as summaries for messages that were
-		/// not requested at all.</para>
-		/// </remarks>
-		/// <returns>An enumeration of summaries for the requested messages.</returns>
-		/// <param name="uids">The UIDs.</param>
-		/// <param name="modseq">The mod-sequence value.</param>
-		/// <param name="items">The message summary items to fetch.</param>
-		/// <param name="headers">The desired header fields.</param>
-		/// <param name="cancellationToken">The cancellation token.</param>
-		/// <exception cref="System.ArgumentNullException">
-		/// <para><paramref name="uids"/> is <c>null</c>.</para>
-		/// <para>-or-</para>
-		/// <para><paramref name="headers"/> is <c>null</c>.</para>
-		/// </exception>
-		/// <exception cref="System.ArgumentException">
-		/// One or more of the <paramref name="uids"/> is invalid.
-		/// </exception>
-		/// <exception cref="System.ObjectDisposedException">
-		/// The <see cref="ImapClient"/> has been disposed.
-		/// </exception>
-		/// <exception cref="ServiceNotConnectedException">
-		/// The <see cref="ImapClient"/> is not connected.
-		/// </exception>
-		/// <exception cref="ServiceNotAuthenticatedException">
-		/// The <see cref="ImapClient"/> is not authenticated.
-		/// </exception>
-		/// <exception cref="FolderNotOpenException">
-		/// The <see cref="ImapFolder"/> is not currently open.
-		/// </exception>
-		/// <exception cref="System.NotSupportedException">
-		/// The <see cref="ImapFolder"/> does not support mod-sequences.
-		/// </exception>
-		/// <exception cref="System.OperationCanceledException">
-		/// The operation was canceled via the cancellation token.
-		/// </exception>
-		/// <exception cref="System.IO.IOException">
-		/// An I/O error occurred.
-		/// </exception>
-		/// <exception cref="ImapProtocolException">
-		/// The server's response contained unexpected tokens.
-		/// </exception>
-		/// <exception cref="ImapCommandException">
-		/// The server replied with a NO or BAD response.
-		/// </exception>
-		public override Task<IList<IMessageSummary>> FetchAsync (IList<UniqueId> uids, ulong modseq, MessageSummaryItems items, IEnumerable<HeaderId> headers, CancellationToken cancellationToken = default (CancellationToken))
-		{
-			return FetchAsync (uids, modseq, items, ImapUtils.GetUniqueHeaders (headers), cancellationToken);
-		}
+			try {
+				foreach (var ic in CreateFetchCommands (uids, request, command, cancellationToken)) {
+					var chunk = ic.UniqueIds!;
 
-		/// <summary>
-		/// Fetches the message summaries for the specified message UIDs that have a
-		/// higher mod-sequence value than the one specified.
-		/// </summary>
-		/// <remarks>
-		/// <para>Fetches the message summaries for the specified message UIDs that
-		/// have a higher mod-sequence value than the one specified.</para>
-		/// <para>If the IMAP server supports the QRESYNC extension and the application has
-		/// enabled this feature via <see cref="ImapClient.EnableQuickResync(CancellationToken)"/>,
-		/// then this method will emit <see cref="MailFolder.MessagesVanished"/> events for messages
-		/// that have vanished since the specified mod-sequence value.</para>
-		/// <para>It should be noted that if another client has modified any message
-		/// in the folder, the IMAP server may choose to return information that was
-		/// not explicitly requested. It is therefore important to be prepared to
-		/// handle both additional fields on a <see cref="IMessageSummary"/> for
-		/// messages that were requested as well as summaries for messages that were
-		/// not requested at all.</para>
-		/// </remarks>
-		/// <returns>An enumeration of summaries for the requested messages.</returns>
-		/// <param name="uids">The UIDs.</param>
-		/// <param name="modseq">The mod-sequence value.</param>
-		/// <param name="items">The message summary items to fetch.</param>
-		/// <param name="headers">The desired header fields.</param>
-		/// <param name="cancellationToken">The cancellation token.</param>
-		/// <exception cref="System.ArgumentNullException">
-		/// <para><paramref name="uids"/> is <c>null</c>.</para>
-		/// <para>-or-</para>
-		/// <para><paramref name="headers"/> is <c>null</c>.</para>
-		/// </exception>
-		/// <exception cref="System.ArgumentException">
-		/// <para>One or more of the <paramref name="uids"/> is invalid.</para>
-		/// <para>-or-</para>
-		/// <para>One or more of the specified <paramref name="headers"/> is invalid.</para>
-		/// </exception>
-		/// <exception cref="System.ObjectDisposedException">
-		/// The <see cref="ImapClient"/> has been disposed.
-		/// </exception>
-		/// <exception cref="ServiceNotConnectedException">
-		/// The <see cref="ImapClient"/> is not connected.
-		/// </exception>
-		/// <exception cref="ServiceNotAuthenticatedException">
-		/// The <see cref="ImapClient"/> is not authenticated.
-		/// </exception>
-		/// <exception cref="FolderNotOpenException">
-		/// The <see cref="ImapFolder"/> is not currently open.
-		/// </exception>
-		/// <exception cref="System.NotSupportedException">
-		/// The <see cref="ImapFolder"/> does not support mod-sequences.
-		/// </exception>
-		/// <exception cref="System.OperationCanceledException">
-		/// The operation was canceled via the cancellation token.
-		/// </exception>
-		/// <exception cref="System.IO.IOException">
-		/// An I/O error occurred.
-		/// </exception>
-		/// <exception cref="ImapProtocolException">
-		/// The server's response contained unexpected tokens.
-		/// </exception>
-		/// <exception cref="ImapCommandException">
-		/// The server replied with a NO or BAD response.
-		/// </exception>
-		public override IList<IMessageSummary> Fetch (IList<UniqueId> uids, ulong modseq, MessageSummaryItems items, IEnumerable<string> headers, CancellationToken cancellationToken = default (CancellationToken))
-		{
-			return FetchAsync (uids, modseq, items, headers, false, cancellationToken).GetAwaiter ().GetResult ();
-		}
+					ic.RegisterUntaggedHandler ("FETCH", UntaggedFetchSummaryItemsHandler);
+					ic.UserData = ctx;
 
-		/// <summary>
-		/// Asynchronously fetches the message summaries for the specified message UIDs that have a
-		/// higher mod-sequence value than the one specified.
-		/// </summary>
-		/// <remarks>
-		/// <para>Fetches the message summaries for the specified message UIDs that
-		/// have a higher mod-sequence value than the one specified.</para>
-		/// <para>If the IMAP server supports the QRESYNC extension and the application has
-		/// enabled this feature via <see cref="ImapClient.EnableQuickResync(CancellationToken)"/>,
-		/// then this method will emit <see cref="MailFolder.MessagesVanished"/> events for messages
-		/// that have vanished since the specified mod-sequence value.</para>
-		/// <para>It should be noted that if another client has modified any message
-		/// in the folder, the IMAP server may choose to return information that was
-		/// not explicitly requested. It is therefore important to be prepared to
-		/// handle both additional fields on a <see cref="IMessageSummary"/> for
-		/// messages that were requested as well as summaries for messages that were
-		/// not requested at all.</para>
-		/// </remarks>
-		/// <returns>An enumeration of summaries for the requested messages.</returns>
-		/// <param name="uids">The UIDs.</param>
-		/// <param name="modseq">The mod-sequence value.</param>
-		/// <param name="items">The message summary items to fetch.</param>
-		/// <param name="headers">The desired header fields.</param>
-		/// <param name="cancellationToken">The cancellation token.</param>
-		/// <exception cref="System.ArgumentNullException">
-		/// <para><paramref name="uids"/> is <c>null</c>.</para>
-		/// <para>-or-</para>
-		/// <para><paramref name="headers"/> is <c>null</c>.</para>
-		/// </exception>
-		/// <exception cref="System.ArgumentException">
-		/// <para>One or more of the <paramref name="uids"/> is invalid.</para>
-		/// <para>-or-</para>
-		/// <para>One or more of the specified <paramref name="headers"/> is invalid.</para>
-		/// </exception>
-		/// <exception cref="System.ObjectDisposedException">
-		/// The <see cref="ImapClient"/> has been disposed.
-		/// </exception>
-		/// <exception cref="ServiceNotConnectedException">
-		/// The <see cref="ImapClient"/> is not connected.
-		/// </exception>
-		/// <exception cref="ServiceNotAuthenticatedException">
-		/// The <see cref="ImapClient"/> is not authenticated.
-		/// </exception>
-		/// <exception cref="FolderNotOpenException">
-		/// The <see cref="ImapFolder"/> is not currently open.
-		/// </exception>
-		/// <exception cref="System.NotSupportedException">
-		/// The <see cref="ImapFolder"/> does not support mod-sequences.
-		/// </exception>
-		/// <exception cref="System.OperationCanceledException">
-		/// The operation was canceled via the cancellation token.
-		/// </exception>
-		/// <exception cref="System.IO.IOException">
-		/// An I/O error occurred.
-		/// </exception>
-		/// <exception cref="ImapProtocolException">
-		/// The server's response contained unexpected tokens.
-		/// </exception>
-		/// <exception cref="ImapCommandException">
-		/// The server replied with a NO or BAD response.
-		/// </exception>
-		public override Task<IList<IMessageSummary>> FetchAsync (IList<UniqueId> uids, ulong modseq, MessageSummaryItems items, IEnumerable<string> headers, CancellationToken cancellationToken = default (CancellationToken))
-		{
-			return FetchAsync (uids, modseq, items, headers, true, cancellationToken);
-		}
+					request.OnStarted (this, chunk);
 
-		async Task<IList<IMessageSummary>> FetchAsync (IList<int> indexes, MessageSummaryItems items, bool doAsync, CancellationToken cancellationToken)
-		{
-			bool previewText;
+					ic.InProgressHandler = (processed, total) => request.OnProgress (this, processed, total);
+					Engine.QueueCommand (ic);
 
-			if (indexes == null)
-				throw new ArgumentNullException (nameof (indexes));
+					await Engine.RunAsync (ic).ConfigureAwait (false);
 
-			if (items == MessageSummaryItems.None)
-				throw new ArgumentOutOfRangeException (nameof (items));
+					ProcessFetchResponse (ic);
 
-			CheckState (true, false);
-			CheckAllowIndexes ();
-
-			if (indexes.Count == 0)
-				return new IMessageSummary[0];
-
-			var set = ImapUtils.FormatIndexSet (Engine, indexes);
-			var query = FormatSummaryItems (ref items, EmptyHeaderFields, out previewText);
-			var command = string.Format ("FETCH {0} {1}\r\n", set, query);
-			var ic = new ImapCommand (Engine, cancellationToken, this, command);
-			var ctx = new FetchSummaryContext ();
-
-			ic.RegisterUntaggedHandler ("FETCH", FetchSummaryItemsAsync);
-			ic.UserData = ctx;
-
-			Engine.QueueCommand (ic);
-
-			await Engine.RunAsync (ic, doAsync).ConfigureAwait (false);
-
-			ProcessResponseCodes (ic, null);
-
-			if (ic.Response != ImapCommandResponse.Ok)
-				throw ImapCommandException.Create ("FETCH", ic);
+					request.OnCompleted (this, chunk);
+				}
+			} finally {
+				MessageExpunged -= ctx.OnMessageExpunged;
+			}
 
 			if (previewText)
-				await GetPreviewTextAsync (ctx, doAsync, cancellationToken).ConfigureAwait (false);
+				await GetPreviewTextAsync (ctx, cancellationToken).ConfigureAwait (false);
 
-			return AsReadOnly (ctx.Messages);
+			return ctx.Messages.AsReadOnly ();
 		}
 
-		async Task<IList<IMessageSummary>> FetchAsync (IList<int> indexes, MessageSummaryItems items, IEnumerable<string> headers, bool doAsync, CancellationToken cancellationToken)
+		bool CheckCanFetch (IList<int> indexes, IFetchRequest request)
 		{
-			bool previewText;
-
 			if (indexes == null)
 				throw new ArgumentNullException (nameof (indexes));
 
-			var headerFields = ImapUtils.GetUniqueHeaders (headers);
+			if (request == null)
+				throw new ArgumentNullException (nameof (request));
 
-			CheckState (true, false);
-			CheckAllowIndexes ();
-
-			if (indexes.Count == 0)
-				return new IMessageSummary[0];
-
-			var set = ImapUtils.FormatIndexSet (Engine, indexes);
-			var query = FormatSummaryItems (ref items, headerFields, out previewText);
-			var command = string.Format ("FETCH {0} {1}\r\n", set, query);
-			var ic = new ImapCommand (Engine, cancellationToken, this, command);
-			var ctx = new FetchSummaryContext ();
-
-			ic.RegisterUntaggedHandler ("FETCH", FetchSummaryItemsAsync);
-			ic.UserData = ctx;
-
-			Engine.QueueCommand (ic);
-
-			await Engine.RunAsync (ic, doAsync).ConfigureAwait (false);
-
-			ProcessResponseCodes (ic, null);
-
-			if (ic.Response != ImapCommandResponse.Ok)
-				throw ImapCommandException.Create ("FETCH", ic);
-
-			if (previewText)
-				await GetPreviewTextAsync (ctx, doAsync, cancellationToken).ConfigureAwait (false);
-
-			return AsReadOnly (ctx.Messages);
-		}
-
-		async Task<IList<IMessageSummary>> FetchAsync (IList<int> indexes, ulong modseq, MessageSummaryItems items, bool doAsync, CancellationToken cancellationToken)
-		{
-			bool previewText;
-
-			if (indexes == null)
-				throw new ArgumentNullException (nameof (indexes));
-
-			if (items == MessageSummaryItems.None)
-				throw new ArgumentOutOfRangeException (nameof (items));
-
-			if (!supportsModSeq)
+			if (request.ChangedSince.HasValue && !supportsModSeq)
 				throw new NotSupportedException ("The ImapFolder does not support mod-sequences.");
 
-			CheckState (true, false);
-			CheckAllowIndexes ();
-
-			if (indexes.Count == 0)
-				return new IMessageSummary[0];
-
-			var set = ImapUtils.FormatIndexSet (Engine, indexes);
-			var query = FormatSummaryItems (ref items, EmptyHeaderFields, out previewText);
-			var modseqValue = modseq.ToString (CultureInfo.InvariantCulture);
-			var command = string.Format ("FETCH {0} {1} (CHANGEDSINCE {2})\r\n", set, query, modseqValue);
-			var ic = new ImapCommand (Engine, cancellationToken, this, command);
-			var ctx = new FetchSummaryContext ();
-
-			ic.RegisterUntaggedHandler ("FETCH", FetchSummaryItemsAsync);
-			ic.UserData = ctx;
-
-			Engine.QueueCommand (ic);
-
-			await Engine.RunAsync (ic, doAsync).ConfigureAwait (false);
-
-			ProcessResponseCodes (ic, null);
-
-			if (ic.Response != ImapCommandResponse.Ok)
-				throw ImapCommandException.Create ("FETCH", ic);
-
-			if (previewText)
-				await GetPreviewTextAsync (ctx, doAsync, cancellationToken).ConfigureAwait (false);
-
-			return AsReadOnly (ctx.Messages);
-		}
-
-		async Task<IList<IMessageSummary>> FetchAsync (IList<int> indexes, ulong modseq, MessageSummaryItems items, IEnumerable<string> headers, bool doAsync, CancellationToken cancellationToken)
-		{
-			bool previewText;
-
-			if (indexes == null)
-				throw new ArgumentNullException (nameof (indexes));
-
-			var headerFields = ImapUtils.GetUniqueHeaders (headers);
-
-			if (!supportsModSeq)
-				throw new NotSupportedException ("The ImapFolder does not support mod-sequences.");
+			if (request.PartialRange.HasValue)
+				throw new NotSupportedException ("The PARTIAL extension only supports UID-based FETCH requests.");
 
 			CheckState (true, false);
 			CheckAllowIndexes ();
 
-			if (indexes.Count == 0)
-				return new IMessageSummary[0];
+			return indexes.Count > 0 && !IsEmptyFetchRequest (request);
+		}
 
+		ImapCommand QueueFetchCommand (IList<int> indexes, IFetchRequest request, CancellationToken cancellationToken, out bool previewText)
+		{
+			var query = FormatSummaryItems (Engine, request, out previewText);
 			var set = ImapUtils.FormatIndexSet (Engine, indexes);
-			var query = FormatSummaryItems (ref items, headerFields, out previewText);
-			var modseqValue = modseq.ToString (CultureInfo.InvariantCulture);
-			var command = string.Format ("FETCH {0} {1} (CHANGEDSINCE {2})\r\n", set, query, modseqValue);
-			var ic = new ImapCommand (Engine, cancellationToken, this, command);
-			var ctx = new FetchSummaryContext ();
+			var changedSince = string.Empty;
 
-			ic.RegisterUntaggedHandler ("FETCH", FetchSummaryItemsAsync);
+			if (request.ChangedSince.HasValue)
+				changedSince = string.Format (CultureInfo.InvariantCulture, " (CHANGEDSINCE {0})", request.ChangedSince.Value);
+
+			var command = string.Format ("FETCH {0} {1}{2}\r\n", set, query, changedSince);
+			var ic = new ImapCommand (Engine, cancellationToken, this, command);
+			var ctx = new FetchSummaryContext (indexes.Count);
+
+			ic.RegisterUntaggedHandler ("FETCH", UntaggedFetchSummaryItemsHandler);
 			ic.UserData = ctx;
 
+			request.OnStarted (this, indexes);
+
+			ic.InProgressHandler = (processed, total) => request.OnProgress (this, processed, total);
 			Engine.QueueCommand (ic);
 
-			await Engine.RunAsync (ic, doAsync).ConfigureAwait (false);
+			return ic;
+		}
 
-			ProcessResponseCodes (ic, null);
+		/// <summary>
+		/// Fetches the message summaries for the specified message indexes.
+		/// </summary>
+		/// <remarks>
+		/// <para>Fetches the message summaries for the specified message indexes.</para>
+		/// <para>It should be noted that if another client has modified any message
+		/// in the folder, the IMAP server may choose to return information that was
+		/// not explicitly requested. It is therefore important to be prepared to
+		/// handle both additional fields on a <see cref="IMessageSummary"/> for
+		/// messages that were requested as well as summaries for messages that were
+		/// not requested at all.</para>
+		/// </remarks>
+		/// <returns>An enumeration of summaries for the requested messages.</returns>
+		/// <param name="indexes">The indexes.</param>
+		/// <param name="request">The fetch request.</param>
+		/// <param name="cancellationToken">The cancellation token.</param>
+		/// <exception cref="System.ArgumentNullException">
+		/// <para><paramref name="indexes"/> is <see langword="null" />.</para>
+		/// <para>-or-</para>
+		/// <para><paramref name="request"/> is <see langword="null" />.</para>
+		/// </exception>
+		/// <exception cref="System.ArgumentException">
+		/// One or more of the <paramref name="indexes"/> is invalid.
+		/// </exception>
+		/// <exception cref="System.ObjectDisposedException">
+		/// The <see cref="ImapClient"/> has been disposed.
+		/// </exception>
+		/// <exception cref="FolderNotOpenException">
+		/// The <see cref="ImapFolder"/> is not currently open.
+		/// </exception>
+		/// <exception cref="ServiceNotConnectedException">
+		/// The <see cref="ImapClient"/> is not connected.
+		/// </exception>
+		/// <exception cref="ServiceNotAuthenticatedException">
+		/// The <see cref="ImapClient"/> is not authenticated.
+		/// </exception>
+		/// <exception cref="System.OperationCanceledException">
+		/// The operation was canceled via the cancellation token.
+		/// </exception>
+		/// <exception cref="System.NotSupportedException">
+		/// <para>The <see cref="ImapFolder"/> does not support mod-sequences.</para>
+		/// <para>-or-</para>
+		/// <para>The fetch request included a partial range, which is only supported for UID-based FETCH requests.</para>
+		/// </exception>
+		/// <exception cref="System.IO.IOException">
+		/// An I/O error occurred.
+		/// </exception>
+		/// <exception cref="ImapProtocolException">
+		/// The server's response contained unexpected tokens.
+		/// </exception>
+		/// <exception cref="ImapCommandException">
+		/// The server replied with a NO or BAD response.
+		/// </exception>
+		public override IList<IMessageSummary> Fetch (IList<int> indexes, IFetchRequest request, CancellationToken cancellationToken = default)
+		{
+			if (!CheckCanFetch (indexes, request))
+				return Array.Empty<IMessageSummary> ();
 
-			if (ic.Response != ImapCommandResponse.Ok)
-				throw ImapCommandException.Create ("FETCH", ic);
+			var ic = QueueFetchCommand (indexes, request, cancellationToken, out bool previewText);
+			var ctx = (FetchSummaryContext) ic.UserData!;
+
+			Engine.Run (ic);
+
+			ProcessFetchResponse (ic);
+
+			request.OnCompleted (this, indexes);
 
 			if (previewText)
-				await GetPreviewTextAsync (ctx, doAsync, cancellationToken).ConfigureAwait (false);
+				GetPreviewText (ctx, cancellationToken);
 
-			return AsReadOnly (ctx.Messages);
-		}
-
-		/// <summary>
-		/// Fetches the message summaries for the specified message indexes.
-		/// </summary>
-		/// <remarks>
-		/// <para>Fetches the message summaries for the specified message indexes.</para>
-		/// <para>It should be noted that if another client has modified any message
-		/// in the folder, the IMAP server may choose to return information that was
-		/// not explicitly requested. It is therefore important to be prepared to
-		/// handle both additional fields on a <see cref="IMessageSummary"/> for
-		/// messages that were requested as well as summaries for messages that were
-		/// not requested at all.</para>
-		/// </remarks>
-		/// <returns>An enumeration of summaries for the requested messages.</returns>
-		/// <param name="indexes">The indexes.</param>
-		/// <param name="items">The message summary items to fetch.</param>
-		/// <param name="cancellationToken">The cancellation token.</param>
-		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="indexes"/> is <c>null</c>.
-		/// </exception>
-		/// <exception cref="System.ArgumentOutOfRangeException">
-		/// <paramref name="items"/> is empty.
-		/// </exception>
-		/// <exception cref="System.ArgumentException">
-		/// One or more of the <paramref name="indexes"/> is invalid.
-		/// </exception>
-		/// <exception cref="System.ObjectDisposedException">
-		/// The <see cref="ImapClient"/> has been disposed.
-		/// </exception>
-		/// <exception cref="ServiceNotConnectedException">
-		/// The <see cref="ImapClient"/> is not connected.
-		/// </exception>
-		/// <exception cref="ServiceNotAuthenticatedException">
-		/// The <see cref="ImapClient"/> is not authenticated.
-		/// </exception>
-		/// <exception cref="FolderNotOpenException">
-		/// The <see cref="ImapFolder"/> is not currently open.
-		/// </exception>
-		/// <exception cref="System.OperationCanceledException">
-		/// The operation was canceled via the cancellation token.
-		/// </exception>
-		/// <exception cref="System.IO.IOException">
-		/// An I/O error occurred.
-		/// </exception>
-		/// <exception cref="ImapProtocolException">
-		/// The server's response contained unexpected tokens.
-		/// </exception>
-		/// <exception cref="ImapCommandException">
-		/// The server replied with a NO or BAD response.
-		/// </exception>
-		public override IList<IMessageSummary> Fetch (IList<int> indexes, MessageSummaryItems items, CancellationToken cancellationToken = default (CancellationToken))
-		{
-			return FetchAsync (indexes, items, false, cancellationToken).GetAwaiter ().GetResult ();
+			return ctx.Messages.AsReadOnly ();
 		}
 
 		/// <summary>
@@ -1859,13 +1544,12 @@ namespace MailKit.Net.Imap
 		/// </remarks>
 		/// <returns>An enumeration of summaries for the requested messages.</returns>
 		/// <param name="indexes">The indexes.</param>
-		/// <param name="items">The message summary items to fetch.</param>
+		/// <param name="request">The fetch request.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="indexes"/> is <c>null</c>.
-		/// </exception>
-		/// <exception cref="System.ArgumentOutOfRangeException">
-		/// <paramref name="items"/> is empty.
+		/// <para><paramref name="indexes"/> is <see langword="null" />.</para>
+		/// <para>-or-</para>
+		/// <para><paramref name="request"/> is <see langword="null" />.</para>
 		/// </exception>
 		/// <exception cref="System.ArgumentException">
 		/// One or more of the <paramref name="indexes"/> is invalid.
@@ -1873,297 +1557,22 @@ namespace MailKit.Net.Imap
 		/// <exception cref="System.ObjectDisposedException">
 		/// The <see cref="ImapClient"/> has been disposed.
 		/// </exception>
+		/// <exception cref="FolderNotOpenException">
+		/// The <see cref="ImapFolder"/> is not currently open.
+		/// </exception>
 		/// <exception cref="ServiceNotConnectedException">
 		/// The <see cref="ImapClient"/> is not connected.
 		/// </exception>
 		/// <exception cref="ServiceNotAuthenticatedException">
 		/// The <see cref="ImapClient"/> is not authenticated.
-		/// </exception>
-		/// <exception cref="FolderNotOpenException">
-		/// The <see cref="ImapFolder"/> is not currently open.
 		/// </exception>
 		/// <exception cref="System.OperationCanceledException">
 		/// The operation was canceled via the cancellation token.
-		/// </exception>
-		/// <exception cref="System.IO.IOException">
-		/// An I/O error occurred.
-		/// </exception>
-		/// <exception cref="ImapProtocolException">
-		/// The server's response contained unexpected tokens.
-		/// </exception>
-		/// <exception cref="ImapCommandException">
-		/// The server replied with a NO or BAD response.
-		/// </exception>
-		public override Task<IList<IMessageSummary>> FetchAsync (IList<int> indexes, MessageSummaryItems items, CancellationToken cancellationToken = default (CancellationToken))
-		{
-			return FetchAsync (indexes, items, true, cancellationToken);
-		}
-
-		/// <summary>
-		/// Fetches the message summaries for the specified message indexes.
-		/// </summary>
-		/// <remarks>
-		/// <para>Fetches the message summaries for the specified message indexes.</para>
-		/// <para>It should be noted that if another client has modified any message
-		/// in the folder, the IMAP server may choose to return information that was
-		/// not explicitly requested. It is therefore important to be prepared to
-		/// handle both additional fields on a <see cref="IMessageSummary"/> for
-		/// messages that were requested as well as summaries for messages that were
-		/// not requested at all.</para>
-		/// </remarks>
-		/// <returns>An enumeration of summaries for the requested messages.</returns>
-		/// <param name="indexes">The indexes.</param>
-		/// <param name="items">The message summary items to fetch.</param>
-		/// <param name="headers">The desired header fields.</param>
-		/// <param name="cancellationToken">The cancellation token.</param>
-		/// <exception cref="System.ArgumentNullException">
-		/// <para><paramref name="indexes"/> is <c>null</c>.</para>
-		/// <para>-or-</para>
-		/// <para><paramref name="headers"/> is <c>null</c>.</para>
-		/// </exception>
-		/// <exception cref="System.ArgumentException">
-		/// One or more of the <paramref name="indexes"/> is invalid.
-		/// </exception>
-		/// <exception cref="System.ObjectDisposedException">
-		/// The <see cref="ImapClient"/> has been disposed.
-		/// </exception>
-		/// <exception cref="ServiceNotConnectedException">
-		/// The <see cref="ImapClient"/> is not connected.
-		/// </exception>
-		/// <exception cref="ServiceNotAuthenticatedException">
-		/// The <see cref="ImapClient"/> is not authenticated.
-		/// </exception>
-		/// <exception cref="FolderNotOpenException">
-		/// The <see cref="ImapFolder"/> is not currently open.
-		/// </exception>
-		/// <exception cref="System.OperationCanceledException">
-		/// The operation was canceled via the cancellation token.
-		/// </exception>
-		/// <exception cref="System.IO.IOException">
-		/// An I/O error occurred.
-		/// </exception>
-		/// <exception cref="ImapProtocolException">
-		/// The server's response contained unexpected tokens.
-		/// </exception>
-		/// <exception cref="ImapCommandException">
-		/// The server replied with a NO or BAD response.
-		/// </exception>
-		public override IList<IMessageSummary> Fetch (IList<int> indexes, MessageSummaryItems items, IEnumerable<HeaderId> headers, CancellationToken cancellationToken = default (CancellationToken))
-		{
-			return Fetch (indexes, items, ImapUtils.GetUniqueHeaders (headers), cancellationToken);
-		}
-
-		/// <summary>
-		/// Asynchronously fetches the message summaries for the specified message indexes.
-		/// </summary>
-		/// <remarks>
-		/// <para>Fetches the message summaries for the specified message indexes.</para>
-		/// <para>It should be noted that if another client has modified any message
-		/// in the folder, the IMAP server may choose to return information that was
-		/// not explicitly requested. It is therefore important to be prepared to
-		/// handle both additional fields on a <see cref="IMessageSummary"/> for
-		/// messages that were requested as well as summaries for messages that were
-		/// not requested at all.</para>
-		/// </remarks>
-		/// <returns>An enumeration of summaries for the requested messages.</returns>
-		/// <param name="indexes">The indexes.</param>
-		/// <param name="items">The message summary items to fetch.</param>
-		/// <param name="headers">The desired header fields.</param>
-		/// <param name="cancellationToken">The cancellation token.</param>
-		/// <exception cref="System.ArgumentNullException">
-		/// <para><paramref name="indexes"/> is <c>null</c>.</para>
-		/// <para>-or-</para>
-		/// <para><paramref name="headers"/> is <c>null</c>.</para>
-		/// </exception>
-		/// <exception cref="System.ArgumentException">
-		/// One or more of the <paramref name="indexes"/> is invalid.
-		/// </exception>
-		/// <exception cref="System.ObjectDisposedException">
-		/// The <see cref="ImapClient"/> has been disposed.
-		/// </exception>
-		/// <exception cref="ServiceNotConnectedException">
-		/// The <see cref="ImapClient"/> is not connected.
-		/// </exception>
-		/// <exception cref="ServiceNotAuthenticatedException">
-		/// The <see cref="ImapClient"/> is not authenticated.
-		/// </exception>
-		/// <exception cref="FolderNotOpenException">
-		/// The <see cref="ImapFolder"/> is not currently open.
-		/// </exception>
-		/// <exception cref="System.OperationCanceledException">
-		/// The operation was canceled via the cancellation token.
-		/// </exception>
-		/// <exception cref="System.IO.IOException">
-		/// An I/O error occurred.
-		/// </exception>
-		/// <exception cref="ImapProtocolException">
-		/// The server's response contained unexpected tokens.
-		/// </exception>
-		/// <exception cref="ImapCommandException">
-		/// The server replied with a NO or BAD response.
-		/// </exception>
-		public override Task<IList<IMessageSummary>> FetchAsync (IList<int> indexes, MessageSummaryItems items, IEnumerable<HeaderId> headers, CancellationToken cancellationToken = default (CancellationToken))
-		{
-			return FetchAsync (indexes, items, ImapUtils.GetUniqueHeaders (headers), cancellationToken);
-		}
-
-		/// <summary>
-		/// Fetches the message summaries for the specified message indexes.
-		/// </summary>
-		/// <remarks>
-		/// <para>Fetches the message summaries for the specified message indexes.</para>
-		/// <para>It should be noted that if another client has modified any message
-		/// in the folder, the IMAP server may choose to return information that was
-		/// not explicitly requested. It is therefore important to be prepared to
-		/// handle both additional fields on a <see cref="IMessageSummary"/> for
-		/// messages that were requested as well as summaries for messages that were
-		/// not requested at all.</para>
-		/// </remarks>
-		/// <returns>An enumeration of summaries for the requested messages.</returns>
-		/// <param name="indexes">The indexes.</param>
-		/// <param name="items">The message summary items to fetch.</param>
-		/// <param name="headers">The desired header fields.</param>
-		/// <param name="cancellationToken">The cancellation token.</param>
-		/// <exception cref="System.ArgumentNullException">
-		/// <para><paramref name="indexes"/> is <c>null</c>.</para>
-		/// <para>-or-</para>
-		/// <para><paramref name="headers"/> is <c>null</c>.</para>
-		/// </exception>
-		/// <exception cref="System.ArgumentException">
-		/// <para>One or more of the <paramref name="indexes"/> is invalid.</para>
-		/// <para>-or-</para>
-		/// <para>One or more of the specified <paramref name="headers"/> is invalid.</para>
-		/// </exception>
-		/// <exception cref="System.ObjectDisposedException">
-		/// The <see cref="ImapClient"/> has been disposed.
-		/// </exception>
-		/// <exception cref="ServiceNotConnectedException">
-		/// The <see cref="ImapClient"/> is not connected.
-		/// </exception>
-		/// <exception cref="ServiceNotAuthenticatedException">
-		/// The <see cref="ImapClient"/> is not authenticated.
-		/// </exception>
-		/// <exception cref="FolderNotOpenException">
-		/// The <see cref="ImapFolder"/> is not currently open.
-		/// </exception>
-		/// <exception cref="System.OperationCanceledException">
-		/// The operation was canceled via the cancellation token.
-		/// </exception>
-		/// <exception cref="System.IO.IOException">
-		/// An I/O error occurred.
-		/// </exception>
-		/// <exception cref="ImapProtocolException">
-		/// The server's response contained unexpected tokens.
-		/// </exception>
-		/// <exception cref="ImapCommandException">
-		/// The server replied with a NO or BAD response.
-		/// </exception>
-		public override IList<IMessageSummary> Fetch (IList<int> indexes, MessageSummaryItems items, IEnumerable<string> headers, CancellationToken cancellationToken = default (CancellationToken))
-		{
-			return FetchAsync (indexes, items, headers, false, cancellationToken).GetAwaiter ().GetResult ();
-		}
-
-		/// <summary>
-		/// Asynchronously fetches the message summaries for the specified message indexes.
-		/// </summary>
-		/// <remarks>
-		/// <para>Fetches the message summaries for the specified message indexes.</para>
-		/// <para>It should be noted that if another client has modified any message
-		/// in the folder, the IMAP server may choose to return information that was
-		/// not explicitly requested. It is therefore important to be prepared to
-		/// handle both additional fields on a <see cref="IMessageSummary"/> for
-		/// messages that were requested as well as summaries for messages that were
-		/// not requested at all.</para>
-		/// </remarks>
-		/// <returns>An enumeration of summaries for the requested messages.</returns>
-		/// <param name="indexes">The indexes.</param>
-		/// <param name="items">The message summary items to fetch.</param>
-		/// <param name="headers">The desired header fields.</param>
-		/// <param name="cancellationToken">The cancellation token.</param>
-		/// <exception cref="System.ArgumentNullException">
-		/// <para><paramref name="indexes"/> is <c>null</c>.</para>
-		/// <para>-or-</para>
-		/// <para><paramref name="headers"/> is <c>null</c>.</para>
-		/// </exception>
-		/// <exception cref="System.ArgumentException">
-		/// <para>One or more of the <paramref name="indexes"/> is invalid.</para>
-		/// <para>-or-</para>
-		/// <para>One or more of the specified <paramref name="headers"/> is invalid.</para>
-		/// </exception>
-		/// <exception cref="System.ObjectDisposedException">
-		/// The <see cref="ImapClient"/> has been disposed.
-		/// </exception>
-		/// <exception cref="ServiceNotConnectedException">
-		/// The <see cref="ImapClient"/> is not connected.
-		/// </exception>
-		/// <exception cref="ServiceNotAuthenticatedException">
-		/// The <see cref="ImapClient"/> is not authenticated.
-		/// </exception>
-		/// <exception cref="FolderNotOpenException">
-		/// The <see cref="ImapFolder"/> is not currently open.
-		/// </exception>
-		/// <exception cref="System.OperationCanceledException">
-		/// The operation was canceled via the cancellation token.
-		/// </exception>
-		/// <exception cref="System.IO.IOException">
-		/// An I/O error occurred.
-		/// </exception>
-		/// <exception cref="ImapProtocolException">
-		/// The server's response contained unexpected tokens.
-		/// </exception>
-		/// <exception cref="ImapCommandException">
-		/// The server replied with a NO or BAD response.
-		/// </exception>
-		public override Task<IList<IMessageSummary>> FetchAsync (IList<int> indexes, MessageSummaryItems items, IEnumerable<string> headers, CancellationToken cancellationToken = default (CancellationToken))
-		{
-			return FetchAsync (indexes, items, headers, true, cancellationToken);
-		}
-
-		/// <summary>
-		/// Fetches the message summaries for the specified message indexes that have a
-		/// higher mod-sequence value than the one specified.
-		/// </summary>
-		/// <remarks>
-		/// <para>Fetches the message summaries for the specified message indexes that
-		/// have a higher mod-sequence value than the one specified.</para>
-		/// <para>It should be noted that if another client has modified any message
-		/// in the folder, the IMAP server may choose to return information that was
-		/// not explicitly requested. It is therefore important to be prepared to
-		/// handle both additional fields on a <see cref="IMessageSummary"/> for
-		/// messages that were requested as well as summaries for messages that were
-		/// not requested at all.</para>
-		/// </remarks>
-		/// <returns>An enumeration of summaries for the requested messages.</returns>
-		/// <param name="indexes">The indexes.</param>
-		/// <param name="modseq">The mod-sequence value.</param>
-		/// <param name="items">The message summary items to fetch.</param>
-		/// <param name="cancellationToken">The cancellation token.</param>
-		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="indexes"/> is <c>null</c>.
-		/// </exception>
-		/// <exception cref="System.ArgumentOutOfRangeException">
-		/// <paramref name="items"/> is empty.
-		/// </exception>
-		/// <exception cref="System.ArgumentException">
-		/// One or more of the <paramref name="indexes"/> is invalid.
-		/// </exception>
-		/// <exception cref="System.ObjectDisposedException">
-		/// The <see cref="ImapClient"/> has been disposed.
-		/// </exception>
-		/// <exception cref="ServiceNotConnectedException">
-		/// The <see cref="ImapClient"/> is not connected.
-		/// </exception>
-		/// <exception cref="ServiceNotAuthenticatedException">
-		/// The <see cref="ImapClient"/> is not authenticated.
-		/// </exception>
-		/// <exception cref="FolderNotOpenException">
-		/// The <see cref="ImapFolder"/> is not currently open.
 		/// </exception>
 		/// <exception cref="System.NotSupportedException">
-		/// The <see cref="ImapFolder"/> does not support mod-sequences.
-		/// </exception>
-		/// <exception cref="System.OperationCanceledException">
-		/// The operation was canceled via the cancellation token.
+		/// <para>The <see cref="ImapFolder"/> does not support mod-sequences.</para>
+		/// <para>-or-</para>
+		/// <para>The fetch request included a partial range, which is only supported for UID-based FETCH requests.</para>
 		/// </exception>
 		/// <exception cref="System.IO.IOException">
 		/// An I/O error occurred.
@@ -2174,313 +1583,24 @@ namespace MailKit.Net.Imap
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override IList<IMessageSummary> Fetch (IList<int> indexes, ulong modseq, MessageSummaryItems items, CancellationToken cancellationToken = default (CancellationToken))
+		public override async Task<IList<IMessageSummary>> FetchAsync (IList<int> indexes, IFetchRequest request, CancellationToken cancellationToken = default)
 		{
-			return FetchAsync (indexes, modseq, items, false, cancellationToken).GetAwaiter ().GetResult ();
-		}
+			if (!CheckCanFetch (indexes, request))
+				return Array.Empty<IMessageSummary> ();
 
-		/// <summary>
-		/// Asynchronously fetches the message summaries for the specified message indexes that have a
-		/// higher mod-sequence value than the one specified.
-		/// </summary>
-		/// <remarks>
-		/// <para>Fetches the message summaries for the specified message indexes that
-		/// have a higher mod-sequence value than the one specified.</para>
-		/// <para>It should be noted that if another client has modified any message
-		/// in the folder, the IMAP server may choose to return information that was
-		/// not explicitly requested. It is therefore important to be prepared to
-		/// handle both additional fields on a <see cref="IMessageSummary"/> for
-		/// messages that were requested as well as summaries for messages that were
-		/// not requested at all.</para>
-		/// </remarks>
-		/// <returns>An enumeration of summaries for the requested messages.</returns>
-		/// <param name="indexes">The indexes.</param>
-		/// <param name="modseq">The mod-sequence value.</param>
-		/// <param name="items">The message summary items to fetch.</param>
-		/// <param name="cancellationToken">The cancellation token.</param>
-		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="indexes"/> is <c>null</c>.
-		/// </exception>
-		/// <exception cref="System.ArgumentOutOfRangeException">
-		/// <paramref name="items"/> is empty.
-		/// </exception>
-		/// <exception cref="System.ArgumentException">
-		/// One or more of the <paramref name="indexes"/> is invalid.
-		/// </exception>
-		/// <exception cref="System.ObjectDisposedException">
-		/// The <see cref="ImapClient"/> has been disposed.
-		/// </exception>
-		/// <exception cref="ServiceNotConnectedException">
-		/// The <see cref="ImapClient"/> is not connected.
-		/// </exception>
-		/// <exception cref="ServiceNotAuthenticatedException">
-		/// The <see cref="ImapClient"/> is not authenticated.
-		/// </exception>
-		/// <exception cref="FolderNotOpenException">
-		/// The <see cref="ImapFolder"/> is not currently open.
-		/// </exception>
-		/// <exception cref="System.NotSupportedException">
-		/// The <see cref="ImapFolder"/> does not support mod-sequences.
-		/// </exception>
-		/// <exception cref="System.OperationCanceledException">
-		/// The operation was canceled via the cancellation token.
-		/// </exception>
-		/// <exception cref="System.IO.IOException">
-		/// An I/O error occurred.
-		/// </exception>
-		/// <exception cref="ImapProtocolException">
-		/// The server's response contained unexpected tokens.
-		/// </exception>
-		/// <exception cref="ImapCommandException">
-		/// The server replied with a NO or BAD response.
-		/// </exception>
-		public override Task<IList<IMessageSummary>> FetchAsync (IList<int> indexes, ulong modseq, MessageSummaryItems items, CancellationToken cancellationToken = default (CancellationToken))
-		{
-			return FetchAsync (indexes, modseq, items, true, cancellationToken);
-		}
+			var ic = QueueFetchCommand (indexes, request, cancellationToken, out bool previewText);
+			var ctx = (FetchSummaryContext) ic.UserData!;
 
-		/// <summary>
-		/// Fetches the message summaries for the specified message indexes that have a
-		/// higher mod-sequence value than the one specified.
-		/// </summary>
-		/// <remarks>
-		/// <para>Fetches the message summaries for the specified message indexes that
-		/// have a higher mod-sequence value than the one specified.</para>
-		/// <para>It should be noted that if another client has modified any message
-		/// in the folder, the IMAP server may choose to return information that was
-		/// not explicitly requested. It is therefore important to be prepared to
-		/// handle both additional fields on a <see cref="IMessageSummary"/> for
-		/// messages that were requested as well as summaries for messages that were
-		/// not requested at all.</para>
-		/// </remarks>
-		/// <returns>An enumeration of summaries for the requested messages.</returns>
-		/// <param name="indexes">The indexes.</param>
-		/// <param name="modseq">The mod-sequence value.</param>
-		/// <param name="items">The message summary items to fetch.</param>
-		/// <param name="headers">The desired header fields.</param>
-		/// <param name="cancellationToken">The cancellation token.</param>
-		/// <exception cref="System.ArgumentNullException">
-		/// <para><paramref name="indexes"/> is <c>null</c>.</para>
-		/// <para>-or-</para>
-		/// <para><paramref name="headers"/> is <c>null</c>.</para>
-		/// </exception>
-		/// <exception cref="System.ArgumentException">
-		/// One or more of the <paramref name="indexes"/> is invalid.
-		/// </exception>
-		/// <exception cref="System.ObjectDisposedException">
-		/// The <see cref="ImapClient"/> has been disposed.
-		/// </exception>
-		/// <exception cref="ServiceNotConnectedException">
-		/// The <see cref="ImapClient"/> is not connected.
-		/// </exception>
-		/// <exception cref="ServiceNotAuthenticatedException">
-		/// The <see cref="ImapClient"/> is not authenticated.
-		/// </exception>
-		/// <exception cref="FolderNotOpenException">
-		/// The <see cref="ImapFolder"/> is not currently open.
-		/// </exception>
-		/// <exception cref="System.NotSupportedException">
-		/// The <see cref="ImapFolder"/> does not support mod-sequences.
-		/// </exception>
-		/// <exception cref="System.OperationCanceledException">
-		/// The operation was canceled via the cancellation token.
-		/// </exception>
-		/// <exception cref="System.IO.IOException">
-		/// An I/O error occurred.
-		/// </exception>
-		/// <exception cref="ImapProtocolException">
-		/// The server's response contained unexpected tokens.
-		/// </exception>
-		/// <exception cref="ImapCommandException">
-		/// The server replied with a NO or BAD response.
-		/// </exception>
-		public override IList<IMessageSummary> Fetch (IList<int> indexes, ulong modseq, MessageSummaryItems items, IEnumerable<HeaderId> headers, CancellationToken cancellationToken = default (CancellationToken))
-		{
-			return Fetch (indexes, modseq, items, ImapUtils.GetUniqueHeaders (headers), cancellationToken);
-		}
+			await Engine.RunAsync (ic).ConfigureAwait (false);
 
-		/// <summary>
-		/// Asynchronously fetches the message summaries for the specified message indexes that have a
-		/// higher mod-sequence value than the one specified.
-		/// </summary>
-		/// <remarks>
-		/// <para>Fetches the message summaries for the specified message indexes that
-		/// have a higher mod-sequence value than the one specified.</para>
-		/// <para>It should be noted that if another client has modified any message
-		/// in the folder, the IMAP server may choose to return information that was
-		/// not explicitly requested. It is therefore important to be prepared to
-		/// handle both additional fields on a <see cref="IMessageSummary"/> for
-		/// messages that were requested as well as summaries for messages that were
-		/// not requested at all.</para>
-		/// </remarks>
-		/// <returns>An enumeration of summaries for the requested messages.</returns>
-		/// <param name="indexes">The indexes.</param>
-		/// <param name="modseq">The mod-sequence value.</param>
-		/// <param name="items">The message summary items to fetch.</param>
-		/// <param name="headers">The desired header fields.</param>
-		/// <param name="cancellationToken">The cancellation token.</param>
-		/// <exception cref="System.ArgumentNullException">
-		/// <para><paramref name="indexes"/> is <c>null</c>.</para>
-		/// <para>-or-</para>
-		/// <para><paramref name="headers"/> is <c>null</c>.</para>
-		/// </exception>
-		/// <exception cref="System.ArgumentException">
-		/// One or more of the <paramref name="indexes"/> is invalid.
-		/// </exception>
-		/// <exception cref="System.ObjectDisposedException">
-		/// The <see cref="ImapClient"/> has been disposed.
-		/// </exception>
-		/// <exception cref="ServiceNotConnectedException">
-		/// The <see cref="ImapClient"/> is not connected.
-		/// </exception>
-		/// <exception cref="ServiceNotAuthenticatedException">
-		/// The <see cref="ImapClient"/> is not authenticated.
-		/// </exception>
-		/// <exception cref="FolderNotOpenException">
-		/// The <see cref="ImapFolder"/> is not currently open.
-		/// </exception>
-		/// <exception cref="System.NotSupportedException">
-		/// The <see cref="ImapFolder"/> does not support mod-sequences.
-		/// </exception>
-		/// <exception cref="System.OperationCanceledException">
-		/// The operation was canceled via the cancellation token.
-		/// </exception>
-		/// <exception cref="System.IO.IOException">
-		/// An I/O error occurred.
-		/// </exception>
-		/// <exception cref="ImapProtocolException">
-		/// The server's response contained unexpected tokens.
-		/// </exception>
-		/// <exception cref="ImapCommandException">
-		/// The server replied with a NO or BAD response.
-		/// </exception>
-		public override Task<IList<IMessageSummary>> FetchAsync (IList<int> indexes, ulong modseq, MessageSummaryItems items, IEnumerable<HeaderId> headers, CancellationToken cancellationToken = default (CancellationToken))
-		{
-			return FetchAsync (indexes, modseq, items, ImapUtils.GetUniqueHeaders (headers), cancellationToken);
-		}
+			ProcessFetchResponse (ic);
 
-		/// <summary>
-		/// Fetches the message summaries for the specified message indexes that have a
-		/// higher mod-sequence value than the one specified.
-		/// </summary>
-		/// <remarks>
-		/// <para>Fetches the message summaries for the specified message indexes that
-		/// have a higher mod-sequence value than the one specified.</para>
-		/// <para>It should be noted that if another client has modified any message
-		/// in the folder, the IMAP server may choose to return information that was
-		/// not explicitly requested. It is therefore important to be prepared to
-		/// handle both additional fields on a <see cref="IMessageSummary"/> for
-		/// messages that were requested as well as summaries for messages that were
-		/// not requested at all.</para>
-		/// </remarks>
-		/// <returns>An enumeration of summaries for the requested messages.</returns>
-		/// <param name="indexes">The indexes.</param>
-		/// <param name="modseq">The mod-sequence value.</param>
-		/// <param name="items">The message summary items to fetch.</param>
-		/// <param name="headers">The desired header fields.</param>
-		/// <param name="cancellationToken">The cancellation token.</param>
-		/// <exception cref="System.ArgumentNullException">
-		/// <para><paramref name="indexes"/> is <c>null</c>.</para>
-		/// <para>-or-</para>
-		/// <para><paramref name="headers"/> is <c>null</c>.</para>
-		/// </exception>
-		/// <exception cref="System.ArgumentException">
-		/// <para>One or more of the <paramref name="indexes"/> is invalid.</para>
-		/// <para>-or-</para>
-		/// <para>One or more of the specified <paramref name="headers"/> is invalid.</para>
-		/// </exception>
-		/// <exception cref="System.ObjectDisposedException">
-		/// The <see cref="ImapClient"/> has been disposed.
-		/// </exception>
-		/// <exception cref="ServiceNotConnectedException">
-		/// The <see cref="ImapClient"/> is not connected.
-		/// </exception>
-		/// <exception cref="ServiceNotAuthenticatedException">
-		/// The <see cref="ImapClient"/> is not authenticated.
-		/// </exception>
-		/// <exception cref="FolderNotOpenException">
-		/// The <see cref="ImapFolder"/> is not currently open.
-		/// </exception>
-		/// <exception cref="System.NotSupportedException">
-		/// The <see cref="ImapFolder"/> does not support mod-sequences.
-		/// </exception>
-		/// <exception cref="System.OperationCanceledException">
-		/// The operation was canceled via the cancellation token.
-		/// </exception>
-		/// <exception cref="System.IO.IOException">
-		/// An I/O error occurred.
-		/// </exception>
-		/// <exception cref="ImapProtocolException">
-		/// The server's response contained unexpected tokens.
-		/// </exception>
-		/// <exception cref="ImapCommandException">
-		/// The server replied with a NO or BAD response.
-		/// </exception>
-		public override IList<IMessageSummary> Fetch (IList<int> indexes, ulong modseq, MessageSummaryItems items, IEnumerable<string> headers, CancellationToken cancellationToken = default (CancellationToken))
-		{
-			return FetchAsync (indexes, modseq, items, headers, false, cancellationToken).GetAwaiter ().GetResult ();
-		}
+			request.OnCompleted (this, indexes);
 
-		/// <summary>
-		/// Asynchronously fetches the message summaries for the specified message indexes that have a
-		/// higher mod-sequence value than the one specified.
-		/// </summary>
-		/// <remarks>
-		/// <para>Fetches the message summaries for the specified message indexes that
-		/// have a higher mod-sequence value than the one specified.</para>
-		/// <para>It should be noted that if another client has modified any message
-		/// in the folder, the IMAP server may choose to return information that was
-		/// not explicitly requested. It is therefore important to be prepared to
-		/// handle both additional fields on a <see cref="IMessageSummary"/> for
-		/// messages that were requested as well as summaries for messages that were
-		/// not requested at all.</para>
-		/// </remarks>
-		/// <returns>An enumeration of summaries for the requested messages.</returns>
-		/// <param name="indexes">The indexes.</param>
-		/// <param name="modseq">The mod-sequence value.</param>
-		/// <param name="items">The message summary items to fetch.</param>
-		/// <param name="headers">The desired header fields.</param>
-		/// <param name="cancellationToken">The cancellation token.</param>
-		/// <exception cref="System.ArgumentNullException">
-		/// <para><paramref name="indexes"/> is <c>null</c>.</para>
-		/// <para>-or-</para>
-		/// <para><paramref name="headers"/> is <c>null</c>.</para>
-		/// </exception>
-		/// <exception cref="System.ArgumentException">
-		/// <para>One or more of the <paramref name="indexes"/> is invalid.</para>
-		/// <para>-or-</para>
-		/// <para>One or more of the specified <paramref name="headers"/> is invalid.</para>
-		/// </exception>
-		/// <exception cref="System.ObjectDisposedException">
-		/// The <see cref="ImapClient"/> has been disposed.
-		/// </exception>
-		/// <exception cref="ServiceNotConnectedException">
-		/// The <see cref="ImapClient"/> is not connected.
-		/// </exception>
-		/// <exception cref="ServiceNotAuthenticatedException">
-		/// The <see cref="ImapClient"/> is not authenticated.
-		/// </exception>
-		/// <exception cref="FolderNotOpenException">
-		/// The <see cref="ImapFolder"/> is not currently open.
-		/// </exception>
-		/// <exception cref="System.NotSupportedException">
-		/// The <see cref="ImapFolder"/> does not support mod-sequences.
-		/// </exception>
-		/// <exception cref="System.OperationCanceledException">
-		/// The operation was canceled via the cancellation token.
-		/// </exception>
-		/// <exception cref="System.IO.IOException">
-		/// An I/O error occurred.
-		/// </exception>
-		/// <exception cref="ImapProtocolException">
-		/// The server's response contained unexpected tokens.
-		/// </exception>
-		/// <exception cref="ImapCommandException">
-		/// The server replied with a NO or BAD response.
-		/// </exception>
-		public override Task<IList<IMessageSummary>> FetchAsync (IList<int> indexes, ulong modseq, MessageSummaryItems items, IEnumerable<string> headers, CancellationToken cancellationToken = default (CancellationToken))
-		{
-			return FetchAsync (indexes, modseq, items, headers, true, cancellationToken);
+			if (previewText)
+				await GetPreviewTextAsync (ctx, cancellationToken).ConfigureAwait (false);
+
+			return ctx.Messages.AsReadOnly ();
 		}
 
 		static string GetFetchRange (int min, int max)
@@ -2495,226 +1615,140 @@ namespace MailKit.Net.Imap
 			return string.Format (CultureInfo.InvariantCulture, "{0}:{1}", minValue, maxValue);
 		}
 
-		async Task<IList<IMessageSummary>> FetchAsync (int min, int max, MessageSummaryItems items, bool doAsync, CancellationToken cancellationToken)
+		IList<int> GetFetchIndexes (int min, int max)
 		{
-			bool previewText;
+			int last = Count - 1;
 
-			if (min < 0)
-				throw new ArgumentOutOfRangeException (nameof (min));
+			if (max == -1) {
+				// Note: "min:*" always includes the last message, even if min is beyond the end of the folder.
+				return new IndexRange (Math.Min (min, last), last);
+			}
 
-			if (max != -1 && max < min)
-				throw new ArgumentOutOfRangeException (nameof (max));
-
-			if (items == MessageSummaryItems.None)
-				throw new ArgumentOutOfRangeException (nameof (items));
-
-			CheckState (true, false);
-			CheckAllowIndexes ();
-
-			if (min == Count)
-				return new IMessageSummary[0];
-
-			var query = FormatSummaryItems (ref items, EmptyHeaderFields, out previewText);
-			var command = string.Format ("FETCH {0} {1}\r\n", GetFetchRange (min, max), query);
-			var ic = new ImapCommand (Engine, cancellationToken, this, command);
-			var ctx = new FetchSummaryContext ();
-
-			ic.RegisterUntaggedHandler ("FETCH", FetchSummaryItemsAsync);
-			ic.UserData = ctx;
-
-			Engine.QueueCommand (ic);
-
-			await Engine.RunAsync (ic, doAsync).ConfigureAwait (false);
-
-			ProcessResponseCodes (ic, null);
-
-			if (ic.Response != ImapCommandResponse.Ok)
-				throw ImapCommandException.Create ("FETCH", ic);
-
-			if (previewText)
-				await GetPreviewTextAsync (ctx, doAsync, cancellationToken).ConfigureAwait (false);
-
-			return AsReadOnly (ctx.Messages);
+			return new IndexRange (min, Math.Min (max, last));
 		}
 
-		async Task<IList<IMessageSummary>> FetchAsync (int min, int max, MessageSummaryItems items, IEnumerable<string> headers, bool doAsync, CancellationToken cancellationToken)
+		bool CheckCanFetch (int min, int max, IFetchRequest request)
 		{
-			bool previewText;
-
 			if (min < 0)
 				throw new ArgumentOutOfRangeException (nameof (min));
 
 			if (max != -1 && max < min)
 				throw new ArgumentOutOfRangeException (nameof (max));
 
-			var headerFields = ImapUtils.GetUniqueHeaders (headers);
+			if (request == null)
+				throw new ArgumentNullException (nameof (request));
 
-			CheckState (true, false);
-			CheckAllowIndexes ();
-
-			if (min == Count)
-				return new IMessageSummary[0];
-
-			var query = FormatSummaryItems (ref items, headerFields, out previewText);
-			var command = string.Format ("FETCH {0} {1}\r\n", GetFetchRange (min, max), query);
-			var ic = new ImapCommand (Engine, cancellationToken, this, command);
-			var ctx = new FetchSummaryContext ();
-
-			ic.RegisterUntaggedHandler ("FETCH", FetchSummaryItemsAsync);
-			ic.UserData = ctx;
-
-			Engine.QueueCommand (ic);
-
-			await Engine.RunAsync (ic, doAsync).ConfigureAwait (false);
-
-			ProcessResponseCodes (ic, null);
-
-			if (ic.Response != ImapCommandResponse.Ok)
-				throw ImapCommandException.Create ("FETCH", ic);
-
-			if (previewText)
-				await GetPreviewTextAsync (ctx, doAsync, cancellationToken).ConfigureAwait (false);
-
-			return AsReadOnly (ctx.Messages);
-		}
-
-		async Task<IList<IMessageSummary>> FetchAsync (int min, int max, ulong modseq, MessageSummaryItems items, bool doAsync, CancellationToken cancellationToken)
-		{
-			bool previewText;
-
-			if (min < 0)
-				throw new ArgumentOutOfRangeException (nameof (min));
-
-			if (max != -1 && max < min)
-				throw new ArgumentOutOfRangeException (nameof (max));
-
-			if (items == MessageSummaryItems.None)
-				throw new ArgumentOutOfRangeException (nameof (items));
-
-			if (!supportsModSeq)
+			if (request.ChangedSince.HasValue && !supportsModSeq)
 				throw new NotSupportedException ("The ImapFolder does not support mod-sequences.");
 
-			CheckState (true, false);
-			CheckAllowIndexes ();
-
-			var query = FormatSummaryItems (ref items, EmptyHeaderFields, out previewText);
-			var modseqValue = modseq.ToString (CultureInfo.InvariantCulture);
-			var command = string.Format ("FETCH {0} {1} (CHANGEDSINCE {2})\r\n", GetFetchRange (min, max), query, modseqValue);
-			var ic = new ImapCommand (Engine, cancellationToken, this, command);
-			var ctx = new FetchSummaryContext ();
-
-			ic.RegisterUntaggedHandler ("FETCH", FetchSummaryItemsAsync);
-			ic.UserData = ctx;
-
-			Engine.QueueCommand (ic);
-
-			await Engine.RunAsync (ic, doAsync).ConfigureAwait (false);
-
-			ProcessResponseCodes (ic, null);
-
-			if (ic.Response != ImapCommandResponse.Ok)
-				throw ImapCommandException.Create ("FETCH", ic);
-
-			if (previewText)
-				await GetPreviewTextAsync (ctx, doAsync, cancellationToken).ConfigureAwait (false);
-
-			return AsReadOnly (ctx.Messages);
-		}
-
-		async Task<IList<IMessageSummary>> FetchAsync (int min, int max, ulong modseq, MessageSummaryItems items, IEnumerable<string> headers, bool doAsync, CancellationToken cancellationToken)
-		{
-			bool previewText;
-
-			if (min < 0)
-				throw new ArgumentOutOfRangeException (nameof (min));
-
-			if (max != -1 && max < min)
-				throw new ArgumentOutOfRangeException (nameof (max));
-
-			var headerFields = ImapUtils.GetUniqueHeaders (headers);
-
-			if (!supportsModSeq)
-				throw new NotSupportedException ("The ImapFolder does not support mod-sequences.");
+			if (request.PartialRange.HasValue)
+				throw new NotSupportedException ("The PARTIAL extension only supports UID-based FETCH requests.");
 
 			CheckState (true, false);
 			CheckAllowIndexes ();
 
-			var query = FormatSummaryItems (ref items, headerFields, out previewText);
-			var modseqValue = modseq.ToString (CultureInfo.InvariantCulture);
-			var command = string.Format ("FETCH {0} {1} (CHANGEDSINCE {2})\r\n", GetFetchRange (min, max), query, modseqValue);
-			var ic = new ImapCommand (Engine, cancellationToken, this, command);
-			var ctx = new FetchSummaryContext ();
+			return Count > 0 && !IsEmptyFetchRequest (request);
+		}
 
-			ic.RegisterUntaggedHandler ("FETCH", FetchSummaryItemsAsync);
+		ImapCommand QueueFetchCommand (int min, int max, IFetchRequest request, CancellationToken cancellationToken, out bool previewText, out IList<int> indexes)
+		{
+			int capacity = Math.Max (max < 0 || max > Count ? Count : max, min) - min;
+			var query = FormatSummaryItems (Engine, request, out previewText);
+			var set = GetFetchRange (min, max);
+			var changedSince = string.Empty;
+
+			if (request.ChangedSince.HasValue)
+				changedSince = string.Format (CultureInfo.InvariantCulture, " (CHANGEDSINCE {0})", request.ChangedSince.Value);
+
+			var command = string.Format ("FETCH {0} {1}{2}\r\n", set, query, changedSince);
+			var ic = new ImapCommand (Engine, cancellationToken, this, command);
+			var ctx = new FetchSummaryContext (capacity);
+
+			ic.RegisterUntaggedHandler ("FETCH", UntaggedFetchSummaryItemsHandler);
 			ic.UserData = ctx;
 
+			indexes = GetFetchIndexes (min, max);
+			request.OnStarted (this, indexes);
+
+			ic.InProgressHandler = (processed, total) => request.OnProgress (this, processed, total);
 			Engine.QueueCommand (ic);
 
-			await Engine.RunAsync (ic, doAsync).ConfigureAwait (false);
+			return ic;
+		}
 
-			ProcessResponseCodes (ic, null);
+		/// <summary>
+		/// Fetches the message summaries for the messages between the two indexes, inclusive.
+		/// </summary>
+		/// <remarks>
+		/// <para>Fetches the message summaries for the messages between the two
+		/// indexes, inclusive.</para>
+		/// <para>It should be noted that if another client has modified any message
+		/// in the folder, the IMAP server may choose to return information that was
+		/// not explicitly requested. It is therefore important to be prepared to
+		/// handle both additional fields on a <see cref="IMessageSummary"/> for
+		/// messages that were requested as well as summaries for messages that were
+		/// not requested at all.</para>
+		/// </remarks>
+		/// <returns>An enumeration of summaries for the requested messages.</returns>
+		/// <param name="min">The minimum index.</param>
+		/// <param name="max">The maximum index, or <c>-1</c> to specify no upper bound.</param>
+		/// <param name="request">The fetch request.</param>
+		/// <param name="cancellationToken">The cancellation token.</param>
+		/// <exception cref="System.ArgumentOutOfRangeException">
+		/// <para><paramref name="min"/> is out of range.</para>
+		/// <para>-or-</para>
+		/// <para><paramref name="max"/> is out of range.</para>
+		/// </exception>
+		/// <exception cref="System.ArgumentNullException">
+		/// <paramref name="request"/> is <see langword="null" />.
+		/// </exception>
+		/// <exception cref="System.ObjectDisposedException">
+		/// The <see cref="ImapClient"/> has been disposed.
+		/// </exception>
+		/// <exception cref="FolderNotOpenException">
+		/// The <see cref="ImapFolder"/> is not currently open.
+		/// </exception>
+		/// <exception cref="ServiceNotConnectedException">
+		/// The <see cref="ImapClient"/> is not connected.
+		/// </exception>
+		/// <exception cref="ServiceNotAuthenticatedException">
+		/// The <see cref="ImapClient"/> is not authenticated.
+		/// </exception>
+		/// <exception cref="System.OperationCanceledException">
+		/// The operation was canceled via the cancellation token.
+		/// </exception>
+		/// <exception cref="System.NotSupportedException">
+		/// <para>The <see cref="ImapFolder"/> does not support mod-sequences.</para>
+		/// <para>-or-</para>
+		/// <para>The fetch request included a partial range, which is only supported for UID-based FETCH requests.</para>
+		/// </exception>
+		/// <exception cref="System.IO.IOException">
+		/// An I/O error occurred.
+		/// </exception>
+		/// <exception cref="ImapProtocolException">
+		/// The server's response contained unexpected tokens.
+		/// </exception>
+		/// <exception cref="ImapCommandException">
+		/// The server replied with a NO or BAD response.
+		/// </exception>
+		public override IList<IMessageSummary> Fetch (int min, int max, IFetchRequest request, CancellationToken cancellationToken = default)
+		{
+			if (!CheckCanFetch (min, max, request))
+				return Array.Empty<IMessageSummary> ();
 
-			if (ic.Response != ImapCommandResponse.Ok)
-				throw ImapCommandException.Create ("FETCH", ic);
+			var ic = QueueFetchCommand (min, max, request, cancellationToken, out bool previewText, out var indexes);
+			var ctx = (FetchSummaryContext) ic.UserData!;
+
+			Engine.Run (ic);
+
+			ProcessFetchResponse (ic);
+
+			request.OnCompleted (this, indexes);
 
 			if (previewText)
-				await GetPreviewTextAsync (ctx, doAsync, cancellationToken).ConfigureAwait (false);
+				GetPreviewText (ctx, cancellationToken);
 
-			return AsReadOnly (ctx.Messages);
-		}
-
-		/// <summary>
-		/// Fetches the message summaries for the messages between the two indexes, inclusive.
-		/// </summary>
-		/// <remarks>
-		/// <para>Fetches the message summaries for the messages between the two
-		/// indexes, inclusive.</para>
-		/// <para>It should be noted that if another client has modified any message
-		/// in the folder, the IMAP server may choose to return information that was
-		/// not explicitly requested. It is therefore important to be prepared to
-		/// handle both additional fields on a <see cref="IMessageSummary"/> for
-		/// messages that were requested as well as summaries for messages that were
-		/// not requested at all.</para>
-		/// </remarks>
-		/// <returns>An enumeration of summaries for the requested messages.</returns>
-		/// <param name="min">The minimum index.</param>
-		/// <param name="max">The maximum index, or <c>-1</c> to specify no upper bound.</param>
-		/// <param name="items">The message summary items to fetch.</param>
-		/// <param name="cancellationToken">The cancellation token.</param>
-		/// <exception cref="System.ArgumentOutOfRangeException">
-		/// <para><paramref name="min"/> is out of range.</para>
-		/// <para>-or-</para>
-		/// <para><paramref name="max"/> is out of range.</para>
-		/// <para>-or-</para>
-		/// <para><paramref name="items"/> is empty.</para>
-		/// </exception>
-		/// <exception cref="System.ObjectDisposedException">
-		/// The <see cref="ImapClient"/> has been disposed.
-		/// </exception>
-		/// <exception cref="ServiceNotConnectedException">
-		/// The <see cref="ImapClient"/> is not connected.
-		/// </exception>
-		/// <exception cref="ServiceNotAuthenticatedException">
-		/// The <see cref="ImapClient"/> is not authenticated.
-		/// </exception>
-		/// <exception cref="FolderNotOpenException">
-		/// The <see cref="ImapFolder"/> is not currently open.
-		/// </exception>
-		/// <exception cref="System.OperationCanceledException">
-		/// The operation was canceled via the cancellation token.
-		/// </exception>
-		/// <exception cref="System.IO.IOException">
-		/// An I/O error occurred.
-		/// </exception>
-		/// <exception cref="ImapProtocolException">
-		/// The server's response contained unexpected tokens.
-		/// </exception>
-		/// <exception cref="ImapCommandException">
-		/// The server replied with a NO or BAD response.
-		/// </exception>
-		public override IList<IMessageSummary> Fetch (int min, int max, MessageSummaryItems items, CancellationToken cancellationToken = default (CancellationToken))
-		{
-			return FetchAsync (min, max, items, false, cancellationToken).GetAwaiter ().GetResult ();
+			return ctx.Messages.AsReadOnly ();
 		}
 
 		/// <summary>
@@ -2733,62 +1767,7 @@ namespace MailKit.Net.Imap
 		/// <returns>An enumeration of summaries for the requested messages.</returns>
 		/// <param name="min">The minimum index.</param>
 		/// <param name="max">The maximum index, or <c>-1</c> to specify no upper bound.</param>
-		/// <param name="items">The message summary items to fetch.</param>
-		/// <param name="cancellationToken">The cancellation token.</param>
-		/// <exception cref="System.ArgumentOutOfRangeException">
-		/// <para><paramref name="min"/> is out of range.</para>
-		/// <para>-or-</para>
-		/// <para><paramref name="max"/> is out of range.</para>
-		/// <para>-or-</para>
-		/// <para><paramref name="items"/> is empty.</para>
-		/// </exception>
-		/// <exception cref="System.ObjectDisposedException">
-		/// The <see cref="ImapClient"/> has been disposed.
-		/// </exception>
-		/// <exception cref="ServiceNotConnectedException">
-		/// The <see cref="ImapClient"/> is not connected.
-		/// </exception>
-		/// <exception cref="ServiceNotAuthenticatedException">
-		/// The <see cref="ImapClient"/> is not authenticated.
-		/// </exception>
-		/// <exception cref="FolderNotOpenException">
-		/// The <see cref="ImapFolder"/> is not currently open.
-		/// </exception>
-		/// <exception cref="System.OperationCanceledException">
-		/// The operation was canceled via the cancellation token.
-		/// </exception>
-		/// <exception cref="System.IO.IOException">
-		/// An I/O error occurred.
-		/// </exception>
-		/// <exception cref="ImapProtocolException">
-		/// The server's response contained unexpected tokens.
-		/// </exception>
-		/// <exception cref="ImapCommandException">
-		/// The server replied with a NO or BAD response.
-		/// </exception>
-		public override Task<IList<IMessageSummary>> FetchAsync (int min, int max, MessageSummaryItems items, CancellationToken cancellationToken = default (CancellationToken))
-		{
-			return FetchAsync (min, max, items, true, cancellationToken);
-		}
-
-		/// <summary>
-		/// Fetches the message summaries for the messages between the two indexes, inclusive.
-		/// </summary>
-		/// <remarks>
-		/// <para>Fetches the message summaries for the messages between the two
-		/// indexes, inclusive.</para>
-		/// <para>It should be noted that if another client has modified any message
-		/// in the folder, the IMAP server may choose to return information that was
-		/// not explicitly requested. It is therefore important to be prepared to
-		/// handle both additional fields on a <see cref="IMessageSummary"/> for
-		/// messages that were requested as well as summaries for messages that were
-		/// not requested at all.</para>
-		/// </remarks>
-		/// <returns>An enumeration of summaries for the requested messages.</returns>
-		/// <param name="min">The minimum index.</param>
-		/// <param name="max">The maximum index, or <c>-1</c> to specify no upper bound.</param>
-		/// <param name="items">The message summary items to fetch.</param>
-		/// <param name="headers">The desired header fields.</param>
+		/// <param name="request">The fetch request.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <para><paramref name="min"/> is out of range.</para>
@@ -2796,256 +1775,27 @@ namespace MailKit.Net.Imap
 		/// <para><paramref name="max"/> is out of range.</para>
 		/// </exception>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="headers"/> is <c>null</c>.
+		/// <paramref name="request"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ObjectDisposedException">
 		/// The <see cref="ImapClient"/> has been disposed.
+		/// </exception>
+		/// <exception cref="FolderNotOpenException">
+		/// The <see cref="ImapFolder"/> is not currently open.
 		/// </exception>
 		/// <exception cref="ServiceNotConnectedException">
 		/// The <see cref="ImapClient"/> is not connected.
 		/// </exception>
 		/// <exception cref="ServiceNotAuthenticatedException">
 		/// The <see cref="ImapClient"/> is not authenticated.
-		/// </exception>
-		/// <exception cref="FolderNotOpenException">
-		/// The <see cref="ImapFolder"/> is not currently open.
 		/// </exception>
 		/// <exception cref="System.OperationCanceledException">
 		/// The operation was canceled via the cancellation token.
-		/// </exception>
-		/// <exception cref="System.IO.IOException">
-		/// An I/O error occurred.
-		/// </exception>
-		/// <exception cref="ImapProtocolException">
-		/// The server's response contained unexpected tokens.
-		/// </exception>
-		/// <exception cref="ImapCommandException">
-		/// The server replied with a NO or BAD response.
-		/// </exception>
-		public override IList<IMessageSummary> Fetch (int min, int max, MessageSummaryItems items, IEnumerable<HeaderId> headers, CancellationToken cancellationToken = default (CancellationToken))
-		{
-			return Fetch (min, max, items, ImapUtils.GetUniqueHeaders (headers), cancellationToken);
-		}
-
-		/// <summary>
-		/// Asynchronously fetches the message summaries for the messages between the two indexes, inclusive.
-		/// </summary>
-		/// <remarks>
-		/// <para>Fetches the message summaries for the messages between the two
-		/// indexes, inclusive.</para>
-		/// <para>It should be noted that if another client has modified any message
-		/// in the folder, the IMAP server may choose to return information that was
-		/// not explicitly requested. It is therefore important to be prepared to
-		/// handle both additional fields on a <see cref="IMessageSummary"/> for
-		/// messages that were requested as well as summaries for messages that were
-		/// not requested at all.</para>
-		/// </remarks>
-		/// <returns>An enumeration of summaries for the requested messages.</returns>
-		/// <param name="min">The minimum index.</param>
-		/// <param name="max">The maximum index, or <c>-1</c> to specify no upper bound.</param>
-		/// <param name="items">The message summary items to fetch.</param>
-		/// <param name="headers">The desired header fields.</param>
-		/// <param name="cancellationToken">The cancellation token.</param>
-		/// <exception cref="System.ArgumentOutOfRangeException">
-		/// <para><paramref name="min"/> is out of range.</para>
-		/// <para>-or-</para>
-		/// <para><paramref name="max"/> is out of range.</para>
-		/// </exception>
-		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="headers"/> is <c>null</c>.
-		/// </exception>
-		/// <exception cref="System.ObjectDisposedException">
-		/// The <see cref="ImapClient"/> has been disposed.
-		/// </exception>
-		/// <exception cref="ServiceNotConnectedException">
-		/// The <see cref="ImapClient"/> is not connected.
-		/// </exception>
-		/// <exception cref="ServiceNotAuthenticatedException">
-		/// The <see cref="ImapClient"/> is not authenticated.
-		/// </exception>
-		/// <exception cref="FolderNotOpenException">
-		/// The <see cref="ImapFolder"/> is not currently open.
-		/// </exception>
-		/// <exception cref="System.OperationCanceledException">
-		/// The operation was canceled via the cancellation token.
-		/// </exception>
-		/// <exception cref="System.IO.IOException">
-		/// An I/O error occurred.
-		/// </exception>
-		/// <exception cref="ImapProtocolException">
-		/// The server's response contained unexpected tokens.
-		/// </exception>
-		/// <exception cref="ImapCommandException">
-		/// The server replied with a NO or BAD response.
-		/// </exception>
-		public override Task<IList<IMessageSummary>> FetchAsync (int min, int max, MessageSummaryItems items, IEnumerable<HeaderId> headers, CancellationToken cancellationToken = default (CancellationToken))
-		{
-			return FetchAsync (min, max, items, ImapUtils.GetUniqueHeaders (headers), cancellationToken);
-		}
-
-		/// <summary>
-		/// Fetches the message summaries for the messages between the two indexes, inclusive.
-		/// </summary>
-		/// <remarks>
-		/// <para>Fetches the message summaries for the messages between the two
-		/// indexes, inclusive.</para>
-		/// <para>It should be noted that if another client has modified any message
-		/// in the folder, the IMAP server may choose to return information that was
-		/// not explicitly requested. It is therefore important to be prepared to
-		/// handle both additional fields on a <see cref="IMessageSummary"/> for
-		/// messages that were requested as well as summaries for messages that were
-		/// not requested at all.</para>
-		/// </remarks>
-		/// <returns>An enumeration of summaries for the requested messages.</returns>
-		/// <param name="min">The minimum index.</param>
-		/// <param name="max">The maximum index, or <c>-1</c> to specify no upper bound.</param>
-		/// <param name="items">The message summary items to fetch.</param>
-		/// <param name="headers">The desired header fields.</param>
-		/// <param name="cancellationToken">The cancellation token.</param>
-		/// <exception cref="System.ArgumentOutOfRangeException">
-		/// <para><paramref name="min"/> is out of range.</para>
-		/// <para>-or-</para>
-		/// <para><paramref name="max"/> is out of range.</para>
-		/// </exception>
-		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="headers"/> is <c>null</c>.
-		/// </exception>
-		/// <exception cref="System.ArgumentException">
-		/// One or more of the specified <paramref name="headers"/> is invalid.
-		/// </exception>
-		/// <exception cref="System.ObjectDisposedException">
-		/// The <see cref="ImapClient"/> has been disposed.
-		/// </exception>
-		/// <exception cref="ServiceNotConnectedException">
-		/// The <see cref="ImapClient"/> is not connected.
-		/// </exception>
-		/// <exception cref="ServiceNotAuthenticatedException">
-		/// The <see cref="ImapClient"/> is not authenticated.
-		/// </exception>
-		/// <exception cref="FolderNotOpenException">
-		/// The <see cref="ImapFolder"/> is not currently open.
-		/// </exception>
-		/// <exception cref="System.OperationCanceledException">
-		/// The operation was canceled via the cancellation token.
-		/// </exception>
-		/// <exception cref="System.IO.IOException">
-		/// An I/O error occurred.
-		/// </exception>
-		/// <exception cref="ImapProtocolException">
-		/// The server's response contained unexpected tokens.
-		/// </exception>
-		/// <exception cref="ImapCommandException">
-		/// The server replied with a NO or BAD response.
-		/// </exception>
-		public override IList<IMessageSummary> Fetch (int min, int max, MessageSummaryItems items, IEnumerable<string> headers, CancellationToken cancellationToken = default (CancellationToken))
-		{
-			return FetchAsync (min, max, items, headers, false, cancellationToken).GetAwaiter ().GetResult ();
-		}
-
-		/// <summary>
-		/// Asynchronously fetches the message summaries for the messages between the two indexes, inclusive.
-		/// </summary>
-		/// <remarks>
-		/// <para>Fetches the message summaries for the messages between the two
-		/// indexes, inclusive.</para>
-		/// <para>It should be noted that if another client has modified any message
-		/// in the folder, the IMAP server may choose to return information that was
-		/// not explicitly requested. It is therefore important to be prepared to
-		/// handle both additional fields on a <see cref="IMessageSummary"/> for
-		/// messages that were requested as well as summaries for messages that were
-		/// not requested at all.</para>
-		/// </remarks>
-		/// <returns>An enumeration of summaries for the requested messages.</returns>
-		/// <param name="min">The minimum index.</param>
-		/// <param name="max">The maximum index, or <c>-1</c> to specify no upper bound.</param>
-		/// <param name="items">The message summary items to fetch.</param>
-		/// <param name="headers">The desired header fields.</param>
-		/// <param name="cancellationToken">The cancellation token.</param>
-		/// <exception cref="System.ArgumentOutOfRangeException">
-		/// <para><paramref name="min"/> is out of range.</para>
-		/// <para>-or-</para>
-		/// <para><paramref name="max"/> is out of range.</para>
-		/// </exception>
-		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="headers"/> is <c>null</c>.
-		/// </exception>
-		/// <exception cref="System.ArgumentException">
-		/// One or more of the specified <paramref name="headers"/> is invalid.
-		/// </exception>
-		/// <exception cref="System.ObjectDisposedException">
-		/// The <see cref="ImapClient"/> has been disposed.
-		/// </exception>
-		/// <exception cref="ServiceNotConnectedException">
-		/// The <see cref="ImapClient"/> is not connected.
-		/// </exception>
-		/// <exception cref="ServiceNotAuthenticatedException">
-		/// The <see cref="ImapClient"/> is not authenticated.
-		/// </exception>
-		/// <exception cref="FolderNotOpenException">
-		/// The <see cref="ImapFolder"/> is not currently open.
-		/// </exception>
-		/// <exception cref="System.OperationCanceledException">
-		/// The operation was canceled via the cancellation token.
-		/// </exception>
-		/// <exception cref="System.IO.IOException">
-		/// An I/O error occurred.
-		/// </exception>
-		/// <exception cref="ImapProtocolException">
-		/// The server's response contained unexpected tokens.
-		/// </exception>
-		/// <exception cref="ImapCommandException">
-		/// The server replied with a NO or BAD response.
-		/// </exception>
-		public override Task<IList<IMessageSummary>> FetchAsync (int min, int max, MessageSummaryItems items, IEnumerable<string> headers, CancellationToken cancellationToken = default (CancellationToken))
-		{
-			return FetchAsync (min, max, items, headers, true, cancellationToken);
-		}
-
-		/// <summary>
-		/// Fetches the message summaries for the messages between the two indexes (inclusive)
-		/// that have a higher mod-sequence value than the one specified.
-		/// </summary>
-		/// <remarks>
-		/// <para>Fetches the message summaries for the messages between the two
-		/// indexes (inclusive) that have a higher mod-sequence value than the one
-		/// specified.</para>
-		/// <para>It should be noted that if another client has modified any message
-		/// in the folder, the IMAP server may choose to return information that was
-		/// not explicitly requested. It is therefore important to be prepared to
-		/// handle both additional fields on a <see cref="IMessageSummary"/> for
-		/// messages that were requested as well as summaries for messages that were
-		/// not requested at all.</para>
-		/// </remarks>
-		/// <returns>An enumeration of summaries for the requested messages.</returns>
-		/// <param name="min">The minimum index.</param>
-		/// <param name="max">The maximum index, or <c>-1</c> to specify no upper bound.</param>
-		/// <param name="modseq">The mod-sequence value.</param>
-		/// <param name="items">The message summary items to fetch.</param>
-		/// <param name="cancellationToken">The cancellation token.</param>
-		/// <exception cref="System.ArgumentOutOfRangeException">
-		/// <para><paramref name="min"/> is out of range.</para>
-		/// <para>-or-</para>
-		/// <para><paramref name="max"/> is out of range.</para>
-		/// <para>-or-</para>
-		/// <para><paramref name="items"/> is empty.</para>
-		/// </exception>
-		/// <exception cref="System.ObjectDisposedException">
-		/// The <see cref="ImapClient"/> has been disposed.
-		/// </exception>
-		/// <exception cref="ServiceNotConnectedException">
-		/// The <see cref="ImapClient"/> is not connected.
-		/// </exception>
-		/// <exception cref="ServiceNotAuthenticatedException">
-		/// The <see cref="ImapClient"/> is not authenticated.
-		/// </exception>
-		/// <exception cref="FolderNotOpenException">
-		/// The <see cref="ImapFolder"/> is not currently open.
 		/// </exception>
 		/// <exception cref="System.NotSupportedException">
-		/// The <see cref="ImapFolder"/> does not support mod-sequences.
-		/// </exception>
-		/// <exception cref="System.OperationCanceledException">
-		/// The operation was canceled via the cancellation token.
+		/// <para>The <see cref="ImapFolder"/> does not support mod-sequences.</para>
+		/// <para>-or-</para>
+		/// <para>The fetch request included a partial range, which is only supported for UID-based FETCH requests.</para>
 		/// </exception>
 		/// <exception cref="System.IO.IOException">
 		/// An I/O error occurred.
@@ -3056,323 +1806,24 @@ namespace MailKit.Net.Imap
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override IList<IMessageSummary> Fetch (int min, int max, ulong modseq, MessageSummaryItems items, CancellationToken cancellationToken = default (CancellationToken))
+		public override async Task<IList<IMessageSummary>> FetchAsync (int min, int max, IFetchRequest request, CancellationToken cancellationToken = default)
 		{
-			return FetchAsync (min, max, modseq, items, false, cancellationToken).GetAwaiter ().GetResult ();
-		}
+			if (!CheckCanFetch (min, max, request))
+				return Array.Empty<IMessageSummary> ();
 
-		/// <summary>
-		/// Asynchronously fetches the message summaries for the messages between the two indexes (inclusive)
-		/// that have a higher mod-sequence value than the one specified.
-		/// </summary>
-		/// <remarks>
-		/// <para>Fetches the message summaries for the messages between the two
-		/// indexes (inclusive) that have a higher mod-sequence value than the one
-		/// specified.</para>
-		/// <para>It should be noted that if another client has modified any message
-		/// in the folder, the IMAP server may choose to return information that was
-		/// not explicitly requested. It is therefore important to be prepared to
-		/// handle both additional fields on a <see cref="IMessageSummary"/> for
-		/// messages that were requested as well as summaries for messages that were
-		/// not requested at all.</para>
-		/// </remarks>
-		/// <returns>An enumeration of summaries for the requested messages.</returns>
-		/// <param name="min">The minimum index.</param>
-		/// <param name="max">The maximum index, or <c>-1</c> to specify no upper bound.</param>
-		/// <param name="modseq">The mod-sequence value.</param>
-		/// <param name="items">The message summary items to fetch.</param>
-		/// <param name="cancellationToken">The cancellation token.</param>
-		/// <exception cref="System.ArgumentOutOfRangeException">
-		/// <para><paramref name="min"/> is out of range.</para>
-		/// <para>-or-</para>
-		/// <para><paramref name="max"/> is out of range.</para>
-		/// <para>-or-</para>
-		/// <para><paramref name="items"/> is empty.</para>
-		/// </exception>
-		/// <exception cref="System.ObjectDisposedException">
-		/// The <see cref="ImapClient"/> has been disposed.
-		/// </exception>
-		/// <exception cref="ServiceNotConnectedException">
-		/// The <see cref="ImapClient"/> is not connected.
-		/// </exception>
-		/// <exception cref="ServiceNotAuthenticatedException">
-		/// The <see cref="ImapClient"/> is not authenticated.
-		/// </exception>
-		/// <exception cref="FolderNotOpenException">
-		/// The <see cref="ImapFolder"/> is not currently open.
-		/// </exception>
-		/// <exception cref="System.NotSupportedException">
-		/// The <see cref="ImapFolder"/> does not support mod-sequences.
-		/// </exception>
-		/// <exception cref="System.OperationCanceledException">
-		/// The operation was canceled via the cancellation token.
-		/// </exception>
-		/// <exception cref="System.IO.IOException">
-		/// An I/O error occurred.
-		/// </exception>
-		/// <exception cref="ImapProtocolException">
-		/// The server's response contained unexpected tokens.
-		/// </exception>
-		/// <exception cref="ImapCommandException">
-		/// The server replied with a NO or BAD response.
-		/// </exception>
-		public override Task<IList<IMessageSummary>> FetchAsync (int min, int max, ulong modseq, MessageSummaryItems items, CancellationToken cancellationToken = default (CancellationToken))
-		{
-			return FetchAsync (min, max, modseq, items, true, cancellationToken);
-		}
+			var ic = QueueFetchCommand (min, max, request, cancellationToken, out bool previewText, out var indexes);
+			var ctx = (FetchSummaryContext) ic.UserData!;
 
-		/// <summary>
-		/// Fetches the message summaries for the messages between the two indexes (inclusive)
-		/// that have a higher mod-sequence value than the one specified.
-		/// </summary>
-		/// <remarks>
-		/// <para>Fetches the message summaries for the messages between the two
-		/// indexes (inclusive) that have a higher mod-sequence value than the one
-		/// specified.</para>
-		/// <para>It should be noted that if another client has modified any message
-		/// in the folder, the IMAP server may choose to return information that was
-		/// not explicitly requested. It is therefore important to be prepared to
-		/// handle both additional fields on a <see cref="IMessageSummary"/> for
-		/// messages that were requested as well as summaries for messages that were
-		/// not requested at all.</para>
-		/// </remarks>
-		/// <returns>An enumeration of summaries for the requested messages.</returns>
-		/// <param name="min">The minimum index.</param>
-		/// <param name="max">The maximum index, or <c>-1</c> to specify no upper bound.</param>
-		/// <param name="modseq">The mod-sequence value.</param>
-		/// <param name="items">The message summary items to fetch.</param>
-		/// <param name="headers">The desired header fields.</param>
-		/// <param name="cancellationToken">The cancellation token.</param>
-		/// <exception cref="System.ArgumentOutOfRangeException">
-		/// <para><paramref name="min"/> is out of range.</para>
-		/// <para>-or-</para>
-		/// <para><paramref name="max"/> is out of range.</para>
-		/// </exception>
-		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="headers"/> is <c>null</c>.
-		/// </exception>
-		/// <exception cref="System.ObjectDisposedException">
-		/// The <see cref="ImapClient"/> has been disposed.
-		/// </exception>
-		/// <exception cref="ServiceNotConnectedException">
-		/// The <see cref="ImapClient"/> is not connected.
-		/// </exception>
-		/// <exception cref="ServiceNotAuthenticatedException">
-		/// The <see cref="ImapClient"/> is not authenticated.
-		/// </exception>
-		/// <exception cref="FolderNotOpenException">
-		/// The <see cref="ImapFolder"/> is not currently open.
-		/// </exception>
-		/// <exception cref="System.NotSupportedException">
-		/// The <see cref="ImapFolder"/> does not support mod-sequences.
-		/// </exception>
-		/// <exception cref="System.OperationCanceledException">
-		/// The operation was canceled via the cancellation token.
-		/// </exception>
-		/// <exception cref="System.IO.IOException">
-		/// An I/O error occurred.
-		/// </exception>
-		/// <exception cref="ImapProtocolException">
-		/// The server's response contained unexpected tokens.
-		/// </exception>
-		/// <exception cref="ImapCommandException">
-		/// The server replied with a NO or BAD response.
-		/// </exception>
-		public override IList<IMessageSummary> Fetch (int min, int max, ulong modseq, MessageSummaryItems items, IEnumerable<HeaderId> headers, CancellationToken cancellationToken = default (CancellationToken))
-		{
-			return Fetch (min, max, modseq, items, ImapUtils.GetUniqueHeaders (headers), cancellationToken);
-		}
+			await Engine.RunAsync (ic).ConfigureAwait (false);
 
-		/// <summary>
-		/// Asynchronously fetches the message summaries for the messages between the two indexes (inclusive)
-		/// that have a higher mod-sequence value than the one specified.
-		/// </summary>
-		/// <remarks>
-		/// <para>Fetches the message summaries for the messages between the two
-		/// indexes (inclusive) that have a higher mod-sequence value than the one
-		/// specified.</para>
-		/// <para>It should be noted that if another client has modified any message
-		/// in the folder, the IMAP server may choose to return information that was
-		/// not explicitly requested. It is therefore important to be prepared to
-		/// handle both additional fields on a <see cref="IMessageSummary"/> for
-		/// messages that were requested as well as summaries for messages that were
-		/// not requested at all.</para>
-		/// </remarks>
-		/// <returns>An enumeration of summaries for the requested messages.</returns>
-		/// <param name="min">The minimum index.</param>
-		/// <param name="max">The maximum index, or <c>-1</c> to specify no upper bound.</param>
-		/// <param name="modseq">The mod-sequence value.</param>
-		/// <param name="items">The message summary items to fetch.</param>
-		/// <param name="headers">The desired header fields.</param>
-		/// <param name="cancellationToken">The cancellation token.</param>
-		/// <exception cref="System.ArgumentOutOfRangeException">
-		/// <para><paramref name="min"/> is out of range.</para>
-		/// <para>-or-</para>
-		/// <para><paramref name="max"/> is out of range.</para>
-		/// </exception>
-		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="headers"/> is <c>null</c>.
-		/// </exception>
-		/// <exception cref="System.ObjectDisposedException">
-		/// The <see cref="ImapClient"/> has been disposed.
-		/// </exception>
-		/// <exception cref="ServiceNotConnectedException">
-		/// The <see cref="ImapClient"/> is not connected.
-		/// </exception>
-		/// <exception cref="ServiceNotAuthenticatedException">
-		/// The <see cref="ImapClient"/> is not authenticated.
-		/// </exception>
-		/// <exception cref="FolderNotOpenException">
-		/// The <see cref="ImapFolder"/> is not currently open.
-		/// </exception>
-		/// <exception cref="System.NotSupportedException">
-		/// The <see cref="ImapFolder"/> does not support mod-sequences.
-		/// </exception>
-		/// <exception cref="System.OperationCanceledException">
-		/// The operation was canceled via the cancellation token.
-		/// </exception>
-		/// <exception cref="System.IO.IOException">
-		/// An I/O error occurred.
-		/// </exception>
-		/// <exception cref="ImapProtocolException">
-		/// The server's response contained unexpected tokens.
-		/// </exception>
-		/// <exception cref="ImapCommandException">
-		/// The server replied with a NO or BAD response.
-		/// </exception>
-		public override Task<IList<IMessageSummary>> FetchAsync (int min, int max, ulong modseq, MessageSummaryItems items, IEnumerable<HeaderId> headers, CancellationToken cancellationToken = default (CancellationToken))
-		{
-			return FetchAsync (min, max, modseq, items, ImapUtils.GetUniqueHeaders (headers), cancellationToken);
-		}
+			ProcessFetchResponse (ic);
 
-		/// <summary>
-		/// Fetches the message summaries for the messages between the two indexes (inclusive)
-		/// that have a higher mod-sequence value than the one specified.
-		/// </summary>
-		/// <remarks>
-		/// <para>Fetches the message summaries for the messages between the two
-		/// indexes (inclusive) that have a higher mod-sequence value than the one
-		/// specified.</para>
-		/// <para>It should be noted that if another client has modified any message
-		/// in the folder, the IMAP server may choose to return information that was
-		/// not explicitly requested. It is therefore important to be prepared to
-		/// handle both additional fields on a <see cref="IMessageSummary"/> for
-		/// messages that were requested as well as summaries for messages that were
-		/// not requested at all.</para>
-		/// </remarks>
-		/// <returns>An enumeration of summaries for the requested messages.</returns>
-		/// <param name="min">The minimum index.</param>
-		/// <param name="max">The maximum index, or <c>-1</c> to specify no upper bound.</param>
-		/// <param name="modseq">The mod-sequence value.</param>
-		/// <param name="items">The message summary items to fetch.</param>
-		/// <param name="headers">The desired header fields.</param>
-		/// <param name="cancellationToken">The cancellation token.</param>
-		/// <exception cref="System.ArgumentOutOfRangeException">
-		/// <para><paramref name="min"/> is out of range.</para>
-		/// <para>-or-</para>
-		/// <para><paramref name="max"/> is out of range.</para>
-		/// </exception>
-		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="headers"/> is <c>null</c>.
-		/// </exception>
-		/// <exception cref="System.ArgumentException">
-		/// One or more of the specified <paramref name="headers"/> is invalid.
-		/// </exception>
-		/// <exception cref="System.ObjectDisposedException">
-		/// The <see cref="ImapClient"/> has been disposed.
-		/// </exception>
-		/// <exception cref="ServiceNotConnectedException">
-		/// The <see cref="ImapClient"/> is not connected.
-		/// </exception>
-		/// <exception cref="ServiceNotAuthenticatedException">
-		/// The <see cref="ImapClient"/> is not authenticated.
-		/// </exception>
-		/// <exception cref="FolderNotOpenException">
-		/// The <see cref="ImapFolder"/> is not currently open.
-		/// </exception>
-		/// <exception cref="System.NotSupportedException">
-		/// The <see cref="ImapFolder"/> does not support mod-sequences.
-		/// </exception>
-		/// <exception cref="System.OperationCanceledException">
-		/// The operation was canceled via the cancellation token.
-		/// </exception>
-		/// <exception cref="System.IO.IOException">
-		/// An I/O error occurred.
-		/// </exception>
-		/// <exception cref="ImapProtocolException">
-		/// The server's response contained unexpected tokens.
-		/// </exception>
-		/// <exception cref="ImapCommandException">
-		/// The server replied with a NO or BAD response.
-		/// </exception>
-		public override IList<IMessageSummary> Fetch (int min, int max, ulong modseq, MessageSummaryItems items, IEnumerable<string> headers, CancellationToken cancellationToken = default (CancellationToken))
-		{
-			return FetchAsync (min, max, modseq, items, headers, false, cancellationToken).GetAwaiter ().GetResult ();
-		}
+			request.OnCompleted (this, indexes);
 
-		/// <summary>
-		/// Asynchronously fetches the message summaries for the messages between the two indexes (inclusive)
-		/// that have a higher mod-sequence value than the one specified.
-		/// </summary>
-		/// <remarks>
-		/// <para>Fetches the message summaries for the messages between the two
-		/// indexes (inclusive) that have a higher mod-sequence value than the one
-		/// specified.</para>
-		/// <para>It should be noted that if another client has modified any message
-		/// in the folder, the IMAP server may choose to return information that was
-		/// not explicitly requested. It is therefore important to be prepared to
-		/// handle both additional fields on a <see cref="IMessageSummary"/> for
-		/// messages that were requested as well as summaries for messages that were
-		/// not requested at all.</para>
-		/// </remarks>
-		/// <returns>An enumeration of summaries for the requested messages.</returns>
-		/// <param name="min">The minimum index.</param>
-		/// <param name="max">The maximum index, or <c>-1</c> to specify no upper bound.</param>
-		/// <param name="modseq">The mod-sequence value.</param>
-		/// <param name="items">The message summary items to fetch.</param>
-		/// <param name="headers">The desired header fields.</param>
-		/// <param name="cancellationToken">The cancellation token.</param>
-		/// <exception cref="System.ArgumentOutOfRangeException">
-		/// <para><paramref name="min"/> is out of range.</para>
-		/// <para>-or-</para>
-		/// <para><paramref name="max"/> is out of range.</para>
-		/// </exception>
-		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="headers"/> is <c>null</c>.
-		/// </exception>
-		/// <exception cref="System.ArgumentException">
-		/// One or more of the specified <paramref name="headers"/> is invalid.
-		/// </exception>
-		/// <exception cref="System.ObjectDisposedException">
-		/// The <see cref="ImapClient"/> has been disposed.
-		/// </exception>
-		/// <exception cref="ServiceNotConnectedException">
-		/// The <see cref="ImapClient"/> is not connected.
-		/// </exception>
-		/// <exception cref="ServiceNotAuthenticatedException">
-		/// The <see cref="ImapClient"/> is not authenticated.
-		/// </exception>
-		/// <exception cref="FolderNotOpenException">
-		/// The <see cref="ImapFolder"/> is not currently open.
-		/// </exception>
-		/// <exception cref="System.NotSupportedException">
-		/// The <see cref="ImapFolder"/> does not support mod-sequences.
-		/// </exception>
-		/// <exception cref="System.OperationCanceledException">
-		/// The operation was canceled via the cancellation token.
-		/// </exception>
-		/// <exception cref="System.IO.IOException">
-		/// An I/O error occurred.
-		/// </exception>
-		/// <exception cref="ImapProtocolException">
-		/// The server's response contained unexpected tokens.
-		/// </exception>
-		/// <exception cref="ImapCommandException">
-		/// The server replied with a NO or BAD response.
-		/// </exception>
-		public override Task<IList<IMessageSummary>> FetchAsync (int min, int max, ulong modseq, MessageSummaryItems items, IEnumerable<string> headers, CancellationToken cancellationToken = default (CancellationToken))
-		{
-			return FetchAsync (min, max, modseq, items, headers, true, cancellationToken);
+			if (previewText)
+				await GetPreviewTextAsync (ctx, cancellationToken).ConfigureAwait (false);
+
+			return ctx.Messages.AsReadOnly ();
 		}
 
 		/// <summary>
@@ -3401,12 +1852,12 @@ namespace MailKit.Net.Imap
 		/// <param name="section">The section of the message that is being fetched.</param>
 		/// <param name="offset">The starting offset of the message section being fetched.</param>
 		/// <param name="length">The length of the stream being fetched, measured in bytes.</param>
-		protected virtual Stream CreateStream (UniqueId? uid, string section, int offset, int length)
+		protected virtual Stream CreateStream (UniqueId? uid, string section, long offset, long length)
 		{
 			if (length > 4096)
 				return new MemoryBlockStream ();
 
-			return new MemoryStream (length);
+			return new MemoryStream ((int) length);
 		}
 
 		/// <summary>
@@ -3431,52 +1882,91 @@ namespace MailKit.Net.Imap
 		/// <param name="section">The section of the message that the stream represents.</param>
 		/// <param name="offset">The starting offset of the message section.</param>
 		/// <param name="length">The length of the stream, measured in bytes.</param>
-		protected virtual Stream CommitStream (Stream stream, UniqueId uid, string section, int offset, int length)
+		protected virtual Stream CommitStream (Stream stream, UniqueId uid, string section, long offset, long length)
 		{
 			return stream;
 		}
 
-		async Task<HeaderList> ParseHeadersAsync (Stream stream, bool doAsync, CancellationToken cancellationToken)
+		HeaderList ParseHeaders (Stream stream, CancellationToken cancellationToken)
 		{
 			try {
-				return await Engine.ParseHeadersAsync (stream, doAsync, cancellationToken).ConfigureAwait (false);
+				return Engine.ParseHeaders (stream, cancellationToken);
 			} finally {
 				stream.Dispose ();
 			}
 		}
 
-		async Task<MimeMessage> ParseMessageAsync (Stream stream, bool doAsync, CancellationToken cancellationToken)
+		async Task<HeaderList> ParseHeadersAsync (Stream stream, CancellationToken cancellationToken)
 		{
-			bool dispose = !(stream is MemoryStream || stream is MemoryBlockStream);
+			try {
+				return await Engine.ParseHeadersAsync (stream, cancellationToken).ConfigureAwait (false);
+			} finally {
+				stream.Dispose ();
+			}
+		}
+
+		static MimeContentStorage GetContentStorage (Stream stream)
+		{
+			if (stream.CanSeek && (stream is MemoryStream || stream is MemoryBlockStream))
+				return MimeContentStorage.Source;
+
+			return MimeContentStorage.Memory;
+		}
+
+		MimeMessage ParseMessage (Stream stream, CancellationToken cancellationToken)
+		{
+			var storage = GetContentStorage (stream);
 
 			try {
-				return await Engine.ParseMessageAsync (stream, !dispose, doAsync, cancellationToken).ConfigureAwait (false);
+				return Engine.ParseMessage (stream, storage, cancellationToken);
 			} finally {
-				if (dispose)
+				if (storage == MimeContentStorage.Memory)
 					stream.Dispose ();
 			}
 		}
 
-		async Task<MimeEntity> ParseEntityAsync (Stream stream, bool dispose, bool doAsync, CancellationToken cancellationToken)
+		async Task<MimeMessage> ParseMessageAsync (Stream stream, CancellationToken cancellationToken)
+		{
+			var storage = GetContentStorage (stream);
+
+			try {
+				return await Engine.ParseMessageAsync (stream, storage, cancellationToken).ConfigureAwait (false);
+			} finally {
+				if (storage == MimeContentStorage.Memory)
+					stream.Dispose ();
+			}
+		}
+
+		MimeEntity ParseEntity (Stream stream, MimeContentStorage storage, CancellationToken cancellationToken)
 		{
 			try {
-				return await Engine.ParseEntityAsync (stream, !dispose, doAsync, cancellationToken).ConfigureAwait (false);
+				return Engine.ParseEntity (stream, storage, cancellationToken);
 			} finally {
-				if (dispose)
+				if (storage == MimeContentStorage.Memory)
+					stream.Dispose ();
+			}
+		}
+
+		async Task<MimeEntity> ParseEntityAsync (Stream stream, MimeContentStorage storage, CancellationToken cancellationToken)
+		{
+			try {
+				return await Engine.ParseEntityAsync (stream, storage, cancellationToken).ConfigureAwait (false);
+			} finally {
+				if (storage == MimeContentStorage.Memory)
 					stream.Dispose ();
 			}
 		}
 
 		class Section
 		{
-			public int Index;
+			public readonly int Index;
 			public UniqueId? UniqueId;
-			public Stream Stream;
-			public string Name;
-			public int Offset;
-			public int Length;
+			public readonly Stream Stream;
+			public readonly string Name;
+			public readonly long Offset;
+			public readonly long Length;
 
-			public Section (Stream stream, int index, UniqueId? uid, string name, int offset, int length)
+			public Section (Stream stream, int index, UniqueId? uid, string name, long offset, long length)
 			{
 				Stream = stream;
 				Offset = offset;
@@ -3489,24 +1979,37 @@ namespace MailKit.Net.Imap
 
 		abstract class FetchStreamContextBase : IDisposable
 		{
-			protected static readonly Task Complete = Task.FromResult (true);
 			public readonly List<Section> Sections = new List<Section> ();
-			readonly ITransferProgress progress;
+			readonly ITransferProgress? progress;
 
-			public FetchStreamContextBase (ITransferProgress progress)
+			protected FetchStreamContextBase (ITransferProgress? progress)
 			{
 				this.progress = progress;
 			}
 
-			public abstract Task AddAsync (Section section, bool doAsync, CancellationToken cancellationToken);
+			public abstract void Add (Section section, CancellationToken cancellationToken);
 
-			public virtual bool Contains (int index, string specifier, out Section section)
+			public virtual Task AddAsync (Section section, CancellationToken cancellationToken)
+			{
+				Add (section, cancellationToken);
+
+				return Task.CompletedTask;
+			}
+
+			public virtual bool Contains (int index, string specifier, [NotNullWhen (true)] out Section? section)
 			{
 				section = null;
 				return false;
 			}
 
-			public abstract Task SetUniqueIdAsync (int index, UniqueId uid, bool doAsync, CancellationToken cancellationToken);
+			public abstract void SetUniqueId (int index, UniqueId uid, CancellationToken cancellationToken);
+
+			public virtual Task SetUniqueIdAsync (int index, UniqueId uid, CancellationToken cancellationToken)
+			{
+				SetUniqueId (index, uid, cancellationToken);
+
+				return Task.CompletedTask;
+			}
 
 			public void Report (long nread, long total)
 			{
@@ -3531,17 +2034,16 @@ namespace MailKit.Net.Imap
 
 		class FetchStreamContext : FetchStreamContextBase
 		{
-			public FetchStreamContext (ITransferProgress progress) : base (progress)
+			public FetchStreamContext (ITransferProgress? progress) : base (progress)
 			{
 			}
 
-			public override Task AddAsync (Section section, bool doAsync, CancellationToken cancellationToken)
+			public override void Add (Section section, CancellationToken cancellationToken)
 			{
 				Sections.Add (section);
-				return Complete;
 			}
 
-			public bool TryGetSection (UniqueId uid, string specifier, out Section section, bool remove = false)
+			public bool TryGetSection (UniqueId uid, string specifier, [NotNullWhen (true)] out Section? section, bool remove = false)
 			{
 				for (int i = 0; i < Sections.Count; i++) {
 					var item = Sections[i];
@@ -3563,7 +2065,7 @@ namespace MailKit.Net.Imap
 				return false;
 			}
 
-			public bool TryGetSection (int index, string specifier, out Section section, bool remove = false)
+			public bool TryGetSection (int index, string specifier, [NotNullWhen (true)] out Section? section, bool remove = false)
 			{
 				for (int i = 0; i < Sections.Count; i++) {
 					var item = Sections[i];
@@ -3585,33 +2087,27 @@ namespace MailKit.Net.Imap
 				return false;
 			}
 
-			public override Task SetUniqueIdAsync (int index, UniqueId uid, bool doAsync, CancellationToken cancellationToken)
+			public override void SetUniqueId (int index, UniqueId uid, CancellationToken cancellationToken)
 			{
 				for (int i = 0; i < Sections.Count; i++) {
 					if (Sections[i].Index == index)
 						Sections[i].UniqueId = uid;
 				}
-
-				return Complete;
 			}
 		}
 
-		async Task FetchStreamAsync (ImapEngine engine, ImapCommand ic, int index, bool doAsync)
+		void FetchStream (ImapEngine engine, ImapCommand ic, int index)
 		{
-			var token = await engine.ReadTokenAsync (doAsync, ic.CancellationToken).ConfigureAwait (false);
-			var annotations = new AnnotationsChangedEventArgs (index);
-			var labels = new MessageLabelsChangedEventArgs (index);
-			var flags = new MessageFlagsChangedEventArgs (index);
-			var modSeq = new ModSeqChangedEventArgs (index);
-			var ctx = (FetchStreamContextBase) ic.UserData;
+			var token = engine.ReadToken (ic.CancellationToken);
+			var ctx = (FetchStreamContextBase) ic.UserData!;
 			var sectionBuilder = new StringBuilder ();
-			bool annotationsChanged = false;
-			bool modSeqChanged = false;
-			bool labelsChanged = false;
-			bool flagsChanged = false;
+			IList<Annotation>? annotations = null;
+			MessageFlags flags = MessageFlags.None;
+			HashSet<string>? keywords = null;
+			IList<string>? labels = null;
 			long nread = 0, size = 0;
 			UniqueId? uid = null;
-			Section section;
+			ulong? modseq = null;
 			Stream stream;
 			string name;
 			byte[] buf;
@@ -3620,15 +2116,15 @@ namespace MailKit.Net.Imap
 			ImapEngine.AssertToken (token, ImapTokenType.OpenParen, ImapEngine.GenericUntaggedResponseSyntaxErrorFormat, "FETCH", token);
 
 			do {
-				token = await engine.ReadTokenAsync (doAsync, ic.CancellationToken).ConfigureAwait (false);
+				token = engine.ReadToken (ic.CancellationToken);
 
 				if (token.Type == ImapTokenType.Eoln) {
-					// Note: Most likely the the message body was calculated to be 1 or 2 bytes too
+					// Note: Most likely the message body was calculated to be 1 or 2 bytes too
 					// short (e.g. did not include the trailing <CRLF>) and that is the EOLN we just
 					// reached. Ignore it and continue as normal.
 					//
 					// See https://github.com/jstedfast/MailKit/issues/954 for details.
-					token = await engine.ReadTokenAsync (doAsync, ic.CancellationToken).ConfigureAwait (false);
+					token = engine.ReadToken (ic.CancellationToken);
 				}
 
 				if (token.Type == ImapTokenType.CloseParen)
@@ -3637,20 +2133,18 @@ namespace MailKit.Net.Imap
 				ImapEngine.AssertToken (token, ImapTokenType.Atom, ImapEngine.GenericUntaggedResponseSyntaxErrorFormat, "FETCH", token);
 
 				var atom = (string) token.Value;
-				int offset = 0, length;
-				ulong modseq;
+				long offset = 0, length;
 				uint value;
 
-				switch (atom.ToUpperInvariant ()) {
-				case "BODY":
-					token = await engine.ReadTokenAsync (doAsync, ic.CancellationToken).ConfigureAwait (false);
+				if (atom.Equals ("BODY", StringComparison.OrdinalIgnoreCase)) {
+					token = engine.ReadToken (ic.CancellationToken);
 
 					ImapEngine.AssertToken (token, ImapTokenType.OpenBracket, ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
 
 					sectionBuilder.Clear ();
 
 					do {
-						token = await engine.ReadTokenAsync (doAsync, ic.CancellationToken).ConfigureAwait (false);
+						token = engine.ReadToken (ic.CancellationToken);
 
 						if (token.Type == ImapTokenType.CloseBracket)
 							break;
@@ -3659,24 +2153,17 @@ namespace MailKit.Net.Imap
 							sectionBuilder.Append (" (");
 
 							do {
-								token = await engine.ReadTokenAsync (doAsync, ic.CancellationToken).ConfigureAwait (false);
+								token = engine.ReadToken (ic.CancellationToken);
 
 								if (token.Type == ImapTokenType.CloseParen)
 									break;
 
 								// the header field names will generally be atoms or qstrings but may also be literals
-								switch (token.Type) {
-								case ImapTokenType.Literal:
-									sectionBuilder.Append (await engine.ReadLiteralAsync (doAsync, ic.CancellationToken).ConfigureAwait (false));
-									break;
-								case ImapTokenType.QString:
-								case ImapTokenType.Atom:
-									sectionBuilder.Append ((string) token.Value);
-									break;
-								default:
-									throw ImapEngine.UnexpectedToken (ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
-								}
+								engine.UngetToken (token);
 
+								var field = ImapUtils.ReadStringToken (engine, ImapEngine.FetchBodySyntaxErrorFormat, ic.CancellationToken);
+
+								sectionBuilder.Append (field);
 								sectionBuilder.Append (' ');
 							} while (true);
 
@@ -3693,7 +2180,7 @@ namespace MailKit.Net.Imap
 
 					ImapEngine.AssertToken (token, ImapTokenType.CloseBracket, ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
 
-					token = await engine.ReadTokenAsync (doAsync, ic.CancellationToken).ConfigureAwait (false);
+					token = engine.ReadToken (ic.CancellationToken);
 
 					if (token.Type == ImapTokenType.Atom) {
 						// this might be a region ("<###>")
@@ -3702,9 +2189,9 @@ namespace MailKit.Net.Imap
 						if (expr.Length > 2 && expr[0] == '<' && expr[expr.Length - 1] == '>') {
 							var region = expr.Substring (1, expr.Length - 2);
 
-							int.TryParse (region, NumberStyles.None, CultureInfo.InvariantCulture, out offset);
+							long.TryParse (region, NumberStyles.None, CultureInfo.InvariantCulture, out offset);
 
-							token = await engine.ReadTokenAsync (doAsync, ic.CancellationToken).ConfigureAwait (false);
+							token = engine.ReadToken (ic.CancellationToken);
 						}
 					}
 
@@ -3712,7 +2199,7 @@ namespace MailKit.Net.Imap
 
 					switch (token.Type) {
 					case ImapTokenType.Literal:
-						length = (int) token.Value;
+						length = (long) token.Value;
 						size += length;
 
 						stream = CreateStream (uid, name, offset, length);
@@ -3721,10 +2208,7 @@ namespace MailKit.Net.Imap
 
 						try {
 							do {
-								if (doAsync)
-									n = await engine.Stream.ReadAsync (buf, 0, BufferSize, ic.CancellationToken).ConfigureAwait (false);
-								else
-									n = engine.Stream.Read (buf, 0, BufferSize, ic.CancellationToken);
+								n = engine.Stream!.Read (buf, 0, BufferSize, ic.CancellationToken);
 
 								if (n > 0) {
 									stream.Write (buf, 0, n);
@@ -3738,7 +2222,7 @@ namespace MailKit.Net.Imap
 
 							stream.Position = 0;
 						} catch {
-							stream.Dispose ();
+							stream?.Dispose ();
 							throw;
 						} finally {
 							ArrayPool<byte>.Shared.Return (buf);
@@ -3754,11 +2238,11 @@ namespace MailKit.Net.Imap
 						stream = CreateStream (uid, name, offset, length);
 
 						try {
-							stream.Write (buf, 0, length);
+							stream.Write (buf, 0, buf.Length);
 							ctx.Report (nread, size);
 							stream.Position = 0;
 						} catch {
-							stream.Dispose ();
+							stream?.Dispose ();
 							throw;
 						}
 						break;
@@ -3766,6 +2250,14 @@ namespace MailKit.Net.Imap
 						stream = CreateStream (uid, name, offset, 0);
 						length = 0;
 						break;
+					case ImapTokenType.CloseParen:
+						// Note: Yandex IMAP servers sometimes do not include the BODY[<section>] content value in the FETCH response.
+						//
+						// See https://github.com/jstedfast/MailKit/issues/1708 for details.
+						//
+						// Unget the ')' token and pretend we got a NIL token.
+						engine.UngetToken (token);
+						goto case ImapTokenType.Nil;
 					default:
 						throw ImapEngine.UnexpectedToken (ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
 					}
@@ -3774,88 +2266,330 @@ namespace MailKit.Net.Imap
 						stream = CommitStream (stream, uid.Value, name, offset, length);
 
 					// prevent leaks in the (invalid) case where a section may be returned twice
-					if (ctx.Contains (index, name, out section))
+					if (ctx.Contains (index, name, out var section))
 						section.Stream.Dispose ();
 
 					section = new Section (stream, index, uid, name, offset, length);
-					await ctx.AddAsync (section, doAsync, ic.CancellationToken).ConfigureAwait (false);
-					break;
-				case "UID":
-					token = await engine.ReadTokenAsync (doAsync, ic.CancellationToken).ConfigureAwait (false);
+					ctx.Add (section, ic.CancellationToken);
+				} else if (atom.Equals ("UID", StringComparison.OrdinalIgnoreCase)) {
+					token = engine.ReadToken (ic.CancellationToken);
 
 					value = ImapEngine.ParseNumber (token, true, ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
 					uid = new UniqueId (UidValidity, value);
 
-					await ctx.SetUniqueIdAsync (index, uid.Value, doAsync, ic.CancellationToken).ConfigureAwait (false);
-
-					annotations.UniqueId = uid.Value;
-					modSeq.UniqueId = uid.Value;
-					labels.UniqueId = uid.Value;
-					flags.UniqueId = uid.Value;
-					break;
-				case "MODSEQ":
-					token = await engine.ReadTokenAsync (doAsync, ic.CancellationToken).ConfigureAwait (false);
+					ctx.SetUniqueId (index, uid.Value, ic.CancellationToken);
+				} else if (atom.Equals ("MODSEQ", StringComparison.OrdinalIgnoreCase)) {
+					token = engine.ReadToken (ic.CancellationToken);
 
 					ImapEngine.AssertToken (token, ImapTokenType.OpenParen, ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
 
-					token = await engine.ReadTokenAsync (doAsync, ic.CancellationToken).ConfigureAwait (false);
+					token = engine.ReadToken (ic.CancellationToken);
 
-					modseq = ImapEngine.ParseNumber64 (token, false, ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
+					ImapEngine.AssertToken (token, ImapTokenType.Atom, ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
 
-					token = await engine.ReadTokenAsync (doAsync, ic.CancellationToken).ConfigureAwait (false);
+					// Note: Some IMAP servers (such as Zoho Mail) will return a MODSEQ of -1 in some cases (not sure why).
+					//
+					// If we get an invalid value, just ignore it.
+					//
+					// See https://github.com/jstedfast/MailKit/issues/1686 for details.
+					if (ImapEngine.TryParseNumber64 (token, out ulong n64)) {
+						if (n64 > HighestModSeq)
+							UpdateHighestModSeq (n64);
+
+						modseq = n64;
+					}
+
+					token = engine.ReadToken (ic.CancellationToken);
 
 					ImapEngine.AssertToken (token, ImapTokenType.CloseParen, ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
-
-					if (modseq > HighestModSeq)
-						UpdateHighestModSeq (modseq);
-
-					annotations.ModSeq = modseq;
-					modSeq.ModSeq = modseq;
-					labels.ModSeq = modseq;
-					flags.ModSeq = modseq;
-					modSeqChanged = true;
-					break;
-				case "FLAGS":
+				} else if (atom.Equals ("FLAGS", StringComparison.OrdinalIgnoreCase)) {
 					// even though we didn't request this piece of information, the IMAP server
 					// may send it if another client has recently modified the message flags.
-					flags.Flags = await ImapUtils.ParseFlagsListAsync (engine, atom, flags.Keywords, doAsync, ic.CancellationToken).ConfigureAwait (false);
-					flagsChanged = true;
-					break;
-				case "X-GM-LABELS":
+					keywords = new HashSet<string> (StringComparer.Ordinal);
+					flags = ImapUtils.ParseFlagsList (engine, atom, keywords, ic.CancellationToken);
+				} else if (atom.Equals ("X-GM-LABELS", StringComparison.OrdinalIgnoreCase)) {
 					// even though we didn't request this piece of information, the IMAP server
 					// may send it if another client has recently modified the message labels.
-					labels.Labels = await ImapUtils.ParseLabelsListAsync (engine, doAsync, ic.CancellationToken).ConfigureAwait (false);
-					labelsChanged = true;
-					break;
-				case "ANNOTATION":
+					labels = ImapUtils.ParseLabelsList (engine, ic.CancellationToken);
+				} else if (atom.Equals ("ANNOTATION", StringComparison.OrdinalIgnoreCase)) {
 					// even though we didn't request this piece of information, the IMAP server
 					// may send it if another client has recently modified the message annotations.
-					annotations.Annotations = await ImapUtils.ParseAnnotationsAsync (engine, doAsync, ic.CancellationToken).ConfigureAwait (false);
-					annotationsChanged = true;
-					break;
-				default:
+					annotations = ImapUtils.ParseAnnotations (engine, ic.CancellationToken);
+				} else {
 					// Unexpected or unknown token (such as XAOL.SPAM.REASON or XAOL-MSGID). Simply read 1 more token (the argument) and ignore.
-					token = await engine.ReadTokenAsync (doAsync, ic.CancellationToken).ConfigureAwait (false);
+					token = engine.ReadToken (ic.CancellationToken);
 
 					if (token.Type == ImapTokenType.OpenParen)
-						await SkipParenthesizedList (engine, doAsync, ic.CancellationToken).ConfigureAwait (false);
-					break;
+						SkipParenthesizedList (engine, ic.CancellationToken);
 				}
 			} while (true);
 
 			ImapEngine.AssertToken (token, ImapTokenType.CloseParen, ImapEngine.GenericUntaggedResponseSyntaxErrorFormat, "FETCH", token);
 
-			if (flagsChanged)
-				OnMessageFlagsChanged (flags);
+			if (keywords != null)
+				OnMessageFlagsChanged (new MessageFlagsChangedEventArgs (index, flags, keywords) { UniqueId = uid, ModSeq = modseq });
 
-			if (labelsChanged)
-				OnMessageLabelsChanged (labels);
+			if (labels != null)
+				OnMessageLabelsChanged (new MessageLabelsChangedEventArgs (index, labels) { UniqueId = uid, ModSeq = modseq });
 
-			if (annotationsChanged)
-				OnAnnotationsChanged (annotations);
+			if (annotations != null)
+				OnAnnotationsChanged (new AnnotationsChangedEventArgs (index, annotations) { UniqueId = uid, ModSeq = modseq });
 
-			if (modSeqChanged)
-				OnModSeqChanged (modSeq);
+			if (modseq.HasValue)
+				OnModSeqChanged (new ModSeqChangedEventArgs (index, modseq.Value) { UniqueId = uid });
+		}
+
+		async Task FetchStreamAsync (ImapEngine engine, ImapCommand ic, int index)
+		{
+			var token = await engine.ReadTokenAsync (ic.CancellationToken).ConfigureAwait (false);
+			var ctx = (FetchStreamContextBase) ic.UserData!;
+			var sectionBuilder = new StringBuilder ();
+			IList<Annotation>? annotations = null;
+			MessageFlags flags = MessageFlags.None;
+			HashSet<string>? keywords = null;
+			IList<string>? labels = null;
+			long nread = 0, size = 0;
+			UniqueId? uid = null;
+			ulong? modseq = null;
+			Stream stream;
+			string name;
+			byte[] buf;
+			int n;
+
+			ImapEngine.AssertToken (token, ImapTokenType.OpenParen, ImapEngine.GenericUntaggedResponseSyntaxErrorFormat, "FETCH", token);
+
+			do {
+				token = await engine.ReadTokenAsync (ic.CancellationToken).ConfigureAwait (false);
+
+				if (token.Type == ImapTokenType.Eoln) {
+					// Note: Most likely the message body was calculated to be 1 or 2 bytes too
+					// short (e.g. did not include the trailing <CRLF>) and that is the EOLN we just
+					// reached. Ignore it and continue as normal.
+					//
+					// See https://github.com/jstedfast/MailKit/issues/954 for details.
+					token = await engine.ReadTokenAsync (ic.CancellationToken).ConfigureAwait (false);
+				}
+
+				if (token.Type == ImapTokenType.CloseParen)
+					break;
+
+				ImapEngine.AssertToken (token, ImapTokenType.Atom, ImapEngine.GenericUntaggedResponseSyntaxErrorFormat, "FETCH", token);
+
+				var atom = (string) token.Value;
+				long offset = 0, length;
+				uint value;
+
+				if (atom.Equals ("BODY", StringComparison.OrdinalIgnoreCase)) {
+					token = await engine.ReadTokenAsync (ic.CancellationToken).ConfigureAwait (false);
+
+					ImapEngine.AssertToken (token, ImapTokenType.OpenBracket, ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
+
+					sectionBuilder.Clear ();
+
+					do {
+						token = await engine.ReadTokenAsync (ic.CancellationToken).ConfigureAwait (false);
+
+						if (token.Type == ImapTokenType.CloseBracket)
+							break;
+
+						if (token.Type == ImapTokenType.OpenParen) {
+							sectionBuilder.Append (" (");
+
+							do {
+								token = await engine.ReadTokenAsync (ic.CancellationToken).ConfigureAwait (false);
+
+								if (token.Type == ImapTokenType.CloseParen)
+									break;
+
+								// the header field names will generally be atoms or qstrings but may also be literals
+								engine.UngetToken (token);
+
+								var field = await ImapUtils.ReadStringTokenAsync (engine, ImapEngine.FetchBodySyntaxErrorFormat, ic.CancellationToken).ConfigureAwait (false);
+
+								sectionBuilder.Append (field);
+								sectionBuilder.Append (' ');
+							} while (true);
+
+							if (sectionBuilder[sectionBuilder.Length - 1] == ' ')
+								sectionBuilder.Length--;
+
+							sectionBuilder.Append (')');
+						} else {
+							ImapEngine.AssertToken (token, ImapTokenType.Atom, ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
+
+							sectionBuilder.Append ((string) token.Value);
+						}
+					} while (true);
+
+					ImapEngine.AssertToken (token, ImapTokenType.CloseBracket, ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
+
+					token = await engine.ReadTokenAsync (ic.CancellationToken).ConfigureAwait (false);
+
+					if (token.Type == ImapTokenType.Atom) {
+						// this might be a region ("<###>")
+						var expr = (string) token.Value;
+
+						if (expr.Length > 2 && expr[0] == '<' && expr[expr.Length - 1] == '>') {
+							var region = expr.Substring (1, expr.Length - 2);
+
+							long.TryParse (region, NumberStyles.None, CultureInfo.InvariantCulture, out offset);
+
+							token = await engine.ReadTokenAsync (ic.CancellationToken).ConfigureAwait (false);
+						}
+					}
+
+					name = sectionBuilder.ToString ();
+
+					switch (token.Type) {
+					case ImapTokenType.Literal:
+						length = (long) token.Value;
+						size += length;
+
+						stream = CreateStream (uid, name, offset, length);
+
+						buf = ArrayPool<byte>.Shared.Rent (BufferSize);
+
+						try {
+							do {
+								n = await engine.Stream!.ReadAsync (buf, 0, BufferSize, ic.CancellationToken).ConfigureAwait (false);
+
+								if (n > 0) {
+									stream.Write (buf, 0, n);
+									nread += n;
+
+									ctx.Report (nread, size);
+								} else {
+									break;
+								}
+							} while (true);
+
+							stream.Position = 0;
+						} catch {
+							stream?.Dispose ();
+							throw;
+						} finally {
+							ArrayPool<byte>.Shared.Return (buf);
+						}
+						break;
+					case ImapTokenType.QString:
+					case ImapTokenType.Atom:
+						buf = Encoding.UTF8.GetBytes ((string) token.Value);
+						length = buf.Length;
+						nread += length;
+						size += length;
+
+						stream = CreateStream (uid, name, offset, length);
+
+						try {
+							stream.Write (buf, 0, buf.Length);
+							ctx.Report (nread, size);
+							stream.Position = 0;
+						} catch {
+							stream?.Dispose ();
+							throw;
+						}
+						break;
+					case ImapTokenType.Nil:
+						stream = CreateStream (uid, name, offset, 0);
+						length = 0;
+						break;
+					case ImapTokenType.CloseParen:
+						// Note: Yandex IMAP servers sometimes do not include the BODY[<section>] content value in the FETCH response.
+						//
+						// See https://github.com/jstedfast/MailKit/issues/1708 for details.
+						//
+						// Unget the ')' token and pretend we got a NIL token.
+						engine.UngetToken (token);
+						goto case ImapTokenType.Nil;
+					default:
+						throw ImapEngine.UnexpectedToken (ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
+					}
+
+					if (uid.HasValue)
+						stream = CommitStream (stream, uid.Value, name, offset, length);
+
+					// prevent leaks in the (invalid) case where a section may be returned twice
+					if (ctx.Contains (index, name, out var section))
+						section.Stream.Dispose ();
+
+					section = new Section (stream, index, uid, name, offset, length);
+					await ctx.AddAsync (section, ic.CancellationToken).ConfigureAwait (false);
+				} else if (atom.Equals ("UID", StringComparison.OrdinalIgnoreCase)) {
+					token = await engine.ReadTokenAsync (ic.CancellationToken).ConfigureAwait (false);
+
+					value = ImapEngine.ParseNumber (token, true, ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
+					uid = new UniqueId (UidValidity, value);
+
+					await ctx.SetUniqueIdAsync (index, uid.Value, ic.CancellationToken).ConfigureAwait (false);
+				} else if (atom.Equals ("MODSEQ", StringComparison.OrdinalIgnoreCase)) {
+					token = await engine.ReadTokenAsync (ic.CancellationToken).ConfigureAwait (false);
+
+					ImapEngine.AssertToken (token, ImapTokenType.OpenParen, ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
+
+					token = await engine.ReadTokenAsync (ic.CancellationToken).ConfigureAwait (false);
+
+					ImapEngine.AssertToken (token, ImapTokenType.Atom, ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
+
+					// Note: Some IMAP servers (such as Zoho Mail) will return a MODSEQ of -1 in some cases (not sure why).
+					//
+					// If we get an invalid value, just ignore it.
+					//
+					// See https://github.com/jstedfast/MailKit/issues/1686 for details.
+					if (ImapEngine.TryParseNumber64 (token, out ulong n64)) {
+						if (n64 > HighestModSeq)
+							UpdateHighestModSeq (n64);
+
+						modseq = n64;
+					}
+
+					token = await engine.ReadTokenAsync (ic.CancellationToken).ConfigureAwait (false);
+
+					ImapEngine.AssertToken (token, ImapTokenType.CloseParen, ImapEngine.GenericItemSyntaxErrorFormat, atom, token);
+				} else if (atom.Equals ("FLAGS", StringComparison.OrdinalIgnoreCase)) {
+					// even though we didn't request this piece of information, the IMAP server
+					// may send it if another client has recently modified the message flags.
+					keywords = new HashSet<string> (StringComparer.Ordinal);
+					flags = await ImapUtils.ParseFlagsListAsync (engine, atom, keywords, ic.CancellationToken).ConfigureAwait (false);
+				} else if (atom.Equals ("X-GM-LABELS", StringComparison.OrdinalIgnoreCase)) {
+					// even though we didn't request this piece of information, the IMAP server
+					// may send it if another client has recently modified the message labels.
+					labels = await ImapUtils.ParseLabelsListAsync (engine, ic.CancellationToken).ConfigureAwait (false);
+				} else if (atom.Equals ("ANNOTATION", StringComparison.OrdinalIgnoreCase)) {
+					// even though we didn't request this piece of information, the IMAP server
+					// may send it if another client has recently modified the message annotations.
+					annotations = await ImapUtils.ParseAnnotationsAsync (engine, ic.CancellationToken).ConfigureAwait (false);
+				} else {
+					// Unexpected or unknown token (such as XAOL.SPAM.REASON or XAOL-MSGID). Simply read 1 more token (the argument) and ignore.
+					token = await engine.ReadTokenAsync (ic.CancellationToken).ConfigureAwait (false);
+
+					if (token.Type == ImapTokenType.OpenParen)
+						await SkipParenthesizedListAsync (engine, ic.CancellationToken).ConfigureAwait (false);
+				}
+			} while (true);
+
+			ImapEngine.AssertToken (token, ImapTokenType.CloseParen, ImapEngine.GenericUntaggedResponseSyntaxErrorFormat, "FETCH", token);
+
+			if (keywords != null)
+				OnMessageFlagsChanged (new MessageFlagsChangedEventArgs (index, flags, keywords) { UniqueId = uid, ModSeq = modseq });
+
+			if (labels != null)
+				OnMessageLabelsChanged (new MessageLabelsChangedEventArgs (index, labels) { UniqueId = uid, ModSeq = modseq });
+
+			if (annotations != null)
+				OnAnnotationsChanged (new AnnotationsChangedEventArgs (index, annotations) { UniqueId = uid, ModSeq = modseq });
+
+			if (modseq.HasValue)
+				OnModSeqChanged (new ModSeqChangedEventArgs (index, modseq.Value) { UniqueId = uid });
+		}
+
+		Task FetchStreamHandler (ImapEngine engine, ImapCommand ic, int index, bool doAsync)
+		{
+			if (doAsync)
+				return FetchStreamAsync (engine, ic, index);
+
+			FetchStream (engine, ic, index);
+
+			return Task.CompletedTask;
 		}
 
 		static string GetBodyPartQuery (string partSpec, bool headersOnly, out string[] tags)
@@ -3872,24 +2606,22 @@ namespace MailKit.Net.Imap
 					query = "BODY.PEEK[HEADER]";
 					tags[0] = "HEADER";
 				}
-			} else {
-				tags = new string[2];
-
-				if (partSpec.Length > 0) {
-					tags[0] = partSpec + ".MIME";
-					tags[1] = partSpec;
-				} else {
-					tags[0] = "HEADER";
-					tags[1] = "TEXT";
-				}
+			} else if (partSpec.Length > 0) {
+				tags = new string[] {
+					partSpec + ".MIME",
+					partSpec
+				};
 
 				query = string.Format ("BODY.PEEK[{0}] BODY.PEEK[{1}]", tags[0], tags[1]);
+			} else {
+				tags = new string[] { string.Empty };
+				query = "BODY.PEEK[]";
 			}
 
 			return query;
 		}
 
-		async Task<HeaderList> GetHeadersAsync (UniqueId uid, bool doAsync, CancellationToken cancellationToken, ITransferProgress progress)
+		ImapCommand QueueGetHeadersCommand (UniqueId uid, CancellationToken cancellationToken, ITransferProgress? progress, out FetchStreamContext ctx)
 		{
 			if (!uid.IsValid)
 				throw new ArgumentException ("The uid is invalid.", nameof (uid));
@@ -3897,68 +2629,22 @@ namespace MailKit.Net.Imap
 			CheckState (true, false);
 
 			var ic = new ImapCommand (Engine, cancellationToken, this, "UID FETCH %u (BODY.PEEK[HEADER])\r\n", uid.Id);
-			var ctx = new FetchStreamContext (progress);
-			Section section;
-
-			ic.RegisterUntaggedHandler ("FETCH", FetchStreamAsync);
-			ic.UserData = ctx;
+			ic.RegisterUntaggedHandler ("FETCH", FetchStreamHandler);
+			ic.UserData = ctx = new FetchStreamContext (progress);
 
 			Engine.QueueCommand (ic);
 
-			try {
-				await Engine.RunAsync (ic, doAsync).ConfigureAwait (false);
-
-				ProcessResponseCodes (ic, null);
-
-				if (ic.Response != ImapCommandResponse.Ok)
-					throw ImapCommandException.Create ("FETCH", ic);
-
-				if (!ctx.TryGetSection (uid, "HEADER", out section, true))
-					throw new MessageNotFoundException ("The IMAP server did not return the requested message headers.");
-			} finally {
-				ctx.Dispose ();
-			}
-
-			return await ParseHeadersAsync (section.Stream, doAsync, cancellationToken).ConfigureAwait (false);
+			return ic;
 		}
 
-		async Task<HeaderList> GetHeadersAsync (UniqueId uid, string partSpecifier, bool doAsync, CancellationToken cancellationToken, ITransferProgress progress)
+		Stream ProcessGetHeadersResponse (ImapCommand ic, FetchStreamContext ctx, UniqueId uid)
 		{
-			if (!uid.IsValid)
-				throw new ArgumentException ("The uid is invalid.", nameof (uid));
+			ProcessFetchResponse (ic);
 
-			if (partSpecifier == null)
-				throw new ArgumentNullException (nameof (partSpecifier));
+			if (!ctx.TryGetSection (uid, "HEADER", out var section, true))
+				throw new MessageNotFoundException ("The IMAP server did not return the requested message headers.");
 
-			CheckState (true, false);
-
-			string[] tags;
-
-			var command = string.Format ("UID FETCH {0} ({1})\r\n", uid, GetBodyPartQuery (partSpecifier, true, out tags));
-			var ic = new ImapCommand (Engine, cancellationToken, this, command);
-			var ctx = new FetchStreamContext (progress);
-			Section section;
-
-			ic.RegisterUntaggedHandler ("FETCH", FetchStreamAsync);
-			ic.UserData = ctx;
-
-			Engine.QueueCommand (ic);
-
-			try {
-				await Engine.RunAsync (ic, doAsync).ConfigureAwait (false);
-
-				ProcessResponseCodes (ic, null);
-
-				if (ic.Response != ImapCommandResponse.Ok)
-					throw ImapCommandException.Create ("FETCH", ic);
-
-				if (!ctx.TryGetSection (uid, tags[0], out section, true))
-					throw new MessageNotFoundException ("The IMAP server did not return the requested body part headers.");
-			} finally {
-				ctx.Dispose ();
-			}
-
-			return await ParseHeadersAsync (section.Stream, doAsync, cancellationToken).ConfigureAwait (false);
+			return section.Stream;
 		}
 
 		/// <summary>
@@ -4001,9 +2687,19 @@ namespace MailKit.Net.Imap
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override HeaderList GetHeaders (UniqueId uid, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
+		public override HeaderList GetHeaders (UniqueId uid, CancellationToken cancellationToken = default, ITransferProgress? progress = null)
 		{
-			return GetHeadersAsync (uid, false, cancellationToken, progress).GetAwaiter ().GetResult ();
+			var ic = QueueGetHeadersCommand (uid, cancellationToken, progress, out var ctx);
+
+			try {
+				Engine.Run (ic);
+
+				var stream = ProcessGetHeadersResponse (ic, ctx, uid);
+
+				return ParseHeaders (stream, cancellationToken);
+			} finally {
+				ctx.Dispose ();
+			}
 		}
 
 		/// <summary>
@@ -4046,9 +2742,49 @@ namespace MailKit.Net.Imap
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override Task<HeaderList> GetHeadersAsync (UniqueId uid, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
+		public override async Task<HeaderList> GetHeadersAsync (UniqueId uid, CancellationToken cancellationToken = default, ITransferProgress? progress = null)
 		{
-			return GetHeadersAsync (uid, true, cancellationToken, progress);
+			var ic = QueueGetHeadersCommand (uid, cancellationToken, progress, out var ctx);
+
+			try {
+				await Engine.RunAsync (ic).ConfigureAwait (false);
+
+				var stream = ProcessGetHeadersResponse (ic, ctx, uid);
+
+				return await ParseHeadersAsync (stream, cancellationToken).ConfigureAwait (false);
+			} finally {
+				ctx.Dispose ();
+			}
+		}
+
+		ImapCommand QueueGetHeadersCommand (UniqueId uid, string partSpecifier, CancellationToken cancellationToken, ITransferProgress? progress, out FetchStreamContext ctx, out string[] tags)
+		{
+			if (!uid.IsValid)
+				throw new ArgumentException ("The uid is invalid.", nameof (uid));
+
+			if (partSpecifier == null)
+				throw new ArgumentNullException (nameof (partSpecifier));
+
+			CheckState (true, false);
+
+			var command = string.Format ("UID FETCH {0} ({1})\r\n", uid, GetBodyPartQuery (partSpecifier, true, out tags));
+			var ic = new ImapCommand (Engine, cancellationToken, this, command);
+			ic.RegisterUntaggedHandler ("FETCH", FetchStreamHandler);
+			ic.UserData = ctx = new FetchStreamContext (progress);
+
+			Engine.QueueCommand (ic);
+
+			return ic;
+		}
+
+		Stream ProcessGetHeadersResponse (ImapCommand ic, FetchStreamContext ctx, UniqueId uid, string[] tags)
+		{
+			ProcessFetchResponse (ic);
+
+			if (!ctx.TryGetSection (uid, tags[0], out var section, true))
+				throw new MessageNotFoundException ("The IMAP server did not return the requested body part headers.");
+
+			return section.Stream;
 		}
 
 		/// <summary>
@@ -4063,7 +2799,7 @@ namespace MailKit.Net.Imap
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <param name="progress">The progress reporting mechanism.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="partSpecifier"/> is <c>null</c>.
+		/// <paramref name="partSpecifier"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ArgumentException">
 		/// <paramref name="uid"/> is invalid.
@@ -4095,9 +2831,19 @@ namespace MailKit.Net.Imap
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public virtual HeaderList GetHeaders (UniqueId uid, string partSpecifier, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
+		public virtual HeaderList GetHeaders (UniqueId uid, string partSpecifier, CancellationToken cancellationToken = default, ITransferProgress? progress = null)
 		{
-			return GetHeadersAsync (uid, partSpecifier, false, cancellationToken, progress).GetAwaiter ().GetResult ();
+			var ic = QueueGetHeadersCommand (uid, partSpecifier, cancellationToken, progress, out var ctx, out var tags);
+
+			try {
+				Engine.Run (ic);
+
+				var stream = ProcessGetHeadersResponse (ic, ctx, uid, tags);
+
+				return ParseHeaders (stream, cancellationToken);
+			} finally {
+				ctx.Dispose ();
+			}
 		}
 
 		/// <summary>
@@ -4112,7 +2858,7 @@ namespace MailKit.Net.Imap
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <param name="progress">The progress reporting mechanism.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="partSpecifier"/> is <c>null</c>.
+		/// <paramref name="partSpecifier"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ArgumentException">
 		/// <paramref name="uid"/> is invalid.
@@ -4144,9 +2890,19 @@ namespace MailKit.Net.Imap
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public virtual Task<HeaderList> GetHeadersAsync (UniqueId uid, string partSpecifier, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
+		public virtual async Task<HeaderList> GetHeadersAsync (UniqueId uid, string partSpecifier, CancellationToken cancellationToken = default, ITransferProgress? progress = null)
 		{
-			return GetHeadersAsync (uid, partSpecifier, true, cancellationToken, progress);
+			var ic = QueueGetHeadersCommand (uid, partSpecifier, cancellationToken, progress, out var ctx, out var tags);
+
+			try {
+				await Engine.RunAsync (ic).ConfigureAwait (false);
+
+				var stream = ProcessGetHeadersResponse (ic, ctx, uid, tags);
+
+				return await ParseHeadersAsync (stream, cancellationToken).ConfigureAwait (false);
+			} finally {
+				ctx.Dispose ();
+			}
 		}
 
 		/// <summary>
@@ -4161,7 +2917,7 @@ namespace MailKit.Net.Imap
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <param name="progress">The progress reporting mechanism.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="part"/> is <c>null</c>.
+		/// <paramref name="part"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ArgumentException">
 		/// <paramref name="uid"/> is invalid.
@@ -4193,7 +2949,7 @@ namespace MailKit.Net.Imap
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override HeaderList GetHeaders (UniqueId uid, BodyPart part, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
+		public override HeaderList GetHeaders (UniqueId uid, BodyPart part, CancellationToken cancellationToken = default, ITransferProgress? progress = null)
 		{
 			if (!uid.IsValid)
 				throw new ArgumentException ("The uid is invalid.", nameof (uid));
@@ -4216,7 +2972,7 @@ namespace MailKit.Net.Imap
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <param name="progress">The progress reporting mechanism.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="part"/> is <c>null</c>.
+		/// <paramref name="part"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ArgumentException">
 		/// <paramref name="uid"/> is invalid.
@@ -4248,7 +3004,7 @@ namespace MailKit.Net.Imap
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override Task<HeaderList> GetHeadersAsync (UniqueId uid, BodyPart part, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
+		public override Task<HeaderList> GetHeadersAsync (UniqueId uid, BodyPart part, CancellationToken cancellationToken = default, ITransferProgress? progress = null)
 		{
 			if (!uid.IsValid)
 				throw new ArgumentException ("The uid is invalid.", nameof (uid));
@@ -4259,7 +3015,7 @@ namespace MailKit.Net.Imap
 			return GetHeadersAsync (uid, part.PartSpecifier, cancellationToken, progress);
 		}
 
-		async Task<HeaderList> GetHeadersAsync (int index, bool doAsync, CancellationToken cancellationToken, ITransferProgress progress)
+		ImapCommand QueueGetHeadersCommand (int index, CancellationToken cancellationToken, ITransferProgress? progress, out FetchStreamContext ctx)
 		{
 			if (index < 0 || index >= Count)
 				throw new ArgumentOutOfRangeException (nameof (index));
@@ -4267,69 +3023,22 @@ namespace MailKit.Net.Imap
 			CheckState (true, false);
 
 			var ic = new ImapCommand (Engine, cancellationToken, this, "FETCH %d (BODY.PEEK[HEADER])\r\n", index + 1);
-			var ctx = new FetchStreamContext (progress);
-			Section section;
-
-			ic.RegisterUntaggedHandler ("FETCH", FetchStreamAsync);
-			ic.UserData = ctx;
+			ic.RegisterUntaggedHandler ("FETCH", FetchStreamHandler);
+			ic.UserData = ctx = new FetchStreamContext (progress);
 
 			Engine.QueueCommand (ic);
 
-			try {
-				await Engine.RunAsync (ic, doAsync).ConfigureAwait (false);
-
-				ProcessResponseCodes (ic, null);
-
-				if (ic.Response != ImapCommandResponse.Ok)
-					throw ImapCommandException.Create ("FETCH", ic);
-
-				if (!ctx.TryGetSection (index, "HEADER", out section, true))
-					throw new MessageNotFoundException ("The IMAP server did not return the requested message.");
-			} finally {
-				ctx.Dispose ();
-			}
-
-			return await ParseHeadersAsync (section.Stream, doAsync, cancellationToken).ConfigureAwait (false);
+			return ic;
 		}
 
-		async Task<HeaderList> GetHeadersAsync (int index, string partSpecifier, bool doAsync, CancellationToken cancellationToken, ITransferProgress progress)
+		Stream ProcessGetHeadersResponse (ImapCommand ic, FetchStreamContext ctx, int index)
 		{
-			if (index < 0 || index >= Count)
-				throw new ArgumentOutOfRangeException (nameof (index));
+			ProcessFetchResponse (ic);
 
-			if (partSpecifier == null)
-				throw new ArgumentNullException (nameof (partSpecifier));
+			if (!ctx.TryGetSection (index, "HEADER", out var section, true))
+				throw new MessageNotFoundException ("The IMAP server did not return the requested message headers.");
 
-			CheckState (true, false);
-
-			string[] tags;
-
-			var seqid = (index + 1).ToString (CultureInfo.InvariantCulture);
-			var command = string.Format ("FETCH {0} ({1})\r\n", seqid, GetBodyPartQuery (partSpecifier, true, out tags));
-			var ic = new ImapCommand (Engine, cancellationToken, this, command);
-			var ctx = new FetchStreamContext (progress);
-			Section section;
-
-			ic.RegisterUntaggedHandler ("FETCH", FetchStreamAsync);
-			ic.UserData = ctx;
-
-			Engine.QueueCommand (ic);
-
-			try {
-				await Engine.RunAsync (ic, doAsync).ConfigureAwait (false);
-
-				ProcessResponseCodes (ic, null);
-
-				if (ic.Response != ImapCommandResponse.Ok)
-					throw ImapCommandException.Create ("FETCH", ic);
-
-				if (!ctx.TryGetSection (index, tags[0], out section, true))
-					throw new MessageNotFoundException ("The IMAP server did not return the requested body part headers.");
-			} finally {
-				ctx.Dispose ();
-			}
-
-			return await ParseHeadersAsync (section.Stream, doAsync, cancellationToken).ConfigureAwait (false);
+			return section.Stream;
 		}
 
 		/// <summary>
@@ -4372,9 +3081,19 @@ namespace MailKit.Net.Imap
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override HeaderList GetHeaders (int index, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
+		public override HeaderList GetHeaders (int index, CancellationToken cancellationToken = default, ITransferProgress? progress = null)
 		{
-			return GetHeadersAsync (index, false, cancellationToken, progress).GetAwaiter ().GetResult ();
+			var ic = QueueGetHeadersCommand (index, cancellationToken, progress, out var ctx);
+
+			try {
+				Engine.Run (ic);
+
+				var stream = ProcessGetHeadersResponse (ic, ctx, index);
+
+				return ParseHeaders (stream, cancellationToken);
+			} finally {
+				ctx.Dispose ();
+			}
 		}
 
 		/// <summary>
@@ -4417,9 +3136,49 @@ namespace MailKit.Net.Imap
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override Task<HeaderList> GetHeadersAsync (int index, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
+		public override async Task<HeaderList> GetHeadersAsync (int index, CancellationToken cancellationToken = default, ITransferProgress? progress = null)
 		{
-			return GetHeadersAsync (index, true, cancellationToken, progress);
+			var ic = QueueGetHeadersCommand (index, cancellationToken, progress, out var ctx);
+
+			try {
+				await Engine.RunAsync (ic).ConfigureAwait (false);
+
+				var stream = ProcessGetHeadersResponse (ic, ctx, index);
+
+				return await ParseHeadersAsync (stream, cancellationToken).ConfigureAwait (false);
+			} finally {
+				ctx.Dispose ();
+			}
+		}
+
+		ImapCommand QueueGetHeadersCommand (int index, string partSpecifier, CancellationToken cancellationToken, ITransferProgress? progress, out FetchStreamContext ctx, out string[] tags)
+		{
+			if (index < 0 || index >= Count)
+				throw new ArgumentOutOfRangeException (nameof (index));
+
+			if (partSpecifier == null)
+				throw new ArgumentNullException (nameof (partSpecifier));
+
+			CheckState (true, false);
+
+			var command = string.Format ("FETCH {0} ({1})\r\n", index + 1, GetBodyPartQuery (partSpecifier, true, out tags));
+			var ic = new ImapCommand (Engine, cancellationToken, this, command);
+			ic.RegisterUntaggedHandler ("FETCH", FetchStreamHandler);
+			ic.UserData = ctx = new FetchStreamContext (progress);
+
+			Engine.QueueCommand (ic);
+
+			return ic;
+		}
+
+		Stream ProcessGetHeadersResponse (ImapCommand ic, FetchStreamContext ctx, int index, string[] tags)
+		{
+			ProcessFetchResponse (ic);
+
+			if (!ctx.TryGetSection (index, tags[0], out var section, true))
+				throw new MessageNotFoundException ("The IMAP server did not return the requested body part headers.");
+
+			return section.Stream;
 		}
 
 		/// <summary>
@@ -4437,7 +3196,7 @@ namespace MailKit.Net.Imap
 		/// <paramref name="index"/> is out of range.
 		/// </exception>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="partSpecifier"/> is <c>null</c>.
+		/// <paramref name="partSpecifier"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ObjectDisposedException">
 		/// The <see cref="ImapClient"/> has been disposed.
@@ -4466,9 +3225,19 @@ namespace MailKit.Net.Imap
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public virtual HeaderList GetHeaders (int index, string partSpecifier, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
+		public virtual HeaderList GetHeaders (int index, string partSpecifier, CancellationToken cancellationToken = default, ITransferProgress? progress = null)
 		{
-			return GetHeadersAsync (index, partSpecifier, false, cancellationToken, progress).GetAwaiter ().GetResult ();
+			var ic = QueueGetHeadersCommand (index, partSpecifier, cancellationToken, progress, out var ctx, out var tags);
+
+			try {
+				Engine.Run (ic);
+
+				var stream = ProcessGetHeadersResponse (ic, ctx, index, tags);
+
+				return ParseHeaders (stream, cancellationToken);
+			} finally {
+				ctx.Dispose ();
+			}
 		}
 
 		/// <summary>
@@ -4486,7 +3255,7 @@ namespace MailKit.Net.Imap
 		/// <paramref name="index"/> is out of range.
 		/// </exception>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="partSpecifier"/> is <c>null</c>.
+		/// <paramref name="partSpecifier"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ObjectDisposedException">
 		/// The <see cref="ImapClient"/> has been disposed.
@@ -4515,9 +3284,19 @@ namespace MailKit.Net.Imap
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public virtual Task<HeaderList> GetHeadersAsync (int index, string partSpecifier, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
+		public virtual async Task<HeaderList> GetHeadersAsync (int index, string partSpecifier, CancellationToken cancellationToken = default, ITransferProgress? progress = null)
 		{
-			return GetHeadersAsync (index, partSpecifier, true, cancellationToken, progress);
+			var ic = QueueGetHeadersCommand (index, partSpecifier, cancellationToken, progress, out var ctx, out var tags);
+
+			try {
+				await Engine.RunAsync (ic).ConfigureAwait (false);
+
+				var stream = ProcessGetHeadersResponse (ic, ctx, index, tags);
+
+				return await ParseHeadersAsync (stream, cancellationToken).ConfigureAwait (false);
+			} finally {
+				ctx.Dispose ();
+			}
 		}
 
 		/// <summary>
@@ -4535,7 +3314,7 @@ namespace MailKit.Net.Imap
 		/// <paramref name="index"/> is out of range.
 		/// </exception>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="part"/> is <c>null</c>.
+		/// <paramref name="part"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ObjectDisposedException">
 		/// The <see cref="ImapClient"/> has been disposed.
@@ -4564,7 +3343,7 @@ namespace MailKit.Net.Imap
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override HeaderList GetHeaders (int index, BodyPart part, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
+		public override HeaderList GetHeaders (int index, BodyPart part, CancellationToken cancellationToken = default, ITransferProgress? progress = null)
 		{
 			if (index < 0 || index >= Count)
 				throw new ArgumentOutOfRangeException (nameof (index));
@@ -4590,7 +3369,7 @@ namespace MailKit.Net.Imap
 		/// <paramref name="index"/> is out of range.
 		/// </exception>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="part"/> is <c>null</c>.
+		/// <paramref name="part"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ObjectDisposedException">
 		/// The <see cref="ImapClient"/> has been disposed.
@@ -4619,7 +3398,7 @@ namespace MailKit.Net.Imap
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override Task<HeaderList> GetHeadersAsync (int index, BodyPart part, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
+		public override Task<HeaderList> GetHeadersAsync (int index, BodyPart part, CancellationToken cancellationToken = default, ITransferProgress? progress = null)
 		{
 			if (index < 0 || index >= Count)
 				throw new ArgumentOutOfRangeException (nameof (index));
@@ -4630,7 +3409,7 @@ namespace MailKit.Net.Imap
 			return GetHeadersAsync (index, part.PartSpecifier, cancellationToken, progress);
 		}
 
-		async Task<MimeMessage> GetMessageAsync (UniqueId uid, bool doAsync, CancellationToken cancellationToken, ITransferProgress progress)
+		ImapCommand QueueGetMessageCommand (UniqueId uid, CancellationToken cancellationToken, ITransferProgress? progress, out FetchStreamContext ctx)
 		{
 			if (!uid.IsValid)
 				throw new ArgumentException ("The uid is invalid.", nameof (uid));
@@ -4638,29 +3417,22 @@ namespace MailKit.Net.Imap
 			CheckState (true, false);
 
 			var ic = new ImapCommand (Engine, cancellationToken, this, "UID FETCH %u (BODY.PEEK[])\r\n", uid.Id);
-			var ctx = new FetchStreamContext (progress);
-			Section section;
-
-			ic.RegisterUntaggedHandler ("FETCH", FetchStreamAsync);
-			ic.UserData = ctx;
+			ic.RegisterUntaggedHandler ("FETCH", FetchStreamHandler);
+			ic.UserData = ctx = new FetchStreamContext (progress);
 
 			Engine.QueueCommand (ic);
 
-			try {
-				await Engine.RunAsync (ic, doAsync).ConfigureAwait (false);
+			return ic;
+		}
 
-				ProcessResponseCodes (ic, null);
+		Stream ProcessGetMessageResponse (ImapCommand ic, FetchStreamContext ctx, UniqueId uid)
+		{
+			ProcessFetchResponse (ic);
 
-				if (ic.Response != ImapCommandResponse.Ok)
-					throw ImapCommandException.Create ("FETCH", ic);
+			if (!ctx.TryGetSection (uid, string.Empty, out var section, true))
+				throw new MessageNotFoundException ("The IMAP server did not return the requested message.");
 
-				if (!ctx.TryGetSection (uid, string.Empty, out section, true))
-					throw new MessageNotFoundException ("The IMAP server did not return the requested message.");
-			} finally {
-				ctx.Dispose ();
-			}
-
-			return await ParseMessageAsync (section.Stream, doAsync, cancellationToken).ConfigureAwait (false);
+			return section.Stream;
 		}
 
 		/// <summary>
@@ -4703,9 +3475,19 @@ namespace MailKit.Net.Imap
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override MimeMessage GetMessage (UniqueId uid, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
+		public override MimeMessage GetMessage (UniqueId uid, CancellationToken cancellationToken = default, ITransferProgress? progress = null)
 		{
-			return GetMessageAsync (uid, false, cancellationToken, progress).GetAwaiter ().GetResult ();
+			var ic = QueueGetMessageCommand (uid, cancellationToken, progress, out var ctx);
+
+			try {
+				Engine.Run (ic);
+
+				var stream = ProcessGetMessageResponse (ic, ctx, uid);
+
+				return ParseMessage (stream, cancellationToken);
+			} finally {
+				ctx.Dispose ();
+			}
 		}
 
 		/// <summary>
@@ -4748,12 +3530,22 @@ namespace MailKit.Net.Imap
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override Task<MimeMessage> GetMessageAsync (UniqueId uid, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
+		public override async Task<MimeMessage> GetMessageAsync (UniqueId uid, CancellationToken cancellationToken = default, ITransferProgress? progress = null)
 		{
-			return GetMessageAsync (uid, true, cancellationToken, progress);
+			var ic = QueueGetMessageCommand (uid, cancellationToken, progress, out var ctx);
+
+			try {
+				await Engine.RunAsync (ic).ConfigureAwait (false);
+
+				var stream = ProcessGetMessageResponse (ic, ctx, uid);
+
+				return await ParseMessageAsync (stream, cancellationToken).ConfigureAwait (false);
+			} finally {
+				ctx.Dispose ();
+			}
 		}
 
-		async Task<MimeMessage> GetMessageAsync (int index, bool doAsync, CancellationToken cancellationToken, ITransferProgress progress)
+		ImapCommand QueueGetMessageCommand (int index, CancellationToken cancellationToken, ITransferProgress? progress, out FetchStreamContext ctx)
 		{
 			if (index < 0 || index >= Count)
 				throw new ArgumentOutOfRangeException (nameof (index));
@@ -4761,29 +3553,22 @@ namespace MailKit.Net.Imap
 			CheckState (true, false);
 
 			var ic = new ImapCommand (Engine, cancellationToken, this, "FETCH %d (BODY.PEEK[])\r\n", index + 1);
-			var ctx = new FetchStreamContext (progress);
-			Section section;
-
-			ic.RegisterUntaggedHandler ("FETCH", FetchStreamAsync);
-			ic.UserData = ctx;
+			ic.RegisterUntaggedHandler ("FETCH", FetchStreamHandler);
+			ic.UserData = ctx = new FetchStreamContext (progress);
 
 			Engine.QueueCommand (ic);
 
-			try {
-				await Engine.RunAsync (ic, doAsync).ConfigureAwait (false);
+			return ic;
+		}
 
-				ProcessResponseCodes (ic, null);
+		Stream ProcessGetMessageResponse (ImapCommand ic, FetchStreamContext ctx, int index)
+		{
+			ProcessFetchResponse (ic);
 
-				if (ic.Response != ImapCommandResponse.Ok)
-					throw ImapCommandException.Create ("FETCH", ic);
+			if (!ctx.TryGetSection (index, string.Empty, out var section, true))
+				throw new MessageNotFoundException ("The IMAP server did not return the requested message.");
 
-				if (!ctx.TryGetSection (index, string.Empty, out section, true))
-					throw new MessageNotFoundException ("The IMAP server did not return the requested message.");
-			} finally {
-				ctx.Dispose ();
-			}
-
-			return await ParseMessageAsync (section.Stream, doAsync, cancellationToken).ConfigureAwait (false);
+			return section.Stream;
 		}
 
 		/// <summary>
@@ -4826,9 +3611,19 @@ namespace MailKit.Net.Imap
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override MimeMessage GetMessage (int index, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
+		public override MimeMessage GetMessage (int index, CancellationToken cancellationToken = default, ITransferProgress? progress = null)
 		{
-			return GetMessageAsync (index, false, cancellationToken, progress).GetAwaiter ().GetResult ();
+			var ic = QueueGetMessageCommand (index, cancellationToken, progress, out var ctx);
+
+			try {
+				Engine.Run (ic);
+
+				var stream = ProcessGetMessageResponse (ic, ctx, index);
+
+				return ParseMessage (stream, cancellationToken);
+			} finally {
+				ctx.Dispose ();
+			}
 		}
 
 		/// <summary>
@@ -4871,12 +3666,22 @@ namespace MailKit.Net.Imap
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override Task<MimeMessage> GetMessageAsync (int index, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
+		public override async Task<MimeMessage> GetMessageAsync (int index, CancellationToken cancellationToken = default, ITransferProgress? progress = null)
 		{
-			return GetMessageAsync (index, true, cancellationToken, progress);
+			var ic = QueueGetMessageCommand (index, cancellationToken, progress, out var ctx);
+
+			try {
+				await Engine.RunAsync (ic).ConfigureAwait (false);
+
+				var stream = ProcessGetMessageResponse (ic, ctx, index);
+
+				return await ParseMessageAsync (stream, cancellationToken).ConfigureAwait (false);
+			} finally {
+				ctx.Dispose ();
+			}
 		}
 
-		async Task<MimeEntity> GetBodyPartAsync (UniqueId uid, string partSpecifier, bool doAsync, CancellationToken cancellationToken, ITransferProgress progress)
+		ImapCommand QueueGetBodyPartCommand (UniqueId uid, string partSpecifier, CancellationToken cancellationToken, ITransferProgress? progress, out FetchStreamContext ctx, out string[] tags)
 		{
 			if (!uid.IsValid)
 				throw new ArgumentException ("The uid is invalid.", nameof (uid));
@@ -4886,58 +3691,187 @@ namespace MailKit.Net.Imap
 
 			CheckState (true, false);
 
-			string[] tags;
-
 			var command = string.Format ("UID FETCH {0} ({1})\r\n", uid, GetBodyPartQuery (partSpecifier, false, out tags));
 			var ic = new ImapCommand (Engine, cancellationToken, this, command);
-			var ctx = new FetchStreamContext (progress);
-			ChainedStream chained = null;
-			bool dispose = false;
-			Section section;
-
-			ic.RegisterUntaggedHandler ("FETCH", FetchStreamAsync);
-			ic.UserData = ctx;
+			ic.RegisterUntaggedHandler ("FETCH", FetchStreamHandler);
+			ic.UserData = ctx = new FetchStreamContext (progress);
 
 			Engine.QueueCommand (ic);
 
+			return ic;
+		}
+
+		void ProcessGetBodyPartResponse (ImapCommand ic, FetchStreamContext ctx, UniqueId uid, string[] tags, out ChainedStream chained, out MimeContentStorage storage)
+		{
+			ProcessFetchResponse (ic);
+
+			chained = new ChainedStream ();
+			storage = MimeContentStorage.Source;
+
 			try {
-				await Engine.RunAsync (ic, doAsync).ConfigureAwait (false);
-
-				ProcessResponseCodes (ic, null);
-
-				if (ic.Response != ImapCommandResponse.Ok)
-					throw ImapCommandException.Create ("FETCH", ic);
-
-				chained = new ChainedStream ();
-
 				foreach (var tag in tags) {
-					if (!ctx.TryGetSection (uid, tag, out section, true))
+					if (!ctx.TryGetSection (uid, tag, out var section, true))
 						throw new MessageNotFoundException ("The IMAP server did not return the requested body part.");
 
-					if (!(section.Stream is MemoryStream || section.Stream is MemoryBlockStream))
-						dispose = true;
+					if (GetContentStorage (section.Stream) == MimeContentStorage.Memory)
+						storage = MimeContentStorage.Memory;
 
 					chained.Add (section.Stream);
 				}
 			} catch {
-				if (chained != null)
-					chained.Dispose ();
-
+				chained.Dispose ();
 				throw;
+			}
+		}
+
+		void RemoveMessageHeaders (MimeEntity entity)
+		{
+			for (int i = entity.Headers.Count; i > 0; i--) {
+				var header = entity.Headers[i - 1];
+
+				if (!header.Field.StartsWith ("Content-", StringComparison.OrdinalIgnoreCase))
+					entity.Headers.RemoveAt (i - 1);
+			}
+		}
+
+		/// <summary>
+		/// Get the specified body part.
+		/// </summary>
+		/// <remarks>
+		/// <para>Gets the specified body part.</para>
+		/// <note type="note">For more information about how to construct the <paramref name="partSpecifier"/>,
+		/// see <a href="https://www.rfc-editor.org/rfc/rfc3501.html#section-6.4.5">RFC3501, Section 6.4.5</a>.</note>
+		/// </remarks>
+		/// <example>
+		/// <code language="c#" source="Examples\ImapBodyPartExamples.cs" region="GetBodyPartsByUniqueIdAndSpecifier"/>
+		/// </example>
+		/// <returns>The body part.</returns>
+		/// <param name="uid">The UID of the message.</param>
+		/// <param name="partSpecifier">The body part specifier.</param>
+		/// <param name="cancellationToken">The cancellation token.</param>
+		/// <param name="progress">The progress reporting mechanism.</param>
+		/// <exception cref="System.ArgumentNullException">
+		/// <paramref name="partSpecifier"/> is <see langword="null" />.
+		/// </exception>
+		/// <exception cref="System.ArgumentException">
+		/// <paramref name="uid"/> is invalid.
+		/// </exception>
+		/// <exception cref="System.ObjectDisposedException">
+		/// The <see cref="ImapClient"/> has been disposed.
+		/// </exception>
+		/// <exception cref="ServiceNotConnectedException">
+		/// The <see cref="ImapClient"/> is not connected.
+		/// </exception>
+		/// <exception cref="ServiceNotAuthenticatedException">
+		/// The <see cref="ImapClient"/> is not authenticated.
+		/// </exception>
+		/// <exception cref="FolderNotOpenException">
+		/// The <see cref="ImapFolder"/> is not currently open.
+		/// </exception>
+		/// <exception cref="MessageNotFoundException">
+		/// The IMAP server did not return the requested message body.
+		/// </exception>
+		/// <exception cref="System.OperationCanceledException">
+		/// The operation was canceled via the cancellation token.
+		/// </exception>
+		/// <exception cref="System.IO.IOException">
+		/// An I/O error occurred.
+		/// </exception>
+		/// <exception cref="ImapProtocolException">
+		/// The server's response contained unexpected tokens.
+		/// </exception>
+		/// <exception cref="ImapCommandException">
+		/// The server replied with a NO or BAD response.
+		/// </exception>
+		public virtual MimeEntity GetBodyPart (UniqueId uid, string partSpecifier, CancellationToken cancellationToken = default, ITransferProgress? progress = null)
+		{
+			var ic = QueueGetBodyPartCommand (uid, partSpecifier, cancellationToken, progress, out var ctx, out var tags);
+			ChainedStream chained;
+			MimeContentStorage storage;
+
+			try {
+				Engine.Run (ic);
+
+				ProcessGetBodyPartResponse (ic, ctx, uid, tags, out chained, out storage);
 			} finally {
 				ctx.Dispose ();
 			}
 
-			var entity = await ParseEntityAsync (chained, dispose, doAsync, cancellationToken).ConfigureAwait (false);
+			var entity = ParseEntity (chained, storage, cancellationToken);
 
-			if (partSpecifier.Length == 0) {
-				for (int i = entity.Headers.Count; i > 0; i--) {
-					var header = entity.Headers[i - 1];
+			if (partSpecifier.Length == 0)
+				RemoveMessageHeaders (entity);
 
-					if (!header.Field.StartsWith ("Content-", StringComparison.OrdinalIgnoreCase))
-						entity.Headers.RemoveAt (i - 1);
-				}
+			return entity;
+		}
+
+		/// <summary>
+		/// Asynchronously get the specified body part.
+		/// </summary>
+		/// <remarks>
+		/// <para>Gets the specified body part.</para>
+		/// <note type="note">For more information about how to construct the <paramref name="partSpecifier"/>,
+		/// see <a href="https://www.rfc-editor.org/rfc/rfc3501.html#section-6.4.5">RFC3501, Section 6.4.5</a>.</note>
+		/// </remarks>
+		/// <example>
+		/// <code language="c#" source="Examples\ImapBodyPartExamples.cs" region="GetBodyPartsByUniqueIdAndSpecifier"/>
+		/// </example>
+		/// <returns>The body part.</returns>
+		/// <param name="uid">The UID of the message.</param>
+		/// <param name="partSpecifier">The body part specifier.</param>
+		/// <param name="cancellationToken">The cancellation token.</param>
+		/// <param name="progress">The progress reporting mechanism.</param>
+		/// <exception cref="System.ArgumentNullException">
+		/// <paramref name="partSpecifier"/> is <see langword="null" />.
+		/// </exception>
+		/// <exception cref="System.ArgumentException">
+		/// <paramref name="uid"/> is invalid.
+		/// </exception>
+		/// <exception cref="System.ObjectDisposedException">
+		/// The <see cref="ImapClient"/> has been disposed.
+		/// </exception>
+		/// <exception cref="ServiceNotConnectedException">
+		/// The <see cref="ImapClient"/> is not connected.
+		/// </exception>
+		/// <exception cref="ServiceNotAuthenticatedException">
+		/// The <see cref="ImapClient"/> is not authenticated.
+		/// </exception>
+		/// <exception cref="FolderNotOpenException">
+		/// The <see cref="ImapFolder"/> is not currently open.
+		/// </exception>
+		/// <exception cref="MessageNotFoundException">
+		/// The IMAP server did not return the requested message body.
+		/// </exception>
+		/// <exception cref="System.OperationCanceledException">
+		/// The operation was canceled via the cancellation token.
+		/// </exception>
+		/// <exception cref="System.IO.IOException">
+		/// An I/O error occurred.
+		/// </exception>
+		/// <exception cref="ImapProtocolException">
+		/// The server's response contained unexpected tokens.
+		/// </exception>
+		/// <exception cref="ImapCommandException">
+		/// The server replied with a NO or BAD response.
+		/// </exception>
+		public virtual async Task<MimeEntity> GetBodyPartAsync (UniqueId uid, string partSpecifier, CancellationToken cancellationToken = default, ITransferProgress? progress = null)
+		{
+			var ic = QueueGetBodyPartCommand (uid, partSpecifier, cancellationToken, progress, out var ctx, out var tags);
+			ChainedStream chained;
+			MimeContentStorage storage;
+
+			try {
+				await Engine.RunAsync (ic).ConfigureAwait (false);
+
+				ProcessGetBodyPartResponse (ic, ctx, uid, tags, out chained, out storage);
+			} finally {
+				ctx.Dispose ();
 			}
+
+			var entity = await ParseEntityAsync (chained, storage, cancellationToken).ConfigureAwait (false);
+
+			if (partSpecifier.Length == 0)
+				RemoveMessageHeaders (entity);
 
 			return entity;
 		}
@@ -4948,106 +3882,8 @@ namespace MailKit.Net.Imap
 		/// <remarks>
 		/// Gets the specified body part.
 		/// </remarks>
-		/// <returns>The body part.</returns>
-		/// <param name="uid">The UID of the message.</param>
-		/// <param name="partSpecifier">The body part specifier.</param>
-		/// <param name="cancellationToken">The cancellation token.</param>
-		/// <param name="progress">The progress reporting mechanism.</param>
-		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="partSpecifier"/> is <c>null</c>.
-		/// </exception>
-		/// <exception cref="System.ArgumentException">
-		/// <paramref name="uid"/> is invalid.
-		/// </exception>
-		/// <exception cref="System.ObjectDisposedException">
-		/// The <see cref="ImapClient"/> has been disposed.
-		/// </exception>
-		/// <exception cref="ServiceNotConnectedException">
-		/// The <see cref="ImapClient"/> is not connected.
-		/// </exception>
-		/// <exception cref="ServiceNotAuthenticatedException">
-		/// The <see cref="ImapClient"/> is not authenticated.
-		/// </exception>
-		/// <exception cref="FolderNotOpenException">
-		/// The <see cref="ImapFolder"/> is not currently open.
-		/// </exception>
-		/// <exception cref="MessageNotFoundException">
-		/// The IMAP server did not return the requested message body.
-		/// </exception>
-		/// <exception cref="System.OperationCanceledException">
-		/// The operation was canceled via the cancellation token.
-		/// </exception>
-		/// <exception cref="System.IO.IOException">
-		/// An I/O error occurred.
-		/// </exception>
-		/// <exception cref="ImapProtocolException">
-		/// The server's response contained unexpected tokens.
-		/// </exception>
-		/// <exception cref="ImapCommandException">
-		/// The server replied with a NO or BAD response.
-		/// </exception>
-		public virtual MimeEntity GetBodyPart (UniqueId uid, string partSpecifier, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
-		{
-			return GetBodyPartAsync (uid, partSpecifier, false, cancellationToken, progress).GetAwaiter ().GetResult ();
-		}
-
-		/// <summary>
-		/// Asynchronously get the specified body part.
-		/// </summary>
-		/// <remarks>
-		/// Gets the specified body part.
-		/// </remarks>
-		/// <returns>The body part.</returns>
-		/// <param name="uid">The UID of the message.</param>
-		/// <param name="partSpecifier">The body part specifier.</param>
-		/// <param name="cancellationToken">The cancellation token.</param>
-		/// <param name="progress">The progress reporting mechanism.</param>
-		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="partSpecifier"/> is <c>null</c>.
-		/// </exception>
-		/// <exception cref="System.ArgumentException">
-		/// <paramref name="uid"/> is invalid.
-		/// </exception>
-		/// <exception cref="System.ObjectDisposedException">
-		/// The <see cref="ImapClient"/> has been disposed.
-		/// </exception>
-		/// <exception cref="ServiceNotConnectedException">
-		/// The <see cref="ImapClient"/> is not connected.
-		/// </exception>
-		/// <exception cref="ServiceNotAuthenticatedException">
-		/// The <see cref="ImapClient"/> is not authenticated.
-		/// </exception>
-		/// <exception cref="FolderNotOpenException">
-		/// The <see cref="ImapFolder"/> is not currently open.
-		/// </exception>
-		/// <exception cref="MessageNotFoundException">
-		/// The IMAP server did not return the requested message body.
-		/// </exception>
-		/// <exception cref="System.OperationCanceledException">
-		/// The operation was canceled via the cancellation token.
-		/// </exception>
-		/// <exception cref="System.IO.IOException">
-		/// An I/O error occurred.
-		/// </exception>
-		/// <exception cref="ImapProtocolException">
-		/// The server's response contained unexpected tokens.
-		/// </exception>
-		/// <exception cref="ImapCommandException">
-		/// The server replied with a NO or BAD response.
-		/// </exception>
-		public virtual Task<MimeEntity> GetBodyPartAsync (UniqueId uid, string partSpecifier, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
-		{
-			return GetBodyPartAsync (uid, partSpecifier, true, cancellationToken, progress);
-		}
-
-		/// <summary>
-		/// Get the specified body part.
-		/// </summary>
-		/// <remarks>
-		/// Gets the specified body part.
-		/// </remarks>
 		/// <example>
-		/// <code language="c#" source="Examples\ImapExamples.cs" region="DownloadBodyParts"/>
+		/// <code language="c#" source="Examples\ImapBodyPartExamples.cs" region="GetBodyPartsByUniqueId"/>
 		/// </example>
 		/// <returns>The body part.</returns>
 		/// <param name="uid">The UID of the message.</param>
@@ -5055,7 +3891,7 @@ namespace MailKit.Net.Imap
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <param name="progress">The progress reporting mechanism.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="part"/> is <c>null</c>.
+		/// <paramref name="part"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ArgumentException">
 		/// <paramref name="uid"/> is invalid.
@@ -5087,7 +3923,7 @@ namespace MailKit.Net.Imap
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override MimeEntity GetBodyPart (UniqueId uid, BodyPart part, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
+		public override MimeEntity GetBodyPart (UniqueId uid, BodyPart part, CancellationToken cancellationToken = default, ITransferProgress? progress = null)
 		{
 			if (!uid.IsValid)
 				throw new ArgumentException ("The uid is invalid.", nameof (uid));
@@ -5105,7 +3941,7 @@ namespace MailKit.Net.Imap
 		/// Gets the specified body part.
 		/// </remarks>
 		/// <example>
-		/// <code language="c#" source="Examples\ImapExamples.cs" region="DownloadBodyParts"/>
+		/// <code language="c#" source="Examples\ImapBodyPartExamples.cs" region="GetBodyPartsByUniqueId"/>
 		/// </example>
 		/// <returns>The body part.</returns>
 		/// <param name="uid">The UID of the message.</param>
@@ -5113,7 +3949,7 @@ namespace MailKit.Net.Imap
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <param name="progress">The progress reporting mechanism.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="part"/> is <c>null</c>.
+		/// <paramref name="part"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ArgumentException">
 		/// <paramref name="uid"/> is invalid.
@@ -5145,7 +3981,7 @@ namespace MailKit.Net.Imap
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override Task<MimeEntity> GetBodyPartAsync (UniqueId uid, BodyPart part, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
+		public override Task<MimeEntity> GetBodyPartAsync (UniqueId uid, BodyPart part, CancellationToken cancellationToken = default, ITransferProgress? progress = null)
 		{
 			if (!uid.IsValid)
 				throw new ArgumentException ("The uid is invalid.", nameof (uid));
@@ -5156,7 +3992,7 @@ namespace MailKit.Net.Imap
 			return GetBodyPartAsync (uid, part.PartSpecifier, cancellationToken, progress);
 		}
 
-		async Task<MimeEntity> GetBodyPartAsync (int index, string partSpecifier, bool doAsync, CancellationToken cancellationToken, ITransferProgress progress)
+		ImapCommand QueueGetBodyPartCommand (int index, string partSpecifier, CancellationToken cancellationToken, ITransferProgress? progress, out FetchStreamContext ctx, out string[] tags)
 		{
 			if (index < 0 || index >= Count)
 				throw new ArgumentOutOfRangeException (nameof (index));
@@ -5166,68 +4002,47 @@ namespace MailKit.Net.Imap
 
 			CheckState (true, false);
 
-			string[] tags;
-
 			var seqid = (index + 1).ToString (CultureInfo.InvariantCulture);
 			var command = string.Format ("FETCH {0} ({1})\r\n", seqid, GetBodyPartQuery (partSpecifier, false, out tags));
 			var ic = new ImapCommand (Engine, cancellationToken, this, command);
-			var ctx = new FetchStreamContext (progress);
-			ChainedStream chained = null;
-			bool dispose = false;
-			Section section;
-
-			ic.RegisterUntaggedHandler ("FETCH", FetchStreamAsync);
-			ic.UserData = ctx;
+			ic.RegisterUntaggedHandler ("FETCH", FetchStreamHandler);
+			ic.UserData = ctx = new FetchStreamContext (progress);
 
 			Engine.QueueCommand (ic);
 
+			return ic;
+		}
+
+		void ProcessGetBodyPartResponse (ImapCommand ic, FetchStreamContext ctx, int index, string[] tags, out ChainedStream chained, out MimeContentStorage storage)
+		{
+			ProcessFetchResponse (ic);
+
+			chained = new ChainedStream ();
+			storage = MimeContentStorage.Source;
+
 			try {
-				await Engine.RunAsync (ic, doAsync).ConfigureAwait (false);
-
-				ProcessResponseCodes (ic, null);
-
-				if (ic.Response != ImapCommandResponse.Ok)
-					throw ImapCommandException.Create ("FETCH", ic);
-
-				chained = new ChainedStream ();
-
 				foreach (var tag in tags) {
-					if (!ctx.TryGetSection (index, tag, out section, true))
+					if (!ctx.TryGetSection (index, tag, out var section, true))
 						throw new MessageNotFoundException ("The IMAP server did not return the requested body part.");
 
-					if (!(section.Stream is MemoryStream || section.Stream is MemoryBlockStream))
-						dispose = true;
+					if (GetContentStorage (section.Stream) == MimeContentStorage.Memory)
+						storage = MimeContentStorage.Memory;
 
 					chained.Add (section.Stream);
 				}
 			} catch {
-				if (chained != null)
-					chained.Dispose ();
-
+				chained.Dispose ();
 				throw;
-			} finally {
-				ctx.Dispose ();
 			}
-
-			var entity = await ParseEntityAsync (chained, dispose, doAsync, cancellationToken).ConfigureAwait (false);
-
-			if (partSpecifier.Length == 0) {
-				for (int i = entity.Headers.Count; i > 0; i--) {
-					var header = entity.Headers[i - 1];
-
-					if (!header.Field.StartsWith ("Content-", StringComparison.OrdinalIgnoreCase))
-						entity.Headers.RemoveAt (i - 1);
-				}
-			}
-
-			return entity;
 		}
 
 		/// <summary>
 		/// Get the specified body part.
 		/// </summary>
 		/// <remarks>
-		/// Gets the specified body part.
+		/// <para>Gets the specified body part.</para>
+		/// <note type="note">For more information about how to construct the <paramref name="partSpecifier"/>,
+		/// see <a href="https://www.rfc-editor.org/rfc/rfc3501.html#section-6.4.5">RFC3501, Section 6.4.5</a>.</note>
 		/// </remarks>
 		/// <returns>The body part.</returns>
 		/// <param name="index">The index of the message.</param>
@@ -5235,7 +4050,7 @@ namespace MailKit.Net.Imap
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <param name="progress">The progress reporting mechanism.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="partSpecifier"/> is <c>null</c>.
+		/// <paramref name="partSpecifier"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <paramref name="index"/> is out of range.
@@ -5267,16 +4082,35 @@ namespace MailKit.Net.Imap
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public virtual MimeEntity GetBodyPart (int index, string partSpecifier, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
+		public virtual MimeEntity GetBodyPart (int index, string partSpecifier, CancellationToken cancellationToken = default, ITransferProgress? progress = null)
 		{
-			return GetBodyPartAsync (index, partSpecifier, false, cancellationToken, progress).GetAwaiter ().GetResult ();
+			var ic = QueueGetBodyPartCommand (index, partSpecifier, cancellationToken, progress, out var ctx, out var tags);
+			ChainedStream chained;
+			MimeContentStorage storage;
+
+			try {
+				Engine.Run (ic);
+
+				ProcessGetBodyPartResponse (ic, ctx, index, tags, out chained, out storage);
+			} finally {
+				ctx.Dispose ();
+			}
+
+			var entity = ParseEntity (chained, storage, cancellationToken);
+
+			if (partSpecifier.Length == 0)
+				RemoveMessageHeaders (entity);
+
+			return entity;
 		}
 
 		/// <summary>
 		/// Asynchronously get the specified body part.
 		/// </summary>
 		/// <remarks>
-		/// Gets the specified body part.
+		/// <para>Gets the specified body part.</para>
+		/// <note type="note">For more information about how to construct the <paramref name="partSpecifier"/>,
+		/// see <a href="https://www.rfc-editor.org/rfc/rfc3501.html#section-6.4.5">RFC3501, Section 6.4.5</a>.</note>
 		/// </remarks>
 		/// <returns>The body part.</returns>
 		/// <param name="index">The index of the message.</param>
@@ -5284,7 +4118,7 @@ namespace MailKit.Net.Imap
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <param name="progress">The progress reporting mechanism.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="partSpecifier"/> is <c>null</c>.
+		/// <paramref name="partSpecifier"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <paramref name="index"/> is out of range.
@@ -5316,9 +4150,26 @@ namespace MailKit.Net.Imap
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public virtual Task<MimeEntity> GetBodyPartAsync (int index, string partSpecifier, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
+		public virtual async Task<MimeEntity> GetBodyPartAsync (int index, string partSpecifier, CancellationToken cancellationToken = default, ITransferProgress? progress = null)
 		{
-			return GetBodyPartAsync (index, partSpecifier, true, cancellationToken, progress);
+			var ic = QueueGetBodyPartCommand (index, partSpecifier, cancellationToken, progress, out var ctx, out var tags);
+			ChainedStream chained;
+			MimeContentStorage storage;
+
+			try {
+				await Engine.RunAsync (ic).ConfigureAwait (false);
+
+				ProcessGetBodyPartResponse (ic, ctx, index, tags, out chained, out storage);
+			} finally {
+				ctx.Dispose ();
+			}
+
+			var entity = await ParseEntityAsync (chained, storage, cancellationToken).ConfigureAwait (false);
+
+			if (partSpecifier.Length == 0)
+				RemoveMessageHeaders (entity);
+
+			return entity;
 		}
 
 		/// <summary>
@@ -5333,7 +4184,7 @@ namespace MailKit.Net.Imap
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <param name="progress">The progress reporting mechanism.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="part"/> is <c>null</c>.
+		/// <paramref name="part"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <paramref name="index"/> is out of range.
@@ -5365,7 +4216,7 @@ namespace MailKit.Net.Imap
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override MimeEntity GetBodyPart (int index, BodyPart part, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
+		public override MimeEntity GetBodyPart (int index, BodyPart part, CancellationToken cancellationToken = default, ITransferProgress? progress = null)
 		{
 			if (index < 0 || index >= Count)
 				throw new ArgumentOutOfRangeException (nameof (index));
@@ -5388,7 +4239,7 @@ namespace MailKit.Net.Imap
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <param name="progress">The progress reporting mechanism.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="part"/> is <c>null</c>.
+		/// <paramref name="part"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <paramref name="index"/> is out of range.
@@ -5420,7 +4271,7 @@ namespace MailKit.Net.Imap
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override Task<MimeEntity> GetBodyPartAsync (int index, BodyPart part, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
+		public override Task<MimeEntity> GetBodyPartAsync (int index, BodyPart part, CancellationToken cancellationToken = default, ITransferProgress? progress = null)
 		{
 			if (index < 0 || index >= Count)
 				throw new ArgumentOutOfRangeException (nameof (index));
@@ -5431,7 +4282,7 @@ namespace MailKit.Net.Imap
 			return GetBodyPartAsync (index, part.PartSpecifier, cancellationToken, progress);
 		}
 
-		async Task<Stream> GetStreamAsync (UniqueId uid, int offset, int count, bool doAsync, CancellationToken cancellationToken, ITransferProgress progress)
+		bool TryQueueGetStreamCommand (UniqueId uid, long offset, long count, CancellationToken cancellationToken, ITransferProgress? progress, [NotNullWhen (true)] out ImapCommand? ic, [NotNullWhen (true)] out FetchStreamContext? ctx)
 		{
 			if (!uid.IsValid)
 				throw new ArgumentException ("The uid is invalid.", nameof (uid));
@@ -5444,36 +4295,160 @@ namespace MailKit.Net.Imap
 
 			CheckState (true, false);
 
-			if (count == 0)
-				return new MemoryStream ();
+			if (count == 0) {
+				ctx = null;
+				ic = null;
+				return false;
+			}
 
-			var ic = new ImapCommand (Engine, cancellationToken, this, "UID FETCH %u (BODY.PEEK[]<%d.%d>)\r\n", uid.Id, offset, count);
-			var ctx = new FetchStreamContext (progress);
-			Section section;
-
-			ic.RegisterUntaggedHandler ("FETCH", FetchStreamAsync);
-			ic.UserData = ctx;
+			ic = new ImapCommand (Engine, cancellationToken, this, "UID FETCH %u (BODY.PEEK[]<%d.%d>)\r\n", uid.Id, offset, count);
+			ic.RegisterUntaggedHandler ("FETCH", FetchStreamHandler);
+			ic.UserData = ctx = new FetchStreamContext (progress);
 
 			Engine.QueueCommand (ic);
 
-			try {
-				await Engine.RunAsync (ic, doAsync).ConfigureAwait (false);
+			return true;
+		}
 
-				ProcessResponseCodes (ic, null);
+		Stream ProcessGetStreamResponse (ImapCommand ic, FetchStreamContext ctx, UniqueId uid)
+		{
+			ProcessFetchResponse (ic);
 
-				if (ic.Response != ImapCommandResponse.Ok)
-					throw ImapCommandException.Create ("FETCH", ic);
-
-				if (!ctx.TryGetSection (uid, string.Empty, out section, true))
-					throw new MessageNotFoundException ("The IMAP server did not return the requested stream.");
-			} finally {
-				ctx.Dispose ();
-			}
+			if (!ctx.TryGetSection (uid, string.Empty, out var section, true))
+				throw new MessageNotFoundException ("The IMAP server did not return the requested stream.");
 
 			return section.Stream;
 		}
 
-		async Task<Stream> GetStreamAsync (int index, int offset, int count, bool doAsync, CancellationToken cancellationToken, ITransferProgress progress)
+		/// <summary>
+		/// Get a substream of the specified message.
+		/// </summary>
+		/// <remarks>
+		/// Fetches a substream of the message. If the starting offset is beyond
+		/// the end of the message, an empty stream is returned. If the number of
+		/// bytes desired extends beyond the end of the message, the stream will
+		/// end where the message ends.
+		/// </remarks>
+		/// <returns>The stream.</returns>
+		/// <param name="uid">The UID of the message.</param>
+		/// <param name="offset">The starting offset of the first desired byte.</param>
+		/// <param name="count">The number of bytes desired.</param>
+		/// <param name="cancellationToken">The cancellation token.</param>
+		/// <param name="progress">The progress reporting mechanism.</param>
+		/// <exception cref="System.ArgumentException">
+		/// <paramref name="uid"/> is invalid.
+		/// </exception>
+		/// <exception cref="System.ArgumentOutOfRangeException">
+		/// <para><paramref name="offset"/> is negative.</para>
+		/// <para>-or-</para>
+		/// <para><paramref name="count"/> is negative.</para>
+		/// </exception>
+		/// <exception cref="System.ObjectDisposedException">
+		/// The <see cref="ImapClient"/> has been disposed.
+		/// </exception>
+		/// <exception cref="ServiceNotConnectedException">
+		/// The <see cref="ImapClient"/> is not connected.
+		/// </exception>
+		/// <exception cref="ServiceNotAuthenticatedException">
+		/// The <see cref="ImapClient"/> is not authenticated.
+		/// </exception>
+		/// <exception cref="FolderNotOpenException">
+		/// The <see cref="ImapFolder"/> is not currently open.
+		/// </exception>
+		/// <exception cref="MessageNotFoundException">
+		/// The IMAP server did not return the requested message stream.
+		/// </exception>
+		/// <exception cref="System.OperationCanceledException">
+		/// The operation was canceled via the cancellation token.
+		/// </exception>
+		/// <exception cref="System.IO.IOException">
+		/// An I/O error occurred.
+		/// </exception>
+		/// <exception cref="ImapProtocolException">
+		/// The server's response contained unexpected tokens.
+		/// </exception>
+		/// <exception cref="ImapCommandException">
+		/// The server replied with a NO or BAD response.
+		/// </exception>
+		public override Stream GetStream (UniqueId uid, long offset, long count, CancellationToken cancellationToken = default, ITransferProgress? progress = null)
+		{
+			if (!TryQueueGetStreamCommand (uid, offset, count, cancellationToken, progress, out var ic, out var ctx))
+				return new MemoryStream ();
+
+			try {
+				Engine.Run (ic);
+
+				return ProcessGetStreamResponse (ic, ctx, uid);
+			} finally {
+				ctx.Dispose ();
+			}
+		}
+
+		/// <summary>
+		/// Asynchronously gets a substream of the specified message.
+		/// </summary>
+		/// <remarks>
+		/// Fetches a substream of the message. If the starting offset is beyond
+		/// the end of the message, an empty stream is returned. If the number of
+		/// bytes desired extends beyond the end of the message,  the stream will
+		/// end where the message ends.
+		/// </remarks>
+		/// <returns>The stream.</returns>
+		/// <param name="uid">The UID of the message.</param>
+		/// <param name="offset">The starting offset of the first desired byte.</param>
+		/// <param name="count">The number of bytes desired.</param>
+		/// <param name="cancellationToken">The cancellation token.</param>
+		/// <param name="progress">The progress reporting mechanism.</param>
+		/// <exception cref="System.ArgumentException">
+		/// <paramref name="uid"/> is invalid.
+		/// </exception>
+		/// <exception cref="System.ArgumentOutOfRangeException">
+		/// <para><paramref name="offset"/> is negative.</para>
+		/// <para>-or-</para>
+		/// <para><paramref name="count"/> is negative.</para>
+		/// </exception>
+		/// <exception cref="System.ObjectDisposedException">
+		/// The <see cref="ImapClient"/> has been disposed.
+		/// </exception>
+		/// <exception cref="ServiceNotConnectedException">
+		/// The <see cref="ImapClient"/> is not connected.
+		/// </exception>
+		/// <exception cref="ServiceNotAuthenticatedException">
+		/// The <see cref="ImapClient"/> is not authenticated.
+		/// </exception>
+		/// <exception cref="FolderNotOpenException">
+		/// The <see cref="ImapFolder"/> is not currently open.
+		/// </exception>
+		/// <exception cref="MessageNotFoundException">
+		/// The IMAP server did not return the requested message stream.
+		/// </exception>
+		/// <exception cref="System.OperationCanceledException">
+		/// The operation was canceled via the cancellation token.
+		/// </exception>
+		/// <exception cref="System.IO.IOException">
+		/// An I/O error occurred.
+		/// </exception>
+		/// <exception cref="ImapProtocolException">
+		/// The server's response contained unexpected tokens.
+		/// </exception>
+		/// <exception cref="ImapCommandException">
+		/// The server replied with a NO or BAD response.
+		/// </exception>
+		public override async Task<Stream> GetStreamAsync (UniqueId uid, long offset, long count, CancellationToken cancellationToken = default, ITransferProgress? progress = null)
+		{
+			if (!TryQueueGetStreamCommand (uid, offset, count, cancellationToken, progress, out var ic, out var ctx))
+				return new MemoryStream ();
+
+			try {
+				await Engine.RunAsync (ic).ConfigureAwait (false);
+
+				return ProcessGetStreamResponse (ic, ctx, uid);
+			} finally {
+				ctx.Dispose ();
+			}
+		}
+
+		bool TryQueueGetStreamCommand (int index, long offset, long count, CancellationToken cancellationToken, ITransferProgress? progress, [NotNullWhen (true)] out ImapCommand? ic, [NotNullWhen (true)] out FetchStreamContext? ctx)
 		{
 			if (index < 0 || index >= Count)
 				throw new ArgumentOutOfRangeException (nameof (index));
@@ -5486,31 +4461,27 @@ namespace MailKit.Net.Imap
 
 			CheckState (true, false);
 
-			if (count == 0)
-				return new MemoryStream ();
+			if (count == 0) {
+				ctx = null;
+				ic = null;
+				return false;
+			}
 
-			var ic = new ImapCommand (Engine, cancellationToken, this, "FETCH %d (BODY.PEEK[]<%d.%d>)\r\n", index + 1, offset, count);
-			var ctx = new FetchStreamContext (progress);
-			Section section;
-
-			ic.RegisterUntaggedHandler ("FETCH", FetchStreamAsync);
-			ic.UserData = ctx;
+			ic = new ImapCommand (Engine, cancellationToken, this, "FETCH %d (BODY.PEEK[]<%d.%d>)\r\n", index + 1, offset, count);
+			ic.RegisterUntaggedHandler ("FETCH", FetchStreamHandler);
+			ic.UserData = ctx = new FetchStreamContext (progress);
 
 			Engine.QueueCommand (ic);
 
-			try {
-				await Engine.RunAsync (ic, doAsync).ConfigureAwait (false);
+			return true;
+		}
 
-				ProcessResponseCodes (ic, null);
+		Stream ProcessGetStreamResponse (ImapCommand ic, FetchStreamContext ctx, int index)
+		{
+			ProcessFetchResponse (ic);
 
-				if (ic.Response != ImapCommandResponse.Ok)
-					throw ImapCommandException.Create ("FETCH", ic);
-
-				if (!ctx.TryGetSection (index, string.Empty, out section, true))
-					throw new MessageNotFoundException ("The IMAP server did not return the requested stream.");
-			} finally {
-				ctx.Dispose ();
-			}
+			if (!ctx.TryGetSection (index, string.Empty, out var section, true))
+				throw new MessageNotFoundException ("The IMAP server did not return the requested stream.");
 
 			return section.Stream;
 		}
@@ -5525,116 +4496,6 @@ namespace MailKit.Net.Imap
 		/// will be returned.
 		/// </remarks>
 		/// <returns>The stream.</returns>
-		/// <param name="uid">The UID of the message.</param>
-		/// <param name="offset">The starting offset of the first desired byte.</param>
-		/// <param name="count">The number of bytes desired.</param>
-		/// <param name="cancellationToken">The cancellation token.</param>
-		/// <param name="progress">The progress reporting mechanism.</param>
-		/// <exception cref="System.ArgumentException">
-		/// <paramref name="uid"/> is invalid.
-		/// </exception>
-		/// <exception cref="System.ArgumentOutOfRangeException">
-		/// <para><paramref name="offset"/> is negative.</para>
-		/// <para>-or-</para>
-		/// <para><paramref name="count"/> is negative.</para>
-		/// </exception>
-		/// <exception cref="System.ObjectDisposedException">
-		/// The <see cref="ImapClient"/> has been disposed.
-		/// </exception>
-		/// <exception cref="ServiceNotConnectedException">
-		/// The <see cref="ImapClient"/> is not connected.
-		/// </exception>
-		/// <exception cref="ServiceNotAuthenticatedException">
-		/// The <see cref="ImapClient"/> is not authenticated.
-		/// </exception>
-		/// <exception cref="FolderNotOpenException">
-		/// The <see cref="ImapFolder"/> is not currently open.
-		/// </exception>
-		/// <exception cref="MessageNotFoundException">
-		/// The IMAP server did not return the requested message stream.
-		/// </exception>
-		/// <exception cref="System.OperationCanceledException">
-		/// The operation was canceled via the cancellation token.
-		/// </exception>
-		/// <exception cref="System.IO.IOException">
-		/// An I/O error occurred.
-		/// </exception>
-		/// <exception cref="ImapProtocolException">
-		/// The server's response contained unexpected tokens.
-		/// </exception>
-		/// <exception cref="ImapCommandException">
-		/// The server replied with a NO or BAD response.
-		/// </exception>
-		public override Stream GetStream (UniqueId uid, int offset, int count, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
-		{
-			return GetStreamAsync (uid, offset, count, false, cancellationToken, progress).GetAwaiter ().GetResult ();
-		}
-
-		/// <summary>
-		/// Asynchronously gets a substream of the specified message.
-		/// </summary>
-		/// <remarks>
-		/// Fetches a substream of the message. If the starting offset is beyond
-		/// the end of the message, an empty stream is returned. If the number of
-		/// bytes desired extends beyond the end of the message, a truncated stream
-		/// will be returned.
-		/// </remarks>
-		/// <returns>The stream.</returns>
-		/// <param name="uid">The UID of the message.</param>
-		/// <param name="offset">The starting offset of the first desired byte.</param>
-		/// <param name="count">The number of bytes desired.</param>
-		/// <param name="cancellationToken">The cancellation token.</param>
-		/// <param name="progress">The progress reporting mechanism.</param>
-		/// <exception cref="System.ArgumentException">
-		/// <paramref name="uid"/> is invalid.
-		/// </exception>
-		/// <exception cref="System.ArgumentOutOfRangeException">
-		/// <para><paramref name="offset"/> is negative.</para>
-		/// <para>-or-</para>
-		/// <para><paramref name="count"/> is negative.</para>
-		/// </exception>
-		/// <exception cref="System.ObjectDisposedException">
-		/// The <see cref="ImapClient"/> has been disposed.
-		/// </exception>
-		/// <exception cref="ServiceNotConnectedException">
-		/// The <see cref="ImapClient"/> is not connected.
-		/// </exception>
-		/// <exception cref="ServiceNotAuthenticatedException">
-		/// The <see cref="ImapClient"/> is not authenticated.
-		/// </exception>
-		/// <exception cref="FolderNotOpenException">
-		/// The <see cref="ImapFolder"/> is not currently open.
-		/// </exception>
-		/// <exception cref="MessageNotFoundException">
-		/// The IMAP server did not return the requested message stream.
-		/// </exception>
-		/// <exception cref="System.OperationCanceledException">
-		/// The operation was canceled via the cancellation token.
-		/// </exception>
-		/// <exception cref="System.IO.IOException">
-		/// An I/O error occurred.
-		/// </exception>
-		/// <exception cref="ImapProtocolException">
-		/// The server's response contained unexpected tokens.
-		/// </exception>
-		/// <exception cref="ImapCommandException">
-		/// The server replied with a NO or BAD response.
-		/// </exception>
-		public override Task<Stream> GetStreamAsync (UniqueId uid, int offset, int count, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
-		{
-			return GetStreamAsync (uid, offset, count, true, cancellationToken, progress);
-		}
-
-		/// <summary>
-		/// Get a substream of the specified message.
-		/// </summary>
-		/// <remarks>
-		/// Fetches a substream of the message. If the starting offset is beyond
-		/// the end of the message, an empty stream is returned. If the number of
-		/// bytes desired extends beyond the end of the message, a truncated stream
-		/// will be returned.
-		/// </remarks>
-		/// <returns>The stream.</returns>
 		/// <param name="index">The index of the message.</param>
 		/// <param name="offset">The starting offset of the first desired byte.</param>
 		/// <param name="count">The number of bytes desired.</param>
@@ -5674,9 +4535,18 @@ namespace MailKit.Net.Imap
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override Stream GetStream (int index, int offset, int count, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
+		public override Stream GetStream (int index, long offset, long count, CancellationToken cancellationToken = default, ITransferProgress? progress = null)
 		{
-			return GetStreamAsync (index, offset, count, false, cancellationToken, progress).GetAwaiter ().GetResult ();
+			if (!TryQueueGetStreamCommand (index, offset, count, cancellationToken, progress, out var ic, out var ctx))
+				return new MemoryStream ();
+
+			try {
+				Engine.Run (ic);
+
+				return ProcessGetStreamResponse (ic, ctx, index);
+			} finally {
+				ctx.Dispose ();
+			}
 		}
 
 		/// <summary>
@@ -5728,12 +4598,21 @@ namespace MailKit.Net.Imap
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override Task<Stream> GetStreamAsync (int index, int offset, int count, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
+		public override async Task<Stream> GetStreamAsync (int index, long offset, long count, CancellationToken cancellationToken = default, ITransferProgress? progress = null)
 		{
-			return GetStreamAsync (index, offset, count, true, cancellationToken, progress);
+			if (!TryQueueGetStreamCommand (index, offset, count, cancellationToken, progress, out var ic, out var ctx))
+				return new MemoryStream ();
+
+			try {
+				await Engine.RunAsync (ic).ConfigureAwait (false);
+
+				return ProcessGetStreamResponse (ic, ctx, index);
+			} finally {
+				ctx.Dispose ();
+			}
 		}
 
-		async Task<Stream> GetStreamAsync (UniqueId uid, string section, bool doAsync, CancellationToken cancellationToken, ITransferProgress progress)
+		ImapCommand QueueGetStreamCommand (UniqueId uid, string section, CancellationToken cancellationToken, ITransferProgress? progress, out FetchStreamContext ctx)
 		{
 			if (!uid.IsValid)
 				throw new ArgumentException ("The uid is invalid.", nameof (uid));
@@ -5745,27 +4624,20 @@ namespace MailKit.Net.Imap
 
 			var command = string.Format ("UID FETCH {0} (BODY.PEEK[{1}])\r\n", uid, section);
 			var ic = new ImapCommand (Engine, cancellationToken, this, command);
-			var ctx = new FetchStreamContext (progress);
-			Section s;
-
-			ic.RegisterUntaggedHandler ("FETCH", FetchStreamAsync);
-			ic.UserData = ctx;
+			ic.RegisterUntaggedHandler ("FETCH", FetchStreamHandler);
+			ic.UserData = ctx = new FetchStreamContext (progress);
 
 			Engine.QueueCommand (ic);
 
-			try {
-				await Engine.RunAsync (ic, doAsync).ConfigureAwait (false);
+			return ic;
+		}
 
-				ProcessResponseCodes (ic, null);
+		Stream ProcessGetStreamResponse (ImapCommand ic, FetchStreamContext ctx, UniqueId uid, string section)
+		{
+			ProcessFetchResponse (ic);
 
-				if (ic.Response != ImapCommandResponse.Ok)
-					throw ImapCommandException.Create ("FETCH", ic);
-
-				if (!ctx.TryGetSection (uid, section, out s, true))
-					throw new MessageNotFoundException ("The IMAP server did not return the requested stream.");
-			} finally {
-				ctx.Dispose ();
-			}
+			if (!ctx.TryGetSection (uid, section, out var s, true))
+				throw new MessageNotFoundException ("The IMAP server did not return the requested stream.");
 
 			return s.Stream;
 		}
@@ -5775,9 +4647,12 @@ namespace MailKit.Net.Imap
 		/// </summary>
 		/// <remarks>
 		/// <para>Gets a substream of the specified message.</para>
-		/// <para>For more information about how to construct the <paramref name="section"/>,
-		/// see Section 6.4.5 of RFC3501.</para>
+		/// <note type="note">For more information about how to construct the <paramref name="section"/>,
+		/// see <a href="https://www.rfc-editor.org/rfc/rfc3501.html#section-6.4.5">RFC3501, Section 6.4.5</a>.</note>
 		/// </remarks>
+		/// <example>
+		/// <code language="c#" source="Examples\ImapBodyPartExamples.cs" region="GetBodyPartStreamsByUniqueIdAndSpecifier"/>
+		/// </example>
 		/// <returns>The stream.</returns>
 		/// <param name="uid">The UID of the message.</param>
 		/// <param name="section">The desired section of the message.</param>
@@ -5787,7 +4662,7 @@ namespace MailKit.Net.Imap
 		/// <paramref name="uid"/> is invalid.
 		/// </exception>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="section"/> is <c>null</c>.
+		/// <paramref name="section"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ObjectDisposedException">
 		/// The <see cref="ImapClient"/> has been disposed.
@@ -5816,9 +4691,17 @@ namespace MailKit.Net.Imap
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override Stream GetStream (UniqueId uid, string section, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
+		public override Stream GetStream (UniqueId uid, string section, CancellationToken cancellationToken = default, ITransferProgress? progress = null)
 		{
-			return GetStreamAsync (uid, section, false, cancellationToken, progress).GetAwaiter ().GetResult ();
+			var ic = QueueGetStreamCommand (uid, section, cancellationToken, progress, out var ctx);
+
+			try {
+				Engine.Run (ic);
+
+				return ProcessGetStreamResponse (ic, ctx, uid, section);
+			} finally {
+				ctx.Dispose ();
+			}
 		}
 
 		/// <summary>
@@ -5826,9 +4709,12 @@ namespace MailKit.Net.Imap
 		/// </summary>
 		/// <remarks>
 		/// <para>Gets a substream of the specified message.</para>
-		/// <para>For more information about how to construct the <paramref name="section"/>,
-		/// see Section 6.4.5 of RFC3501.</para>
+		/// <note type="note">For more information about how to construct the <paramref name="section"/>,
+		/// see <a href="https://www.rfc-editor.org/rfc/rfc3501.html#section-6.4.5">RFC3501, Section 6.4.5</a>.</note>
 		/// </remarks>
+		/// <example>
+		/// <code language="c#" source="Examples\ImapBodyPartExamples.cs" region="GetBodyPartStreamsByUniqueIdAndSpecifier"/>
+		/// </example>
 		/// <returns>The stream.</returns>
 		/// <param name="uid">The UID of the message.</param>
 		/// <param name="section">The desired section of the message.</param>
@@ -5838,7 +4724,7 @@ namespace MailKit.Net.Imap
 		/// <paramref name="uid"/> is invalid.
 		/// </exception>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="section"/> is <c>null</c>.
+		/// <paramref name="section"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ObjectDisposedException">
 		/// The <see cref="ImapClient"/> has been disposed.
@@ -5867,12 +4753,20 @@ namespace MailKit.Net.Imap
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override Task<Stream> GetStreamAsync (UniqueId uid, string section, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
+		public override async Task<Stream> GetStreamAsync (UniqueId uid, string section, CancellationToken cancellationToken = default, ITransferProgress? progress = null)
 		{
-			return GetStreamAsync (uid, section, true, cancellationToken, progress);
+			var ic = QueueGetStreamCommand (uid, section, cancellationToken, progress, out var ctx);
+
+			try {
+				await Engine.RunAsync (ic).ConfigureAwait (false);
+
+				return ProcessGetStreamResponse (ic, ctx, uid, section);
+			} finally {
+				ctx.Dispose ();
+			}
 		}
 
-		async Task<Stream> GetStreamAsync (UniqueId uid, string section, int offset, int count, bool doAsync, CancellationToken cancellationToken, ITransferProgress progress)
+		bool TryQueueGetStreamCommand (UniqueId uid, string section, long offset, long count, CancellationToken cancellationToken, ITransferProgress? progress, [NotNullWhen (true)] out ImapCommand? ic, [NotNullWhen (true)] out FetchStreamContext? ctx)
 		{
 			if (!uid.IsValid)
 				throw new ArgumentException ("The uid is invalid.", nameof (uid));
@@ -5888,35 +4782,22 @@ namespace MailKit.Net.Imap
 
 			CheckState (true, false);
 
-			if (count == 0)
-				return new MemoryStream ();
+			if (count == 0) {
+				ctx = null;
+				ic = null;
+				return false;
+			}
 
 			var range = string.Format (CultureInfo.InvariantCulture, "{0}.{1}", offset, count);
 			var command = string.Format ("UID FETCH {0} (BODY.PEEK[{1}]<{2}>)\r\n", uid, section, range);
-			var ic = new ImapCommand (Engine, cancellationToken, this, command);
-			var ctx = new FetchStreamContext (progress);
-			Section s;
-
-			ic.RegisterUntaggedHandler ("FETCH", FetchStreamAsync);
-			ic.UserData = ctx;
+			
+			ic = new ImapCommand (Engine, cancellationToken, this, command);
+			ic.RegisterUntaggedHandler ("FETCH", FetchStreamHandler);
+			ic.UserData = ctx = new FetchStreamContext (progress);
 
 			Engine.QueueCommand (ic);
 
-			try {
-				await Engine.RunAsync (ic, doAsync).ConfigureAwait (false);
-
-				ProcessResponseCodes (ic, null);
-
-				if (ic.Response != ImapCommandResponse.Ok)
-					throw ImapCommandException.Create ("FETCH", ic);
-
-				if (!ctx.TryGetSection (uid, section, out s, true))
-					throw new MessageNotFoundException ("The IMAP server did not return the requested stream.");
-			} finally {
-				ctx.Dispose ();
-			}
-
-			return s.Stream;
+			return true;
 		}
 
 		/// <summary>
@@ -5927,8 +4808,8 @@ namespace MailKit.Net.Imap
 		/// the end of the specified section of the message, an empty stream is returned. If
 		/// the number of bytes desired extends beyond the end of the section, a truncated
 		/// stream will be returned.</para>
-		/// <para>For more information about how to construct the <paramref name="section"/>,
-		/// see Section 6.4.5 of RFC3501.</para>
+		/// <note type="note">For more information about how to construct the <paramref name="section"/>,
+		/// see <a href="https://www.rfc-editor.org/rfc/rfc3501.html#section-6.4.5">RFC3501, Section 6.4.5</a>.</note>
 		/// </remarks>
 		/// <returns>The stream.</returns>
 		/// <param name="uid">The UID of the message.</param>
@@ -5941,7 +4822,7 @@ namespace MailKit.Net.Imap
 		/// <paramref name="uid"/> is invalid.
 		/// </exception>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="section"/> is <c>null</c>.
+		/// <paramref name="section"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <para><paramref name="offset"/> is negative.</para>
@@ -5975,9 +4856,18 @@ namespace MailKit.Net.Imap
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override Stream GetStream (UniqueId uid, string section, int offset, int count, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
+		public override Stream GetStream (UniqueId uid, string section, long offset, long count, CancellationToken cancellationToken = default, ITransferProgress? progress = null)
 		{
-			return GetStreamAsync (uid, section, offset, count, false, cancellationToken, progress).GetAwaiter ().GetResult ();
+			if (!TryQueueGetStreamCommand (uid, section, offset, count, cancellationToken, progress, out var ic, out var ctx))
+				return new MemoryStream ();
+
+			try {
+				Engine.Run (ic);
+
+				return ProcessGetStreamResponse (ic, ctx, uid, section);
+			} finally {
+				ctx.Dispose ();
+			}
 		}
 
 		/// <summary>
@@ -5988,8 +4878,8 @@ namespace MailKit.Net.Imap
 		/// the end of the specified section of the message, an empty stream is returned. If
 		/// the number of bytes desired extends beyond the end of the section, a truncated
 		/// stream will be returned.</para>
-		/// <para>For more information about how to construct the <paramref name="section"/>,
-		/// see Section 6.4.5 of RFC3501.</para>
+		/// <note type="note">For more information about how to construct the <paramref name="section"/>,
+		/// see <a href="https://www.rfc-editor.org/rfc/rfc3501.html#section-6.4.5">RFC3501, Section 6.4.5</a>.</note>
 		/// </remarks>
 		/// <returns>The stream.</returns>
 		/// <param name="uid">The UID of the message.</param>
@@ -6002,7 +4892,7 @@ namespace MailKit.Net.Imap
 		/// <paramref name="uid"/> is invalid.
 		/// </exception>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="section"/> is <c>null</c>.
+		/// <paramref name="section"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <para><paramref name="offset"/> is negative.</para>
@@ -6036,12 +4926,21 @@ namespace MailKit.Net.Imap
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override Task<Stream> GetStreamAsync (UniqueId uid, string section, int offset, int count, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
+		public override async Task<Stream> GetStreamAsync (UniqueId uid, string section, long offset, long count, CancellationToken cancellationToken = default, ITransferProgress? progress = null)
 		{
-			return GetStreamAsync (uid, section, offset, count, true, cancellationToken, progress);
+			if (!TryQueueGetStreamCommand (uid, section, offset, count, cancellationToken, progress, out var ic, out var ctx))
+				return new MemoryStream ();
+
+			try {
+				await Engine.RunAsync (ic).ConfigureAwait (false);
+
+				return ProcessGetStreamResponse (ic, ctx, uid, section);
+			} finally {
+				ctx.Dispose ();
+			}
 		}
 
-		async Task<Stream> GetStreamAsync (int index, string section, bool doAsync, CancellationToken cancellationToken, ITransferProgress progress)
+		ImapCommand QueueGetStreamCommand (int index, string section, CancellationToken cancellationToken, ITransferProgress? progress, out FetchStreamContext ctx)
 		{
 			if (index < 0 || index >= Count)
 				throw new ArgumentOutOfRangeException (nameof (index));
@@ -6054,29 +4953,22 @@ namespace MailKit.Net.Imap
 			var seqid = (index + 1).ToString (CultureInfo.InvariantCulture);
 			var command = string.Format ("FETCH {0} (BODY.PEEK[{1}])\r\n", seqid, section);
 			var ic = new ImapCommand (Engine, cancellationToken, this, command);
-			var ctx = new FetchStreamContext (progress);
-			Section s;
-
-			ic.RegisterUntaggedHandler ("FETCH", FetchStreamAsync);
-			ic.UserData = ctx;
+			ic.RegisterUntaggedHandler ("FETCH", FetchStreamHandler);
+			ic.UserData = ctx = new FetchStreamContext (progress);
 
 			Engine.QueueCommand (ic);
 
-			try {
-				await Engine.RunAsync (ic, doAsync).ConfigureAwait (false);
+			return ic;
+		}
 
-				ProcessResponseCodes (ic, null);
+		Stream ProcessGetStreamResponse (ImapCommand ic, FetchStreamContext ctx, int index, string section)
+		{
+			ProcessFetchResponse (ic);
 
-				if (ic.Response != ImapCommandResponse.Ok)
-					throw ImapCommandException.Create ("FETCH", ic);
+			if (!ctx.TryGetSection (index, section, out var sect, true))
+				throw new MessageNotFoundException ("The IMAP server did not return the requested stream.");
 
-				if (!ctx.TryGetSection (index, section, out s, true))
-					throw new MessageNotFoundException ("The IMAP server did not return the requested stream.");
-			} finally {
-				ctx.Dispose ();
-			}
-
-			return s.Stream;
+			return sect.Stream;
 		}
 
 		/// <summary>
@@ -6084,8 +4976,8 @@ namespace MailKit.Net.Imap
 		/// </summary>
 		/// <remarks>
 		/// <para>Gets a substream of the specified message.</para>
-		/// <para>For more information about how to construct the <paramref name="section"/>,
-		/// see Section 6.4.5 of RFC3501.</para>
+		/// <note type="note">For more information about how to construct the <paramref name="section"/>,
+		/// see <a href="https://www.rfc-editor.org/rfc/rfc3501.html#section-6.4.5">RFC3501, Section 6.4.5</a>.</note>
 		/// </remarks>
 		/// <returns>The stream.</returns>
 		/// <param name="index">The index of the message.</param>
@@ -6093,7 +4985,7 @@ namespace MailKit.Net.Imap
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <param name="progress">The progress reporting mechanism.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="section"/> is <c>null</c>.
+		/// <paramref name="section"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <paramref name="index"/> is out of range.
@@ -6125,9 +5017,17 @@ namespace MailKit.Net.Imap
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override Stream GetStream (int index, string section, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
+		public override Stream GetStream (int index, string section, CancellationToken cancellationToken = default, ITransferProgress? progress = null)
 		{
-			return GetStreamAsync (index, section, false, cancellationToken, progress).GetAwaiter ().GetResult ();
+			var ic = QueueGetStreamCommand (index, section, cancellationToken, progress, out var ctx);
+
+			try {
+				Engine.Run (ic);
+
+				return ProcessGetStreamResponse (ic, ctx, index, section);
+			} finally {
+				ctx.Dispose ();
+			}
 		}
 
 		/// <summary>
@@ -6135,8 +5035,8 @@ namespace MailKit.Net.Imap
 		/// </summary>
 		/// <remarks>
 		/// <para>Gets a substream of the specified message.</para>
-		/// <para>For more information about how to construct the <paramref name="section"/>,
-		/// see Section 6.4.5 of RFC3501.</para>
+		/// <note type="note">For more information about how to construct the <paramref name="section"/>,
+		/// see <a href="https://www.rfc-editor.org/rfc/rfc3501.html#section-6.4.5">RFC3501, Section 6.4.5</a>.</note>
 		/// </remarks>
 		/// <returns>The stream.</returns>
 		/// <param name="index">The index of the message.</param>
@@ -6144,7 +5044,7 @@ namespace MailKit.Net.Imap
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <param name="progress">The progress reporting mechanism.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="section"/> is <c>null</c>.
+		/// <paramref name="section"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <paramref name="index"/> is out of range.
@@ -6176,12 +5076,20 @@ namespace MailKit.Net.Imap
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override Task<Stream> GetStreamAsync (int index, string section, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
+		public override async Task<Stream> GetStreamAsync (int index, string section, CancellationToken cancellationToken = default, ITransferProgress? progress = null)
 		{
-			return GetStreamAsync (index, section, true, cancellationToken, progress);
+			var ic = QueueGetStreamCommand (index, section, cancellationToken, progress, out var ctx);
+
+			try {
+				await Engine.RunAsync (ic).ConfigureAwait (false);
+
+				return ProcessGetStreamResponse (ic, ctx, index, section);
+			} finally {
+				ctx.Dispose ();
+			}
 		}
 
-		async Task<Stream> GetStreamAsync (int index, string section, int offset, int count, bool doAsync, CancellationToken cancellationToken, ITransferProgress progress)
+		bool TryQueueGetStreamCommand (int index, string section, long offset, long count, CancellationToken cancellationToken, ITransferProgress? progress, [NotNullWhen (true)] out ImapCommand? ic, [NotNullWhen (true)] out FetchStreamContext? ctx)
 		{
 			if (index < 0 || index >= Count)
 				throw new ArgumentOutOfRangeException (nameof (index));
@@ -6197,36 +5105,23 @@ namespace MailKit.Net.Imap
 
 			CheckState (true, false);
 
-			if (count == 0)
-				return new MemoryStream ();
+			if (count == 0) {
+				ctx = null;
+				ic = null;
+				return false;
+			}
 
 			var seqid = (index + 1).ToString (CultureInfo.InvariantCulture);
 			var range = string.Format (CultureInfo.InvariantCulture, "{0}.{1}", offset, count);
 			var command = string.Format ("FETCH {0} (BODY.PEEK[{1}]<{2}>)\r\n", seqid, section, range);
-			var ic = new ImapCommand (Engine, cancellationToken, this, command);
-			var ctx = new FetchStreamContext (progress);
-			Section s;
 
-			ic.RegisterUntaggedHandler ("FETCH", FetchStreamAsync);
-			ic.UserData = ctx;
+			ic = new ImapCommand (Engine, cancellationToken, this, command);
+			ic.RegisterUntaggedHandler ("FETCH", FetchStreamHandler);
+			ic.UserData = ctx = new FetchStreamContext (progress);
 
 			Engine.QueueCommand (ic);
 
-			try {
-				await Engine.RunAsync (ic, doAsync).ConfigureAwait (false);
-
-				ProcessResponseCodes (ic, null);
-
-				if (ic.Response != ImapCommandResponse.Ok)
-					throw ImapCommandException.Create ("FETCH", ic);
-
-				if (!ctx.TryGetSection (index, section, out s, true))
-					throw new MessageNotFoundException ("The IMAP server did not return the requested stream.");
-			} finally {
-				ctx.Dispose ();
-			}
-
-			return s.Stream;
+			return true;
 		}
 
 		/// <summary>
@@ -6237,8 +5132,8 @@ namespace MailKit.Net.Imap
 		/// the end of the specified section of the message, an empty stream is returned. If
 		/// the number of bytes desired extends beyond the end of the section, a truncated
 		/// stream will be returned.</para>
-		/// <para>For more information about how to construct the <paramref name="section"/>,
-		/// see Section 6.4.5 of RFC3501.</para>
+		/// <note type="note">For more information about how to construct the <paramref name="section"/>,
+		/// see <a href="https://www.rfc-editor.org/rfc/rfc3501.html#section-6.4.5">RFC3501, Section 6.4.5</a>.</note>
 		/// </remarks>
 		/// <returns>The stream.</returns>
 		/// <param name="index">The index of the message.</param>
@@ -6248,7 +5143,7 @@ namespace MailKit.Net.Imap
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <param name="progress">The progress reporting mechanism.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="section"/> is <c>null</c>.
+		/// <paramref name="section"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <para><paramref name="index"/> is out of range.</para>
@@ -6284,9 +5179,18 @@ namespace MailKit.Net.Imap
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override Stream GetStream (int index, string section, int offset, int count, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
+		public override Stream GetStream (int index, string section, long offset, long count, CancellationToken cancellationToken = default, ITransferProgress? progress = null)
 		{
-			return GetStreamAsync (index, section, offset, count, false, cancellationToken, progress).GetAwaiter ().GetResult ();
+			if (!TryQueueGetStreamCommand (index, section, offset, count, cancellationToken, progress, out var ic, out var ctx))
+				return new MemoryStream ();
+
+			try {
+				Engine.Run (ic);
+
+				return ProcessGetStreamResponse (ic, ctx, index, section);
+			} finally {
+				ctx.Dispose ();
+			}
 		}
 
 		/// <summary>
@@ -6297,8 +5201,8 @@ namespace MailKit.Net.Imap
 		/// the end of the specified section of the message, an empty stream is returned. If
 		/// the number of bytes desired extends beyond the end of the section, a truncated
 		/// stream will be returned.</para>
-		/// <para>For more information about how to construct the <paramref name="section"/>,
-		/// see Section 6.4.5 of RFC3501.</para>
+		/// <note type="note">For more information about how to construct the <paramref name="section"/>,
+		/// see <a href="https://www.rfc-editor.org/rfc/rfc3501.html#section-6.4.5">RFC3501, Section 6.4.5</a>.</note>
 		/// </remarks>
 		/// <returns>The stream.</returns>
 		/// <param name="index">The index of the message.</param>
@@ -6308,7 +5212,7 @@ namespace MailKit.Net.Imap
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <param name="progress">The progress reporting mechanism.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="section"/> is <c>null</c>.
+		/// <paramref name="section"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <para><paramref name="index"/> is out of range.</para>
@@ -6344,9 +5248,18 @@ namespace MailKit.Net.Imap
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public override Task<Stream> GetStreamAsync (int index, string section, int offset, int count, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
+		public override async Task<Stream> GetStreamAsync (int index, string section, long offset, long count, CancellationToken cancellationToken = default, ITransferProgress? progress = null)
 		{
-			return GetStreamAsync (index, section, offset, count, true, cancellationToken, progress);
+			if (!TryQueueGetStreamCommand (index, section, offset, count, cancellationToken, progress, out var ic, out var ctx))
+				return new MemoryStream ();
+
+			try {
+				await Engine.RunAsync (ic).ConfigureAwait (false);
+
+				return ProcessGetStreamResponse (ic, ctx, index, section);
+			} finally {
+				ctx.Dispose ();
+			}
 		}
 
 		class FetchStreamCallbackContext : FetchStreamContextBase
@@ -6354,36 +5267,59 @@ namespace MailKit.Net.Imap
 			readonly ImapFolder folder;
 			readonly object callback;
 
-			public FetchStreamCallbackContext (ImapFolder folder, object callback, ITransferProgress progress) : base (progress)
+			public FetchStreamCallbackContext (ImapFolder folder, object callback, ITransferProgress? progress) : base (progress)
 			{
 				this.folder = folder;
 				this.callback = callback;
 			}
 
-			Task InvokeCallbackAsync (ImapFolder folder, int index, UniqueId uid, Stream stream, bool doAsync, CancellationToken cancellationToken)
+			void InvokeCallback (ImapFolder folder, int index, UniqueId uid, Stream stream, CancellationToken cancellationToken)
 			{
-				if (doAsync)
-					return ((ImapFetchStreamAsyncCallback) callback) (folder, index, uid, stream, cancellationToken);
-
 				((ImapFetchStreamCallback) callback) (folder, index, uid, stream);
-				return Complete;
 			}
 
-			public override async Task AddAsync (Section section, bool doAsync, CancellationToken cancellationToken)
+			Task InvokeCallbackAsync (ImapFolder folder, int index, UniqueId uid, Stream stream, CancellationToken cancellationToken)
+			{
+				return ((ImapFetchStreamAsyncCallback) callback) (folder, index, uid, stream, cancellationToken);
+			}
+
+			public override void Add (Section section, CancellationToken cancellationToken)
 			{
 				if (section.UniqueId.HasValue) {
-					await InvokeCallbackAsync (folder, section.Index, section.UniqueId.Value, section.Stream, doAsync, cancellationToken).ConfigureAwait (false);
+					InvokeCallback (folder, section.Index, section.UniqueId.Value, section.Stream, cancellationToken);
 					section.Stream.Dispose ();
 				} else {
 					Sections.Add (section);
 				}
 			}
 
-			public override async Task SetUniqueIdAsync (int index, UniqueId uid, bool doAsync, CancellationToken cancellationToken)
+			public override async Task AddAsync (Section section, CancellationToken cancellationToken)
+			{
+				if (section.UniqueId.HasValue) {
+					await InvokeCallbackAsync (folder, section.Index, section.UniqueId.Value, section.Stream, cancellationToken).ConfigureAwait (false);
+					section.Stream.Dispose ();
+				} else {
+					Sections.Add (section);
+				}
+			}
+
+			public override void SetUniqueId (int index, UniqueId uid, CancellationToken cancellationToken)
 			{
 				for (int i = 0; i < Sections.Count; i++) {
 					if (Sections[i].Index == index) {
-						await InvokeCallbackAsync (folder, index, uid, Sections[i].Stream, doAsync, cancellationToken).ConfigureAwait (false);
+						InvokeCallback (folder, index, uid, Sections[i].Stream, cancellationToken);
+						Sections[i].Stream.Dispose ();
+						Sections.RemoveAt (i);
+						break;
+					}
+				}
+			}
+
+			public override async Task SetUniqueIdAsync (int index, UniqueId uid, CancellationToken cancellationToken)
+			{
+				for (int i = 0; i < Sections.Count; i++) {
+					if (Sections[i].Index == index) {
+						await InvokeCallbackAsync (folder, index, uid, Sections[i].Stream, cancellationToken).ConfigureAwait (false);
 						Sections[i].Stream.Dispose ();
 						Sections.RemoveAt (i);
 						break;
@@ -6392,7 +5328,7 @@ namespace MailKit.Net.Imap
 			}
 		}
 
-		async Task GetStreamsAsync (IList<UniqueId> uids, object callback, bool doAsync, CancellationToken cancellationToken, ITransferProgress progress)
+		void ValidateArguments (IList<UniqueId> uids, object callback)
 		{
 			if (uids == null)
 				throw new ArgumentNullException (nameof (uids));
@@ -6401,33 +5337,138 @@ namespace MailKit.Net.Imap
 				throw new ArgumentNullException (nameof (callback));
 
 			CheckState (true, false);
+		}
+
+		IEnumerable<ImapCommand> QueueGetStreamsCommands (FetchStreamCallbackContext ctx, IList<UniqueId> uids, object callback, CancellationToken cancellationToken)
+		{
+			foreach (var ic in Engine.CreateCommands (cancellationToken, this, "UID FETCH %s (BODY.PEEK[])\r\n", uids)) {
+				ic.RegisterUntaggedHandler ("FETCH", FetchStreamHandler);
+				ic.UserData = ctx;
+
+				Engine.QueueCommand (ic);
+
+				yield return ic;
+			}
+		}
+
+		/// <summary>
+		/// Get the streams for the specified messages.
+		/// </summary>
+		/// <remarks>
+		/// <para>Gets the streams for the specified messages.</para>
+		/// </remarks>
+		/// <param name="uids">The uids of the messages.</param>
+		/// <param name="callback">A callback method that gets called for each stream as it is received.</param>
+		/// <param name="cancellationToken">The cancellation token.</param>
+		/// <param name="progress">The progress reporting mechanism.</param>
+		/// <exception cref="System.ArgumentNullException">
+		/// <para><paramref name="uids"/> is <see langword="null" />.</para>
+		/// <para>-or-</para>
+		/// <para><paramref name="callback"/> is <see langword="null" />.</para>
+		/// </exception>
+		/// <exception cref="System.ArgumentException">
+		/// One or more of the <paramref name="uids"/> is invalid.
+		/// </exception>
+		/// <exception cref="System.ObjectDisposedException">
+		/// The <see cref="ImapClient"/> has been disposed.
+		/// </exception>
+		/// <exception cref="ServiceNotConnectedException">
+		/// The <see cref="ImapClient"/> is not connected.
+		/// </exception>
+		/// <exception cref="ServiceNotAuthenticatedException">
+		/// The <see cref="ImapClient"/> is not authenticated.
+		/// </exception>
+		/// <exception cref="FolderNotOpenException">
+		/// The <see cref="ImapFolder"/> is not currently open.
+		/// </exception>
+		/// <exception cref="System.OperationCanceledException">
+		/// The operation was canceled via the cancellation token.
+		/// </exception>
+		/// <exception cref="System.IO.IOException">
+		/// An I/O error occurred.
+		/// </exception>
+		/// <exception cref="ImapProtocolException">
+		/// The server's response contained unexpected tokens.
+		/// </exception>
+		/// <exception cref="ImapCommandException">
+		/// The server replied with a NO or BAD response.
+		/// </exception>
+		public virtual void GetStreams (IList<UniqueId> uids, ImapFetchStreamCallback callback, CancellationToken cancellationToken = default, ITransferProgress? progress = null)
+		{
+			ValidateArguments (uids, callback);
 
 			if (uids.Count == 0)
 				return;
 
-			var ctx = new FetchStreamCallbackContext (this, callback, progress);
-			var command = "UID FETCH %s (BODY.PEEK[])\r\n";
+			using (var ctx = new FetchStreamCallbackContext (this, callback, progress)) {
+				foreach (var ic in QueueGetStreamsCommands (ctx, uids, callback, cancellationToken)) {
+					Engine.Run (ic);
 
-			try {
-				foreach (var ic in Engine.CreateCommands (cancellationToken, this, command, uids)) {
-					ic.RegisterUntaggedHandler ("FETCH", FetchStreamAsync);
-					ic.UserData = ctx;
-
-					Engine.QueueCommand (ic);
-
-					await Engine.RunAsync (ic, doAsync).ConfigureAwait (false);
-
-					ProcessResponseCodes (ic, null);
-
-					if (ic.Response != ImapCommandResponse.Ok)
-						throw ImapCommandException.Create ("FETCH", ic);
+					ProcessFetchResponse (ic);
 				}
-			} finally {
-				ctx.Dispose ();
 			}
 		}
 
-		async Task GetStreamsAsync (IList<int> indexes, object callback, bool doAsync, CancellationToken cancellationToken, ITransferProgress progress)
+		/// <summary>
+		/// Asynchronously get the streams for the specified messages.
+		/// </summary>
+		/// <remarks>
+		/// <para>Asynchronously gets the streams for the specified messages.</para>
+		/// </remarks>
+		/// <returns>An awaitable task.</returns>
+		/// <param name="uids">The uids of the messages.</param>
+		/// <param name="callback">A callback method that gets called for each stream as it is received.</param>
+		/// <param name="cancellationToken">The cancellation token.</param>
+		/// <param name="progress">The progress reporting mechanism.</param>
+		/// <exception cref="System.ArgumentNullException">
+		/// <para><paramref name="uids"/> is <see langword="null" />.</para>
+		/// <para>-or-</para>
+		/// <para><paramref name="callback"/> is <see langword="null" />.</para>
+		/// </exception>
+		/// <exception cref="System.ArgumentException">
+		/// One or more of the <paramref name="uids"/> is invalid.
+		/// </exception>
+		/// <exception cref="System.ObjectDisposedException">
+		/// The <see cref="ImapClient"/> has been disposed.
+		/// </exception>
+		/// <exception cref="ServiceNotConnectedException">
+		/// The <see cref="ImapClient"/> is not connected.
+		/// </exception>
+		/// <exception cref="ServiceNotAuthenticatedException">
+		/// The <see cref="ImapClient"/> is not authenticated.
+		/// </exception>
+		/// <exception cref="FolderNotOpenException">
+		/// The <see cref="ImapFolder"/> is not currently open.
+		/// </exception>
+		/// <exception cref="System.OperationCanceledException">
+		/// The operation was canceled via the cancellation token.
+		/// </exception>
+		/// <exception cref="System.IO.IOException">
+		/// An I/O error occurred.
+		/// </exception>
+		/// <exception cref="ImapProtocolException">
+		/// The server's response contained unexpected tokens.
+		/// </exception>
+		/// <exception cref="ImapCommandException">
+		/// The server replied with a NO or BAD response.
+		/// </exception>
+		public virtual async Task GetStreamsAsync (IList<UniqueId> uids, ImapFetchStreamAsyncCallback callback, CancellationToken cancellationToken = default, ITransferProgress? progress = null)
+		{
+			ValidateArguments (uids, callback);
+
+			if (uids.Count == 0)
+				return;
+
+			using (var ctx = new FetchStreamCallbackContext (this, callback, progress)) {
+				foreach (var ic in QueueGetStreamsCommands (ctx, uids, callback, cancellationToken)) {
+					await Engine.RunAsync (ic).ConfigureAwait (false);
+
+					ProcessFetchResponse (ic);
+				}
+			}
+		}
+
+		void ValidateArguments (IList<int> indexes, object callback)
 		{
 			if (indexes == null)
 				throw new ArgumentNullException (nameof (indexes));
@@ -6437,33 +5478,141 @@ namespace MailKit.Net.Imap
 
 			CheckState (true, false);
 			CheckAllowIndexes ();
+		}
 
-			if (indexes.Count == 0)
-				return;
+		ImapCommand QueueGetStreamsCommand (FetchStreamCallbackContext ctx, IList<int> indexes, CancellationToken cancellationToken)
+		{
+			var command = new StringBuilder ("FETCH ");
+			ImapUtils.FormatIndexSet (Engine, command, indexes);
+			command.Append (" (UID BODY.PEEK[])\r\n");
 
-			var set = ImapUtils.FormatIndexSet (Engine, indexes);
-			var command = string.Format ("FETCH {0} (UID BODY.PEEK[])\r\n", set);
-			var ic = new ImapCommand (Engine, cancellationToken, this, command);
-			var ctx = new FetchStreamCallbackContext (this, callback, progress);
-
-			ic.RegisterUntaggedHandler ("FETCH", FetchStreamAsync);
+			var ic = new ImapCommand (Engine, cancellationToken, this, command.ToString ());
+			ic.RegisterUntaggedHandler ("FETCH", FetchStreamHandler);
 			ic.UserData = ctx;
 
 			Engine.QueueCommand (ic);
 
-			try {
-				await Engine.RunAsync (ic, doAsync).ConfigureAwait (false);
+			return ic;
+		}
 
-				ProcessResponseCodes (ic, null);
+		/// <summary>
+		/// Get the streams for the specified messages.
+		/// </summary>
+		/// <remarks>
+		/// <para>Gets the streams for the specified messages.</para>
+		/// </remarks>
+		/// <param name="indexes">The indexes of the messages.</param>
+		/// <param name="callback">A callback method that gets called for each stream as it is received.</param>
+		/// <param name="cancellationToken">The cancellation token.</param>
+		/// <param name="progress">The progress reporting mechanism.</param>
+		/// <exception cref="System.ArgumentNullException">
+		/// <para><paramref name="indexes"/> is <see langword="null" />.</para>
+		/// <para>-or-</para>
+		/// <para><paramref name="callback"/> is <see langword="null" />.</para>
+		/// </exception>
+		/// <exception cref="System.ArgumentException">
+		/// One or more of the <paramref name="indexes"/> is invalid.
+		/// </exception>
+		/// <exception cref="System.ObjectDisposedException">
+		/// The <see cref="ImapClient"/> has been disposed.
+		/// </exception>
+		/// <exception cref="ServiceNotConnectedException">
+		/// The <see cref="ImapClient"/> is not connected.
+		/// </exception>
+		/// <exception cref="ServiceNotAuthenticatedException">
+		/// The <see cref="ImapClient"/> is not authenticated.
+		/// </exception>
+		/// <exception cref="FolderNotOpenException">
+		/// The <see cref="ImapFolder"/> is not currently open.
+		/// </exception>
+		/// <exception cref="System.OperationCanceledException">
+		/// The operation was canceled via the cancellation token.
+		/// </exception>
+		/// <exception cref="System.IO.IOException">
+		/// An I/O error occurred.
+		/// </exception>
+		/// <exception cref="ImapProtocolException">
+		/// The server's response contained unexpected tokens.
+		/// </exception>
+		/// <exception cref="ImapCommandException">
+		/// The server replied with a NO or BAD response.
+		/// </exception>
+		public virtual void GetStreams (IList<int> indexes, ImapFetchStreamCallback callback, CancellationToken cancellationToken = default, ITransferProgress? progress = null)
+		{
+			ValidateArguments (indexes, callback);
 
-				if (ic.Response != ImapCommandResponse.Ok)
-					throw ImapCommandException.Create ("FETCH", ic);
-			} finally {
-				ctx.Dispose ();
+			if (indexes.Count == 0)
+				return;
+
+			using (var ctx = new FetchStreamCallbackContext (this, callback, progress)) {
+				var ic = QueueGetStreamsCommand (ctx, indexes, cancellationToken);
+
+				Engine.Run (ic);
+
+				ProcessFetchResponse (ic);
 			}
 		}
 
-		async Task GetStreamsAsync (int min, int max, object callback, bool doAsync, CancellationToken cancellationToken, ITransferProgress progress)
+		/// <summary>
+		/// Asynchronously get the streams for the specified messages.
+		/// </summary>
+		/// <remarks>
+		/// <para>Asynchronously gets the streams for the specified messages.</para>
+		/// </remarks>
+		/// <returns>An awaitable task.</returns>
+		/// <param name="indexes">The indexes of the messages.</param>
+		/// <param name="callback">A callback method that gets called for each stream as it is received.</param>
+		/// <param name="cancellationToken">The cancellation token.</param>
+		/// <param name="progress">The progress reporting mechanism.</param>
+		/// <exception cref="System.ArgumentNullException">
+		/// <para><paramref name="indexes"/> is <see langword="null" />.</para>
+		/// <para>-or-</para>
+		/// <para><paramref name="callback"/> is <see langword="null" />.</para>
+		/// </exception>
+		/// <exception cref="System.ArgumentException">
+		/// One or more of the <paramref name="indexes"/> is invalid.
+		/// </exception>
+		/// <exception cref="System.ObjectDisposedException">
+		/// The <see cref="ImapClient"/> has been disposed.
+		/// </exception>
+		/// <exception cref="ServiceNotConnectedException">
+		/// The <see cref="ImapClient"/> is not connected.
+		/// </exception>
+		/// <exception cref="ServiceNotAuthenticatedException">
+		/// The <see cref="ImapClient"/> is not authenticated.
+		/// </exception>
+		/// <exception cref="FolderNotOpenException">
+		/// The <see cref="ImapFolder"/> is not currently open.
+		/// </exception>
+		/// <exception cref="System.OperationCanceledException">
+		/// The operation was canceled via the cancellation token.
+		/// </exception>
+		/// <exception cref="System.IO.IOException">
+		/// An I/O error occurred.
+		/// </exception>
+		/// <exception cref="ImapProtocolException">
+		/// The server's response contained unexpected tokens.
+		/// </exception>
+		/// <exception cref="ImapCommandException">
+		/// The server replied with a NO or BAD response.
+		/// </exception>
+		public virtual async Task GetStreamsAsync (IList<int> indexes, ImapFetchStreamAsyncCallback callback, CancellationToken cancellationToken = default, ITransferProgress? progress = null)
+		{
+			ValidateArguments (indexes, callback);
+
+			if (indexes.Count == 0)
+				return;
+
+			using (var ctx = new FetchStreamCallbackContext (this, callback, progress)) {
+				var ic = QueueGetStreamsCommand (ctx, indexes, cancellationToken);
+
+				await Engine.RunAsync (ic).ConfigureAwait (false);
+
+				ProcessFetchResponse (ic);
+			}
+		}
+
+		void ValidateArguments (int min, int max, object callback)
 		{
 			if (min < 0)
 				throw new ArgumentOutOfRangeException (nameof (min));
@@ -6476,270 +5625,80 @@ namespace MailKit.Net.Imap
 
 			CheckState (true, false);
 			CheckAllowIndexes ();
+		}
 
-			if (min == Count)
-				return;
-
+		ImapCommand QueueGetStreamsCommand (FetchStreamCallbackContext ctx, int min, int max, CancellationToken cancellationToken)
+		{
 			var command = string.Format ("FETCH {0} (UID BODY.PEEK[])\r\n", GetFetchRange (min, max));
 			var ic = new ImapCommand (Engine, cancellationToken, this, command);
-			var ctx = new FetchStreamCallbackContext (this, callback, progress);
-
-			ic.RegisterUntaggedHandler ("FETCH", FetchStreamAsync);
+			ic.RegisterUntaggedHandler ("FETCH", FetchStreamHandler);
 			ic.UserData = ctx;
 
 			Engine.QueueCommand (ic);
 
-			try {
-				await Engine.RunAsync (ic, doAsync).ConfigureAwait (false);
+			return ic;
+		}
 
-				ProcessResponseCodes (ic, null);
+		/// <summary>
+		/// Get the streams for the specified messages.
+		/// </summary>
+		/// <remarks>
+		/// <para>Gets the streams for the specified messages.</para>
+		/// </remarks>
+		/// <param name="min">The minimum index.</param>
+		/// <param name="max">The maximum index, or <c>-1</c> to specify no upper bound.</param>
+		/// <param name="callback">A callback method that gets called for each stream as it is received.</param>
+		/// <param name="cancellationToken">The cancellation token.</param>
+		/// <param name="progress">The progress reporting mechanism.</param>
+		/// <exception cref="System.ArgumentOutOfRangeException">
+		/// <para><paramref name="min"/> is out of range.</para>
+		/// <para>-or-</para>
+		/// <para><paramref name="max"/> is out of range.</para>
+		/// </exception>
+		/// <exception cref="System.ArgumentNullException">
+		/// <paramref name="callback"/> is <see langword="null" />.
+		/// </exception>
+		/// <exception cref="System.ObjectDisposedException">
+		/// The <see cref="ImapClient"/> has been disposed.
+		/// </exception>
+		/// <exception cref="ServiceNotConnectedException">
+		/// The <see cref="ImapClient"/> is not connected.
+		/// </exception>
+		/// <exception cref="ServiceNotAuthenticatedException">
+		/// The <see cref="ImapClient"/> is not authenticated.
+		/// </exception>
+		/// <exception cref="FolderNotOpenException">
+		/// The <see cref="ImapFolder"/> is not currently open.
+		/// </exception>
+		/// <exception cref="System.OperationCanceledException">
+		/// The operation was canceled via the cancellation token.
+		/// </exception>
+		/// <exception cref="System.IO.IOException">
+		/// An I/O error occurred.
+		/// </exception>
+		/// <exception cref="ImapProtocolException">
+		/// The server's response contained unexpected tokens.
+		/// </exception>
+		/// <exception cref="ImapCommandException">
+		/// The server replied with a NO or BAD response.
+		/// </exception>
+		public virtual void GetStreams (int min, int max, ImapFetchStreamCallback callback, CancellationToken cancellationToken = default, ITransferProgress? progress = null)
+		{
+			ValidateArguments (min, max, callback);
 
-				if (ic.Response != ImapCommandResponse.Ok)
-					throw ImapCommandException.Create ("FETCH", ic);
-			} finally {
-				ctx.Dispose ();
+			if (min == Count)
+				return;
+
+			using (var ctx = new FetchStreamCallbackContext (this, callback, progress)) {
+				var ic = QueueGetStreamsCommand (ctx, min, max, cancellationToken);
+
+				Engine.Run (ic);
+
+				ProcessFetchResponse (ic);
 			}
 		}
 
 		/// <summary>
-		/// Get the streams for the specified messages.
-		/// </summary>
-		/// <remarks>
-		/// <para>Gets the streams for the specified messages.</para>
-		/// </remarks>
-		/// <param name="uids">The uids of the messages.</param>
-		/// <param name="callback"></param>
-		/// <param name="cancellationToken">The cancellation token.</param>
-		/// <param name="progress">The progress reporting mechanism.</param>
-		/// <exception cref="System.ArgumentNullException">
-		/// <para><paramref name="uids"/> is <c>null</c>.</para>
-		/// <para>-or-</para>
-		/// <para><paramref name="callback"/> is <c>null</c>.</para>
-		/// </exception>
-		/// <exception cref="System.ArgumentException">
-		/// One or more of the <paramref name="uids"/> is invalid.
-		/// </exception>
-		/// <exception cref="System.ObjectDisposedException">
-		/// The <see cref="ImapClient"/> has been disposed.
-		/// </exception>
-		/// <exception cref="ServiceNotConnectedException">
-		/// The <see cref="ImapClient"/> is not connected.
-		/// </exception>
-		/// <exception cref="ServiceNotAuthenticatedException">
-		/// The <see cref="ImapClient"/> is not authenticated.
-		/// </exception>
-		/// <exception cref="FolderNotOpenException">
-		/// The <see cref="ImapFolder"/> is not currently open.
-		/// </exception>
-		/// <exception cref="System.OperationCanceledException">
-		/// The operation was canceled via the cancellation token.
-		/// </exception>
-		/// <exception cref="System.IO.IOException">
-		/// An I/O error occurred.
-		/// </exception>
-		/// <exception cref="ImapProtocolException">
-		/// The server's response contained unexpected tokens.
-		/// </exception>
-		/// <exception cref="ImapCommandException">
-		/// The server replied with a NO or BAD response.
-		/// </exception>
-		public virtual void GetStreams (IList<UniqueId> uids, ImapFetchStreamCallback callback, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
-		{
-			GetStreamsAsync (uids, callback, false, cancellationToken, progress).GetAwaiter ().GetResult ();
-		}
-
-		/// <summary>
-		/// Asynchronously get the streams for the specified messages.
-		/// </summary>
-		/// <remarks>
-		/// <para>Asynchronously gets the streams for the specified messages.</para>
-		/// </remarks>
-		/// <returns>An awaitable task.</returns>
-		/// <param name="uids">The uids of the messages.</param>
-		/// <param name="callback"></param>
-		/// <param name="cancellationToken">The cancellation token.</param>
-		/// <param name="progress">The progress reporting mechanism.</param>
-		/// <exception cref="System.ArgumentNullException">
-		/// <para><paramref name="uids"/> is <c>null</c>.</para>
-		/// <para>-or-</para>
-		/// <para><paramref name="callback"/> is <c>null</c>.</para>
-		/// </exception>
-		/// <exception cref="System.ArgumentException">
-		/// One or more of the <paramref name="uids"/> is invalid.
-		/// </exception>
-		/// <exception cref="System.ObjectDisposedException">
-		/// The <see cref="ImapClient"/> has been disposed.
-		/// </exception>
-		/// <exception cref="ServiceNotConnectedException">
-		/// The <see cref="ImapClient"/> is not connected.
-		/// </exception>
-		/// <exception cref="ServiceNotAuthenticatedException">
-		/// The <see cref="ImapClient"/> is not authenticated.
-		/// </exception>
-		/// <exception cref="FolderNotOpenException">
-		/// The <see cref="ImapFolder"/> is not currently open.
-		/// </exception>
-		/// <exception cref="System.OperationCanceledException">
-		/// The operation was canceled via the cancellation token.
-		/// </exception>
-		/// <exception cref="System.IO.IOException">
-		/// An I/O error occurred.
-		/// </exception>
-		/// <exception cref="ImapProtocolException">
-		/// The server's response contained unexpected tokens.
-		/// </exception>
-		/// <exception cref="ImapCommandException">
-		/// The server replied with a NO or BAD response.
-		/// </exception>
-		public virtual Task GetStreamsAsync (IList<UniqueId> uids, ImapFetchStreamAsyncCallback callback, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
-		{
-			return GetStreamsAsync (uids, callback, true, cancellationToken, progress);
-		}
-
-		/// <summary>
-		/// Get the streams for the specified messages.
-		/// </summary>
-		/// <remarks>
-		/// <para>Gets the streams for the specified messages.</para>
-		/// </remarks>
-		/// <param name="indexes">The indexes of the messages.</param>
-		/// <param name="callback"></param>
-		/// <param name="cancellationToken">The cancellation token.</param>
-		/// <param name="progress">The progress reporting mechanism.</param>
-		/// <exception cref="System.ArgumentNullException">
-		/// <para><paramref name="indexes"/> is <c>null</c>.</para>
-		/// <para>-or-</para>
-		/// <para><paramref name="callback"/> is <c>null</c>.</para>
-		/// </exception>
-		/// <exception cref="System.ArgumentException">
-		/// One or more of the <paramref name="indexes"/> is invalid.
-		/// </exception>
-		/// <exception cref="System.ObjectDisposedException">
-		/// The <see cref="ImapClient"/> has been disposed.
-		/// </exception>
-		/// <exception cref="ServiceNotConnectedException">
-		/// The <see cref="ImapClient"/> is not connected.
-		/// </exception>
-		/// <exception cref="ServiceNotAuthenticatedException">
-		/// The <see cref="ImapClient"/> is not authenticated.
-		/// </exception>
-		/// <exception cref="FolderNotOpenException">
-		/// The <see cref="ImapFolder"/> is not currently open.
-		/// </exception>
-		/// <exception cref="System.OperationCanceledException">
-		/// The operation was canceled via the cancellation token.
-		/// </exception>
-		/// <exception cref="System.IO.IOException">
-		/// An I/O error occurred.
-		/// </exception>
-		/// <exception cref="ImapProtocolException">
-		/// The server's response contained unexpected tokens.
-		/// </exception>
-		/// <exception cref="ImapCommandException">
-		/// The server replied with a NO or BAD response.
-		/// </exception>
-		public virtual void GetStreams (IList<int> indexes, ImapFetchStreamCallback callback, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
-		{
-			GetStreamsAsync (indexes, callback, false, cancellationToken, progress).GetAwaiter ().GetResult ();
-		}
-
-		/// <summary>
-		/// Asynchronously get the streams for the specified messages.
-		/// </summary>
-		/// <remarks>
-		/// <para>Asynchronously gets the streams for the specified messages.</para>
-		/// </remarks>
-		/// <returns>An awaitable task.</returns>
-		/// <param name="indexes">The indexes of the messages.</param>
-		/// <param name="callback"></param>
-		/// <param name="cancellationToken">The cancellation token.</param>
-		/// <param name="progress">The progress reporting mechanism.</param>
-		/// <exception cref="System.ArgumentNullException">
-		/// <para><paramref name="indexes"/> is <c>null</c>.</para>
-		/// <para>-or-</para>
-		/// <para><paramref name="callback"/> is <c>null</c>.</para>
-		/// </exception>
-		/// <exception cref="System.ArgumentException">
-		/// One or more of the <paramref name="indexes"/> is invalid.
-		/// </exception>
-		/// <exception cref="System.ObjectDisposedException">
-		/// The <see cref="ImapClient"/> has been disposed.
-		/// </exception>
-		/// <exception cref="ServiceNotConnectedException">
-		/// The <see cref="ImapClient"/> is not connected.
-		/// </exception>
-		/// <exception cref="ServiceNotAuthenticatedException">
-		/// The <see cref="ImapClient"/> is not authenticated.
-		/// </exception>
-		/// <exception cref="FolderNotOpenException">
-		/// The <see cref="ImapFolder"/> is not currently open.
-		/// </exception>
-		/// <exception cref="System.OperationCanceledException">
-		/// The operation was canceled via the cancellation token.
-		/// </exception>
-		/// <exception cref="System.IO.IOException">
-		/// An I/O error occurred.
-		/// </exception>
-		/// <exception cref="ImapProtocolException">
-		/// The server's response contained unexpected tokens.
-		/// </exception>
-		/// <exception cref="ImapCommandException">
-		/// The server replied with a NO or BAD response.
-		/// </exception>
-		public virtual Task GetStreamsAsync (IList<int> indexes, ImapFetchStreamAsyncCallback callback, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
-		{
-			return GetStreamsAsync (indexes, callback, true, cancellationToken, progress);
-		}
-
-		/// <summary>
-		/// Get the streams for the specified messages.
-		/// </summary>
-		/// <remarks>
-		/// <para>Gets the streams for the specified messages.</para>
-		/// </remarks>
-		/// <param name="min">The minimum index.</param>
-		/// <param name="max">The maximum index, or <c>-1</c> to specify no upper bound.</param>
-		/// <param name="callback"></param>
-		/// <param name="cancellationToken">The cancellation token.</param>
-		/// <param name="progress">The progress reporting mechanism.</param>
-		/// <exception cref="System.ArgumentOutOfRangeException">
-		/// <para><paramref name="min"/> is out of range.</para>
-		/// <para>-or-</para>
-		/// <para><paramref name="max"/> is out of range.</para>
-		/// </exception>
-		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="callback"/> is <c>null</c>.
-		/// </exception>
-		/// <exception cref="System.ObjectDisposedException">
-		/// The <see cref="ImapClient"/> has been disposed.
-		/// </exception>
-		/// <exception cref="ServiceNotConnectedException">
-		/// The <see cref="ImapClient"/> is not connected.
-		/// </exception>
-		/// <exception cref="ServiceNotAuthenticatedException">
-		/// The <see cref="ImapClient"/> is not authenticated.
-		/// </exception>
-		/// <exception cref="FolderNotOpenException">
-		/// The <see cref="ImapFolder"/> is not currently open.
-		/// </exception>
-		/// <exception cref="System.OperationCanceledException">
-		/// The operation was canceled via the cancellation token.
-		/// </exception>
-		/// <exception cref="System.IO.IOException">
-		/// An I/O error occurred.
-		/// </exception>
-		/// <exception cref="ImapProtocolException">
-		/// The server's response contained unexpected tokens.
-		/// </exception>
-		/// <exception cref="ImapCommandException">
-		/// The server replied with a NO or BAD response.
-		/// </exception>
-		public virtual void GetStreams (int min, int max, ImapFetchStreamCallback callback, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
-		{
-			GetStreamsAsync (min, max, callback, false, cancellationToken, progress).GetAwaiter ().GetResult ();
-		}
-
-		/// <summary>
 		/// Asynchronously get the streams for the specified messages.
 		/// </summary>
 		/// <remarks>
@@ -6748,7 +5707,7 @@ namespace MailKit.Net.Imap
 		/// <returns>An awaitable task.</returns>
 		/// <param name="min">The minimum index.</param>
 		/// <param name="max">The maximum index, or <c>-1</c> to specify no upper bound.</param>
-		/// <param name="callback"></param>
+		/// <param name="callback">A callback method that gets called for each stream as it is received.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <param name="progress">The progress reporting mechanism.</param>
 		/// <exception cref="System.ArgumentOutOfRangeException">
@@ -6757,7 +5716,7 @@ namespace MailKit.Net.Imap
 		/// <para><paramref name="max"/> is out of range.</para>
 		/// </exception>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="callback"/> is <c>null</c>.
+		/// <paramref name="callback"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ObjectDisposedException">
 		/// The <see cref="ImapClient"/> has been disposed.
@@ -6783,9 +5742,20 @@ namespace MailKit.Net.Imap
 		/// <exception cref="ImapCommandException">
 		/// The server replied with a NO or BAD response.
 		/// </exception>
-		public virtual Task GetStreamsAsync (int min, int max, ImapFetchStreamAsyncCallback callback, CancellationToken cancellationToken = default (CancellationToken), ITransferProgress progress = null)
+		public virtual async Task GetStreamsAsync (int min, int max, ImapFetchStreamAsyncCallback callback, CancellationToken cancellationToken = default, ITransferProgress? progress = null)
 		{
-			return GetStreamsAsync (min, max, callback, true, cancellationToken, progress);
+			ValidateArguments (min, max, callback);
+
+			if (min == Count)
+				return;
+
+			using (var ctx = new FetchStreamCallbackContext (this, callback, progress)) {
+				var ic = QueueGetStreamsCommand (ctx, min, max, cancellationToken);
+
+				await Engine.RunAsync (ic).ConfigureAwait (false);
+
+				ProcessFetchResponse (ic);
+			}
 		}
 	}
 }

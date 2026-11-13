@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -25,10 +25,6 @@
 //
 
 using System;
-#if SERIALIZABLE
-using System.Security;
-using System.Runtime.Serialization;
-#endif
 
 namespace MailKit.Net.Pop3 {
 	/// <summary>
@@ -42,29 +38,8 @@ namespace MailKit.Net.Pop3 {
 	/// <example>
 	/// <code language="c#" source="Examples\Pop3Examples.cs" region="ExceptionHandling"/>
 	/// </example>
-#if SERIALIZABLE
-	[Serializable]
-#endif
 	public class Pop3ProtocolException : ProtocolException
 	{
-#if SERIALIZABLE
-		/// <summary>
-		/// Initializes a new instance of the <see cref="MailKit.Net.Pop3.Pop3ProtocolException"/> class.
-		/// </summary>
-		/// <remarks>
-		/// Creates a new <see cref="Pop3ProtocolException"/> from the serialized data.
-		/// </remarks>
-		/// <param name="info">The serialization info.</param>
-		/// <param name="context">The streaming context.</param>
-		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="info"/> is <c>null</c>.
-		/// </exception>
-		[SecuritySafeCritical]
-		protected Pop3ProtocolException (SerializationInfo info, StreamingContext context) : base (info, context)
-		{
-		}
-#endif
-
 		/// <summary>
 		/// Initializes a new instance of the <see cref="MailKit.Net.Pop3.Pop3ProtocolException"/> class.
 		/// </summary>
@@ -85,6 +60,31 @@ namespace MailKit.Net.Pop3 {
 		/// </remarks>
 		/// <param name="message">The error message.</param>
 		public Pop3ProtocolException (string message) : base (message)
+		{
+		}
+
+		/// <summary>
+		/// Initializes a new instance of the <see cref="MailKit.Net.Pop3.Pop3ProtocolException"/> class.
+		/// </summary>
+		/// <remarks>
+		/// Creates a new <see cref="Pop3ProtocolException"/>.
+		/// </remarks>
+		/// <param name="message">The error message.</param>
+		/// <param name="errorType">The type of protocol error.</param>
+		/// <param name="innerException">An inner exception.</param>
+		public Pop3ProtocolException (string message, ProtocolErrorType errorType, Exception innerException) : base (message, errorType, innerException)
+		{
+		}
+
+		/// <summary>
+		/// Initializes a new instance of the <see cref="MailKit.Net.Pop3.Pop3ProtocolException"/> class.
+		/// </summary>
+		/// <remarks>
+		/// Creates a new <see cref="Pop3ProtocolException"/>.
+		/// </remarks>
+		/// <param name="message">The error message.</param>
+		/// <param name="errorType">The type of protocol error.</param>
+		public Pop3ProtocolException (string message, ProtocolErrorType errorType) : base (message, errorType)
 		{
 		}
 

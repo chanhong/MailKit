@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -24,11 +24,9 @@
 // THE SOFTWARE.
 //
 
-using System;
 using System.Net;
 using System.Text;
-
-using NUnit.Framework;
+using System.Security.Authentication.ExtendedProtection;
 
 using MailKit.Security;
 
@@ -40,19 +38,20 @@ namespace UnitTests.Security {
 		public void TestArgumentExceptions ()
 		{
 			var credentials = new NetworkCredential ("username", "password");
-			var uri = new Uri ("smtp://localhost");
 
 			var sasl = new SaslMechanismScramSha1 (credentials);
 			Assert.DoesNotThrow (() => sasl.Challenge (null));
 
-			Assert.Throws<ArgumentNullException> (() => new SaslMechanismScramSha1 (null, credentials));
-			Assert.Throws<ArgumentNullException> (() => new SaslMechanismScramSha1 (uri, null));
-			Assert.Throws<ArgumentNullException> (() => new SaslMechanismScramSha1 (null, "username", "password"));
-			Assert.Throws<ArgumentNullException> (() => new SaslMechanismScramSha1 (uri, (string) null, "password"));
-			Assert.Throws<ArgumentNullException> (() => new SaslMechanismScramSha1 (uri, "username", null));
 			Assert.Throws<ArgumentNullException> (() => new SaslMechanismScramSha1 (null));
-			Assert.Throws<ArgumentNullException> (() => new SaslMechanismScramSha1 ((string) null, "password"));
+			Assert.Throws<ArgumentNullException> (() => new SaslMechanismScramSha1 (null, "password"));
 			Assert.Throws<ArgumentNullException> (() => new SaslMechanismScramSha1 ("username", null));
+
+			sasl = new SaslMechanismScramSha1Plus (credentials);
+			Assert.DoesNotThrow (() => sasl.Challenge (null));
+
+			Assert.Throws<ArgumentNullException> (() => new SaslMechanismScramSha1Plus (null));
+			Assert.Throws<ArgumentNullException> (() => new SaslMechanismScramSha1Plus (null, "password"));
+			Assert.Throws<ArgumentNullException> (() => new SaslMechanismScramSha1Plus ("username", null));
 		}
 
 		static void AssertScramSha1 (SaslMechanismScramSha1 sasl, string prefix)
@@ -65,24 +64,28 @@ namespace UnitTests.Security {
 
 			sasl.cnonce = entropy;
 
-			Assert.IsTrue (sasl.SupportsInitialResponse, "{0}: SupportsInitialResponse", prefix);
+			Assert.That (sasl.SupportsChannelBinding, Is.False, $"{prefix}: SupportsChannelBinding");
+			Assert.That (sasl.SupportsInitialResponse, Is.True, $"{prefix}: SupportsInitialResponse");
 
 			var challenge = Encoding.UTF8.GetString (Convert.FromBase64String (sasl.Challenge (null)));
 
-			Assert.AreEqual ("n,,n=user,r=" + entropy, challenge, "{0}: initial SCRAM-SHA-1 challenge response does not match the expected string.", prefix);
-			Assert.IsFalse (sasl.IsAuthenticated, "{0}: should not be authenticated yet.", prefix);
+			Assert.That (challenge, Is.EqualTo ("n,,n=user,r=" + entropy), $"{prefix}: initial SCRAM-SHA-1 challenge response does not match the expected string.");
+			Assert.That (sasl.IsAuthenticated, Is.False, $"{prefix}: should not be authenticated yet.");
 
 			token = Convert.ToBase64String (Encoding.UTF8.GetBytes (challenge1));
 			challenge = Encoding.UTF8.GetString (Convert.FromBase64String (sasl.Challenge (token)));
 
-			Assert.AreEqual (expected, challenge, "{0}: second SCRAM-SHA-1 challenge response does not match the expected string.", prefix);
-			Assert.IsFalse (sasl.IsAuthenticated, "{0}: should not be authenticated yet.", prefix);
+			Assert.That (challenge, Is.EqualTo (expected), $"{prefix}: second SCRAM-SHA-1 challenge response does not match the expected string.");
+			Assert.That (sasl.IsAuthenticated, Is.False, $"{prefix}: should not be authenticated yet.");
 
 			token = Convert.ToBase64String (Encoding.UTF8.GetBytes (challenge2));
 			challenge = Encoding.UTF8.GetString (Convert.FromBase64String (sasl.Challenge (token)));
-			Assert.AreEqual (string.Empty, challenge, "{0}: third SCRAM-SHA-1 challenge should be an empty string.", prefix);
-			Assert.IsTrue (sasl.IsAuthenticated, "{0}: SCRAM-SHA-1 should be authenticated now.", prefix);
-			Assert.AreEqual (string.Empty, sasl.Challenge (string.Empty));
+			Assert.That (challenge, Is.EqualTo (string.Empty), $"{prefix}: third SCRAM-SHA-1 challenge should be an empty string.");
+			Assert.That (sasl.IsAuthenticated, Is.True, $"{prefix}: SCRAM-SHA-1 should be authenticated now.");
+			Assert.That (sasl.NegotiatedChannelBinding, Is.False, $"{prefix}: NegotiatedChannelBinding");
+			Assert.That (sasl.NegotiatedSecurityLayer, Is.False, $"{prefix}: NegotiatedSecurityLayer");
+
+			Assert.That (sasl.Challenge (string.Empty), Is.EqualTo (string.Empty), $"{prefix}: challenge while authenticated.");
 		}
 
 		[Test]
@@ -97,14 +100,6 @@ namespace UnitTests.Security {
 			sasl = new SaslMechanismScramSha1 ("user", "pencil");
 
 			AssertScramSha1 (sasl, "user/pass");
-
-			sasl = new SaslMechanismScramSha1 (uri, credentials);
-
-			AssertScramSha1 (sasl, "uri/credentials");
-
-			sasl = new SaslMechanismScramSha1 (uri, "user", "pencil");
-
-			AssertScramSha1 (sasl, "uri/user/pass");
 		}
 
 		static void AssertSaslException (SaslMechanismScramSha1 sasl, string challenge, SaslErrorCode code)
@@ -114,10 +109,10 @@ namespace UnitTests.Security {
 			try {
 				sasl.Challenge (Convert.ToBase64String (token));
 			} catch (SaslException sex) {
-				Assert.AreEqual (code, sex.ErrorCode, "ErrorCode");
+				Assert.That (sex.ErrorCode, Is.EqualTo (code), "ErrorCode");
 				return;
 			} catch (Exception ex) {
-				Assert.Fail ("SaslException expected, but got: {0}", ex.GetType ().Name);
+				Assert.Fail ($"SaslException expected, but got: {ex.GetType ().Name}");
 				return;
 			}
 
@@ -139,8 +134,8 @@ namespace UnitTests.Security {
 
 			challenge = Encoding.UTF8.GetString (Convert.FromBase64String (sasl.Challenge (null)));
 
-			Assert.AreEqual ("n,,n=user,r=" + entropy, challenge, "initial SCRAM-SHA-1 challenge response does not match the expected string.");
-			Assert.IsFalse (sasl.IsAuthenticated, "should not be authenticated yet.");
+			Assert.That (challenge, Is.EqualTo ("n,,n=user,r=" + entropy), "initial SCRAM-SHA-1 challenge response does not match the expected string.");
+			Assert.That (sasl.IsAuthenticated, Is.False, "should not be authenticated yet.");
 
 			AssertSaslException (sasl, challenge1.Replace (salt + ",", string.Empty), SaslErrorCode.IncompleteChallenge); // missing salt
 			AssertSaslException (sasl, challenge1.Replace (nonce + ",", string.Empty), SaslErrorCode.IncompleteChallenge); // missing nonce
@@ -151,8 +146,8 @@ namespace UnitTests.Security {
 			token = Convert.ToBase64String (Encoding.UTF8.GetBytes (challenge1));
 			challenge = Encoding.UTF8.GetString (Convert.FromBase64String (sasl.Challenge (token)));
 
-			Assert.AreEqual (expected, challenge, "second SCRAM-SHA-1 challenge response does not match the expected string.");
-			Assert.IsFalse (sasl.IsAuthenticated, "should not be authenticated yet.");
+			Assert.That (challenge, Is.EqualTo (expected), "second SCRAM-SHA-1 challenge response does not match the expected string.");
+			Assert.That (sasl.IsAuthenticated, Is.False, "should not be authenticated yet.");
 
 			AssertSaslException (sasl, "x=abcdefg", SaslErrorCode.InvalidChallenge);
 			AssertSaslException (sasl, "v=rmF9pqV8S7suAoZWja4dJRkF", SaslErrorCode.IncorrectHash); // incorrect hash length
@@ -160,9 +155,109 @@ namespace UnitTests.Security {
 
 			token = Convert.ToBase64String (Encoding.UTF8.GetBytes (challenge2));
 			challenge = Encoding.UTF8.GetString (Convert.FromBase64String (sasl.Challenge (token)));
-			Assert.AreEqual (string.Empty, challenge, "third SCRAM-SHA-1 challenge should be an empty string.");
-			Assert.IsTrue (sasl.IsAuthenticated, "SCRAM-SHA-1 should be authenticated now.");
-			Assert.AreEqual (string.Empty, sasl.Challenge (string.Empty));
+			Assert.That (challenge, Is.EqualTo (string.Empty), "third SCRAM-SHA-1 challenge should be an empty string.");
+			Assert.That (sasl.IsAuthenticated, Is.True, "SCRAM-SHA-1 should be authenticated now.");
+			Assert.That (sasl.Challenge (string.Empty), Is.EqualTo (string.Empty), "challenge while authenticated.");
+		}
+
+		static void AssertScramSha1PlusTlsServerEndpoint (SaslMechanismScramSha1Plus sasl, string prefix)
+		{
+			const string expected = "c=cD10bHMtc2VydmVyLWVuZC1wb2ludCwsaW1hcDovL2Vsd29vZC5pbm5vc29mdC5jb20v,r=fyko+d2lbbFgONRv9qkxdawL3rfcNHYJY1ZVvWVs7j,p=TJiKTaOm8umanp3qriQ/tSiJ3iY=";
+			const string challenge1 = "r=fyko+d2lbbFgONRv9qkxdawL3rfcNHYJY1ZVvWVs7j,s=QSXCR+Q6sek8bf92,i=4096";
+			const string challenge2 = "v=4FOxt1+Pv761Owg9JJCCJE5ogoU=";
+			const string entropy = "fyko+d2lbbFgONRv9qkxdawL";
+			string token;
+
+			sasl.cnonce = entropy;
+
+			Assert.That (sasl.SupportsChannelBinding, Is.True, $"{prefix}: SupportsChannelBinding");
+			Assert.That (sasl.SupportsInitialResponse, Is.True, $"{prefix}: SupportsInitialResponse");
+
+			var challenge = Encoding.UTF8.GetString (Convert.FromBase64String (sasl.Challenge (null)));
+
+			Assert.That (challenge, Is.EqualTo ("p=tls-server-end-point,,n=user,r=" + entropy), $"{prefix}: initial SCRAM-SHA-1-PLUS challenge response does not match the expected string.");
+			Assert.That (sasl.IsAuthenticated, Is.False, $"{prefix}: should not be authenticated yet.");
+
+			token = Convert.ToBase64String (Encoding.UTF8.GetBytes (challenge1));
+			challenge = Encoding.UTF8.GetString (Convert.FromBase64String (sasl.Challenge (token)));
+
+			Assert.That (challenge, Is.EqualTo (expected), $"{prefix}: second SCRAM-SHA-1-PLUS challenge response does not match the expected string.");
+			Assert.That (sasl.IsAuthenticated, Is.False, $"{prefix}: should not be authenticated yet.");
+
+			token = Convert.ToBase64String (Encoding.UTF8.GetBytes (challenge2));
+			challenge = Encoding.UTF8.GetString (Convert.FromBase64String (sasl.Challenge (token)));
+			Assert.That (challenge, Is.EqualTo (string.Empty), $"{prefix}: third SCRAM-SHA-1-PLUS challenge should be an empty string.");
+			Assert.That (sasl.IsAuthenticated, Is.True, $"{prefix}: SCRAM-SHA-1-PLUS should be authenticated now.");
+			Assert.That (sasl.NegotiatedChannelBinding, Is.True, $"{prefix}: NegotiatedChannelBinding");
+			Assert.That (sasl.NegotiatedSecurityLayer, Is.False, $"{prefix}: NegotiatedSecurityLayer");
+
+			Assert.That (sasl.Challenge (string.Empty), Is.EqualTo (string.Empty), $"{prefix}: challenge while authenticated.");
+		}
+
+		[Test]
+		public void TestScramSha1PlusTlsServerEndpoint ()
+		{
+			var credentials = new NetworkCredential ("user", "pencil");
+			var uri = new Uri ("imap://elwood.innosoft.com");
+			var context = new ChannelBindingContext (ChannelBindingKind.Endpoint, uri.ToString ());
+
+			var sasl = new SaslMechanismScramSha1Plus (credentials) { ChannelBindingContext = context };
+
+			AssertScramSha1PlusTlsServerEndpoint (sasl, "NetworkCredential");
+
+			sasl = new SaslMechanismScramSha1Plus ("user", "pencil") { ChannelBindingContext = context };
+
+			AssertScramSha1PlusTlsServerEndpoint (sasl, "user/pass");
+		}
+
+		static void AssertScramSha1PlusTlsUnique (SaslMechanismScramSha1Plus sasl, string prefix)
+		{
+			const string expected = "c=cD10bHMtdW5pcXVlLCxpbWFwOi8vZWx3b29kLmlubm9zb2Z0LmNvbS8=,r=fyko+d2lbbFgONRv9qkxdawL3rfcNHYJY1ZVvWVs7j,p=91nyQ+7jn+YxGsblvCxpfKUnxwk=";
+			const string challenge1 = "r=fyko+d2lbbFgONRv9qkxdawL3rfcNHYJY1ZVvWVs7j,s=QSXCR+Q6sek8bf92,i=4096";
+			const string challenge2 = "v=7QQfRcpsgEz8G8pmK+vmYMfLmBU=";
+			const string entropy = "fyko+d2lbbFgONRv9qkxdawL";
+			string token;
+
+			sasl.cnonce = entropy;
+
+			Assert.That (sasl.SupportsChannelBinding, Is.True, $"{prefix}: SupportsChannelBinding");
+			Assert.That (sasl.SupportsInitialResponse, Is.True, $"{prefix}: SupportsInitialResponse");
+
+			var challenge = Encoding.UTF8.GetString (Convert.FromBase64String (sasl.Challenge (null)));
+
+			Assert.That (challenge, Is.EqualTo ("p=tls-unique,,n=user,r=" + entropy), $"{prefix}: initial SCRAM-SHA-1-PLUS challenge response does not match the expected string.");
+			Assert.That (sasl.IsAuthenticated, Is.False, $"{prefix}: should not be authenticated yet.");
+
+			token = Convert.ToBase64String (Encoding.UTF8.GetBytes (challenge1));
+			challenge = Encoding.UTF8.GetString (Convert.FromBase64String (sasl.Challenge (token)));
+
+			Assert.That (challenge, Is.EqualTo (expected), $"{prefix}: second SCRAM-SHA-1-PLUS challenge response does not match the expected string.");
+			Assert.That (sasl.IsAuthenticated, Is.False, $"{prefix}: should not be authenticated yet.");
+
+			token = Convert.ToBase64String (Encoding.UTF8.GetBytes (challenge2));
+			challenge = Encoding.UTF8.GetString (Convert.FromBase64String (sasl.Challenge (token)));
+			Assert.That (challenge, Is.EqualTo (string.Empty), $"{prefix}: third SCRAM-SHA-1-PLUS challenge should be an empty string.");
+			Assert.That (sasl.IsAuthenticated, Is.True, $"{prefix}: SCRAM-SHA-1-PLUS should be authenticated now.");
+			Assert.That (sasl.NegotiatedChannelBinding, Is.True, $"{prefix}: NegotiatedChannelBinding");
+			Assert.That (sasl.NegotiatedSecurityLayer, Is.False, $"{prefix}: NegotiatedSecurityLayer");
+
+			Assert.That (sasl.Challenge (string.Empty), Is.EqualTo (string.Empty), $"{prefix}: challenge while authenticated.");
+		}
+
+		[Test]
+		public void TestScramSha1PlusTlsUnique ()
+		{
+			var credentials = new NetworkCredential ("user", "pencil");
+			var uri = new Uri ("imap://elwood.innosoft.com");
+			var context = new ChannelBindingContext (ChannelBindingKind.Unique, uri.ToString ());
+
+			var sasl = new SaslMechanismScramSha1Plus (credentials) { ChannelBindingContext = context };
+
+			AssertScramSha1PlusTlsUnique (sasl, "NetworkCredential");
+
+			sasl = new SaslMechanismScramSha1Plus ("user", "pencil") { ChannelBindingContext = context };
+
+			AssertScramSha1PlusTlsUnique (sasl, "user/pass");
 		}
 	}
 }

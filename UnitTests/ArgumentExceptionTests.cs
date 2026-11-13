@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -24,15 +24,10 @@
 // THE SOFTWARE.
 //
 
-using System;
-
-using NUnit.Framework;
-
 using MailKit;
 using MailKit.Search;
 
-namespace UnitTests
-{
+namespace UnitTests {
 	[TestFixture]
 	public class ArgumentExceptionTests
 	{
@@ -46,6 +41,11 @@ namespace UnitTests
 			Assert.Throws<ArgumentException> (() => new OrderByAnnotation (AnnotationEntry.AltSubject, AnnotationAttribute.Size, SortOrder.Ascending));
 			Assert.Throws<ArgumentException> (() => new OrderByAnnotation (AnnotationEntry.AltSubject, AnnotationAttribute.PrivateSize, SortOrder.Ascending));
 			Assert.Throws<ArgumentException> (() => new OrderByAnnotation (AnnotationEntry.AltSubject, AnnotationAttribute.SharedSize, SortOrder.Ascending));
+
+			Assert.Throws<ArgumentNullException> (() => new FolderQuotaResource (null, 0, 0));
+			Assert.Throws<ArgumentException> (() => new FolderQuotaResource (string.Empty, 0, 0));
+			Assert.Throws<ArgumentOutOfRangeException> (() => new FolderQuotaResource ("STORAGE", -1, 0));
+			Assert.Throws<ArgumentOutOfRangeException> (() => new FolderQuotaResource ("STORAGE", 0, -1));
 		}
 	}
 }

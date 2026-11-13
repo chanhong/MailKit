@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -27,6 +27,8 @@
 using System;
 using System.Text;
 
+using MimeKit;
+
 namespace MailKit {
 	/// <summary>
 	/// A textual body part.
@@ -35,7 +37,7 @@ namespace MailKit {
 	/// Represents any body part with a media type of "text".
 	/// </remarks>
 	/// <example>
-	/// <code language="c#" source="Examples\ImapExamples.cs" region="DownloadBodyParts"/>
+	/// <code language="c#" source="Examples\ImapBodyPartExamples.cs" region="GetBodyPartsByUniqueId"/>
 	/// </example>
 	public class BodyPartText : BodyPartBasic
 	{
@@ -45,7 +47,14 @@ namespace MailKit {
 		/// <remarks>
 		/// Creates a new <see cref="BodyPartText"/>.
 		/// </remarks>
-		public BodyPartText ()
+		/// <param name="contentType">The content type.</param>
+		/// <param name="partSpecifier">The part specifier.</param>
+		/// <exception cref="ArgumentNullException">
+		/// <para><paramref name="contentType"/> is <see langword="null" />.</para>
+		/// <para>-or-</para>
+		/// <para><paramref name="partSpecifier"/> is <see langword="null" />.</para>
+		/// </exception>
+		public BodyPartText (ContentType contentType, string partSpecifier) : base (contentType, partSpecifier)
 		{
 		}
 
@@ -55,7 +64,7 @@ namespace MailKit {
 		/// <remarks>
 		/// Checks whether or not the text part's Content-Type is text/plain.
 		/// </remarks>
-		/// <value><c>true</c> if the text is html; otherwise, <c>false</c>.</value>
+		/// <value><see langword="true" /> if the text is html; otherwise, <see langword="false" />.</value>
 		public bool IsPlain {
 			get { return ContentType.IsMimeType ("text", "plain"); }
 		}
@@ -66,7 +75,7 @@ namespace MailKit {
 		/// <remarks>
 		/// Checks whether or not the text part's Content-Type is text/html.
 		/// </remarks>
-		/// <value><c>true</c> if the text is html; otherwise, <c>false</c>.</value>
+		/// <value><see langword="true" /> if the text is html; otherwise, <see langword="false" />.</value>
 		public bool IsHtml {
 			get { return ContentType.IsMimeType ("text", "html"); }
 		}
@@ -75,10 +84,11 @@ namespace MailKit {
 		/// Gets the length of the text, in lines.
 		/// </summary>
 		/// <remarks>
-		/// Gets the length of the text, in lines.
+		/// <para>Gets the length of the text, in lines.</para>
+		/// <para>This value will never be negative.</para>
 		/// </remarks>
 		/// <value>The number of lines.</value>
-		public uint Lines {
+		public long Lines {
 			get; set;
 		}
 
@@ -95,7 +105,7 @@ namespace MailKit {
 		/// </remarks>
 		/// <param name="visitor">The visitor.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="visitor"/> is <c>null</c>.
+		/// <paramref name="visitor"/> is <see langword="null" />.
 		/// </exception>
 		public override void Accept (BodyPartVisitor visitor)
 		{

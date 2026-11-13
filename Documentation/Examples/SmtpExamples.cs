@@ -1,9 +1,9 @@
 ﻿//
 // SmtpExamples.cs
 //
-// Author: Jeffrey Stedfast <jeff@xamarin.com>
+// Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2016 Xamarin Inc. (www.xamarin.com)
+// Copyright (c) 2013-2023 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -62,7 +62,7 @@ namespace MailKit.Examples {
 						// which means that lines beginning with "." need to be escaped
 						// by adding an extra "." to the beginning of the line.
 						//
-						// Use an SmtpDataFilter "byte-stuff" the message as it is written
+						// Use an SmtpDataFilter to "byte-stuff" the message as it is written
 						// to the file stream. This is the same process that an SmtpClient
 						// would use when sending the message in a `DATA` command.
 						using (var filtered = new FilteredStream (stream)) {
@@ -87,7 +87,27 @@ namespace MailKit.Examples {
 				}
 			} while (true);
 		}
-		#endif
+		#endregion
+
+		#region LoadFromPickupDirectory
+		public static MimeMessage LoadFromPickupDirectory (string fileName)
+		{
+			using (var stream = File.OpenRead (fileName)) {
+				// IIS pickup directories store messages that have been "byte-stuffed"
+				// which means that lines beginning with "." have been escaped by
+				// adding an extra "." to the beginning of the line.
+				//
+				// Use an SmtpDataFilter to decode the message as it is loaded from
+				// the file stream. This is the reverse process that an SmtpClient
+				// would use when sending the message in a `DATA` command.
+				using (var filtered = new FilteredStream (stream)) {
+					filtered.Add (new SmtpDataFilter (decode: true));
+
+					return MimeMessage.Load (filtered);
+				}
+			}
+		}
+		#endregion
 
 		#region ProtocolLogger
 		public static void SendMessage (MimeMessage message)
@@ -156,25 +176,25 @@ namespace MailKit.Examples {
 			using (var client = new SmtpClient ()) {
 				client.Connect ("smtp.gmail.com", 465, SecureSocketOptions.SslOnConnect);
 
-				if (client.Capabilities.HasFlag (SmtpCapabilities.Authentication)) {
+				if (client.Capabilities.Contains (SmtpCapability.Authentication)) {
 					var mechanisms = string.Join (", ", client.AuthenticationMechanisms);
 					Console.WriteLine ("The SMTP server supports the following SASL mechanisms: {0}", mechanisms);
 					client.Authenticate ("username", "password");
 				}
 
-				if (client.Capabilities.HasFlag (SmtpCapabilities.Size))
+				if (client.Capabilities.Contains (SmtpCapability.Size))
 					Console.WriteLine ("The SMTP server has a size restriction on messages: {0}.", client.MaxSize);
 
-				if (client.Capabilities.HasFlag (SmtpCapabilities.Dsn))
+				if (client.Capabilities.Contains (SmtpCapability.Dsn))
 					Console.WriteLine ("The SMTP server supports delivery-status notifications.");
 
-				if (client.Capabilities.HasFlag (SmtpCapabilities.EightBitMime))
+				if (client.Capabilities.Contains (SmtpCapability.EightBitMime))
 					Console.WriteLine ("The SMTP server supports Content-Transfer-Encoding: 8bit");
 
-				if (client.Capabilities.HasFlag (SmtpCapabilities.BinaryMime))
+				if (client.Capabilities.Contains (SmtpCapability.BinaryMime))
 					Console.WriteLine ("The SMTP server supports Content-Transfer-Encoding: binary");
 
-				if (client.Capabilities.HasFlag (SmtpCapabilities.UTF8))
+				if (client.Capabilities.Contains (SmtpCapability.UTF8))
 					Console.WriteLine ("The SMTP server supports UTF-8 in message headers.");
 
 				client.Disconnect (true);
@@ -198,7 +218,7 @@ namespace MailKit.Examples {
 				}
 
 				// Note: Not all SMTP servers support authentication, but GMail does.
-				if (client.Capabilities.HasFlag (SmtpCapabilities.Authentication)) {
+				if (client.Capabilities.Contains (SmtpCapability.Authentication)) {
 					try {
 						client.Authenticate ("username", "password");
 					} catch (AuthenticationException ex) {
@@ -284,7 +304,7 @@ namespace MailKit.Examples {
 
 				var options = FormatOptions.Default.Clone ();
 
-				if (client.Capabilities.HasFlag (SmtpCapabilities.UTF8))
+				if (client.Capabilities.Contains (SmtpCapability.UTF8))
 					options.International = true;
 
 				client.Send (options, message);
@@ -311,30 +331,78 @@ namespace MailKit.Examples {
 		}
 		#endregion
 
-		#region DeliveryStatusNotification
-		public class DSNSmtpClient : SmtpClient
+		#region VerifyAddress
+		public static void VerifyAddress ()
 		{
-			public DSNSmtpClient ()
-			{
-			}
+			using (var client = new SmtpClient ()) {
+				client.Connect ("smtp.mail-server.com", 465, SecureSocketOptions.SslOnConnect);
+				client.Authenticate ("username", "password");
 
-			/// <summary>
-			/// Get the envelope identifier to be used with delivery status notifications.
-			/// </summary>
-			/// <remarks>
-			/// <para>The envelope identifier, if non-empty, is useful in determining which message
-			/// a delivery status notification was issued for.</para>
-			/// <para>The envelope identifier should be unique and may be up to 100 characters in
-			/// length, but must consist only of printable ASCII characters and no white space.</para>
-			/// <para>For more information, see rfc3461, section 4.4.</para>
-			/// </remarks>
-			/// <returns>The envelope identifier.</returns>
-			/// <param name="message">The message.</param>
-			protected override string GetEnvelopeId (MimeMessage message)
-			{
-				// Since you will want to be able to map whatever identifier you return here to the
+				try {
+					var verified = client.Verify ("smith");
+					Console.WriteLine ($"'smith' was resolved the the following mailbox: {verified}");
+				} catch (SmtpCommandException ex) {
+					Console.WriteLine ($"'smith' is not a valid address: {ex.Message}");
+				}
+
+				client.Disconnect (true);
+			}
+		}
+		#endregion
+
+		#region ExpandAlias
+		public static void ExpandAlias (string alias)
+		{
+			using (var client = new SmtpClient ()) {
+				client.Connect ("smtp.mail-server.com", 465, SecureSocketOptions.SslOnConnect);
+				client.Authenticate ("username", "password");
+
+				var expanded = client.Expand (alias);
+
+				Console.WriteLine ($"Expanding the alias '{alias}' results in the following list of addresses:");
+				foreach (var mailbox in expanded.Mailboxes)
+					Console.WriteLine ($"* {mailbox}");
+
+				client.Disconnect (true);
+			}
+		}
+		#endregion
+
+		#region DeliveryStatusNotification
+		public static void SendWithDeliveryStatusNotifications (MimeMessage message)
+		{
+			var request = new SmtpSendRequest (message) {
+				// Since you will want to be able to map the envelope identifier back to the
 				// message, the obvious identifier to use is probably the Message-Id value.
-				return message.MessageId;
+				EnvelopeId = message.MessageId,
+
+				// Request that the server include only the headers of the original message
+				// in any delivery status notifications that it sends back.
+				DeliveryStatusNotificationType = DeliveryStatusNotificationType.HeadersOnly,
+
+				// In this example, we only want to be notified of failures to deliver to a mailbox.
+				// If you also want to be notified of delays or successful deliveries, simply bitwise-or
+				// whatever combination of flags you want to be notified about.
+				DeliveryStatusNotifications = DeliveryStatusNotification.Failure
+			};
+
+			using (var client = new SmtpClient ()) {
+				client.Connect ("smtp.gmail.com", 465, SecureSocketOptions.SslOnConnect);
+				client.Authenticate ("username", "password");
+
+				var result = (SmtpSendResult) client.Send (request);
+
+				Console.WriteLine ($"The server responded with: {result.StatusCode} {result.ResponseText}");
+
+				client.Disconnect (true);
+			}
+		}
+
+		public class PerRecipientSmtpSendRequest : SmtpSendRequest
+		{
+			public PerRecipientSmtpSendRequest (MimeMessage message) : base (message)
+			{
+				EnvelopeId = message.MessageId;
 			}
 
 			/// <summary>
@@ -344,14 +412,35 @@ namespace MailKit.Examples {
 			/// Gets the types of delivery status notification desired for the specified recipient mailbox.
 			/// </remarks>
 			/// <returns>The desired delivery status notification type.</returns>
-			/// <param name="message">The message being sent.</param>
-			/// <param name="mailbox">The mailbox.</param>
-			protected override DeliveryStatusNotification? GetDeliveryStatusNotifications (MimeMessage message, MailboxAddress mailbox)
+			/// <param name="recipient">The recipient mailbox.</param>
+			public override DeliveryStatusNotification? GetDeliveryStatusNotifications (MailboxAddress recipient)
 			{
-				// In this example, we only want to be notified of failures to deliver to a mailbox.
-				// If you also want to be notified of delays or successful deliveries, simply bitwise-or
-				// whatever combination of flags you want to be notified about.
-				return DeliveryStatusNotification.Failure;
+				// Only request delivery status notifications for recipients outside of our domain.
+				if (recipient.Domain.Equals ("example.com", StringComparison.OrdinalIgnoreCase))
+					return DeliveryStatusNotification.Never;
+
+				return DeliveryStatusNotification.Failure | DeliveryStatusNotification.Delay;
+			}
+		}
+		#endregion
+
+		#region SslConnectionInformation
+		public static void PrintSslConnectionInfo (string host, int port)
+		{
+			using (var client = new SmtpClient ()) {
+				client.Connect (host, port, SecureSocketOptions.Auto);
+
+				Console.WriteLine ($"Negotiated the following SSL options with {host}:");
+				Console.WriteLine ($"        Protocol Version: {client.SslProtocol}");
+				Console.WriteLine ($"            Cipher Suite: {client.SslCipherSuite}");
+
+				// Example Log:
+				//
+				// Negotiated the following SSL options with smtp.gmail.com:
+				//         Protocol Version: Tls12
+				//             Cipher Suite: TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+
+				client.Disconnect (true);
 			}
 		}
 		#endregion

@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -27,6 +27,7 @@
 using System;
 using System.IO;
 using System.Text;
+using System.Globalization;
 
 namespace MailKit {
 	/// <summary>
@@ -36,12 +37,16 @@ namespace MailKit {
 	/// A default protocol logger for logging the communication between a client and server.
 	/// </remarks>
 	/// <example>
-	/// <code language="c#" source="Examples\SmtpExamples.cs" region="ProtocolLogger" />
+	/// <code language="c#" source="Examples\SmtpExamples.cs" region="ProtocolLogger"/>
 	/// </example>
 	public class ProtocolLogger : IProtocolLogger
 	{
 		static byte[] defaultClientPrefix = Encoding.ASCII.GetBytes ("C: ");
 		static byte[] defaultServerPrefix = Encoding.ASCII.GetBytes ("S: ");
+		static readonly byte[] Secret = Encoding.ASCII.GetBytes ("********");
+		static readonly byte[] Space = new byte[] { (byte) ' ' };
+
+		const string DefaultTimestampFormat = "yyyy-MM-ddTHH:mm:ssZ";
 
 		byte[] clientPrefix = defaultClientPrefix;
 		byte[] serverPrefix = defaultServerPrefix;
@@ -57,13 +62,15 @@ namespace MailKit {
 		/// Creates a new <see cref="ProtocolLogger"/> to log to a specified file. The file is created if it does not exist.
 		/// </remarks>
 		/// <example>
-		/// <code language="c#" source="Examples\SmtpExamples.cs" region="ProtocolLogger" />
+		/// <code language="c#" source="Examples\SmtpExamples.cs" region="ProtocolLogger"/>
 		/// </example>
 		/// <param name="fileName">The file name.</param>
-		/// <param name="append"><c>true</c> if the file should be appended to; otherwise, <c>false</c>. Defaults to <c>true</c>.</param>
+		/// <param name="append"><see langword="true" /> if the file should be appended to; otherwise, <see langword="false" />. Defaults to <see langword="true" />.</param>
 		public ProtocolLogger (string fileName, bool append = true)
 		{
 			stream = File.Open (fileName, append ? FileMode.Append : FileMode.Create, FileAccess.Write, FileShare.Read);
+			TimestampFormat = DefaultTimestampFormat;
+			RedactSecrets = true;
 		}
 
 		/// <summary>
@@ -73,11 +80,14 @@ namespace MailKit {
 		/// Creates a new <see cref="ProtocolLogger"/> to log to a specified stream.
 		/// </remarks>
 		/// <param name="stream">The stream.</param>
-		/// <param name="leaveOpen"><c>true</c> if the stream should be left open after the protocol logger is disposed.</param>
+		/// <param name="leaveOpen"><see langword="true" /> if the stream should be left open after the protocol logger is disposed.</param>
 		public ProtocolLogger (Stream stream, bool leaveOpen = false)
 		{
 			if (stream == null)
 				throw new ArgumentNullException (nameof (stream));
+
+			TimestampFormat = DefaultTimestampFormat;
+			RedactSecrets = true;
 
 			this.leaveOpen = leaveOpen;
 			this.stream = stream;
@@ -159,7 +169,49 @@ namespace MailKit {
 			set { serverPrefix = Encoding.UTF8.GetBytes (value); }
 		}
 
+		/// <summary>
+		/// Get or set whether or not authentication secrets should be redacted.
+		/// </summary>
+		/// <remarks>
+		/// Gets or sets whether or not authentication secrets should be redacted.
+		/// </remarks>
+		/// <value><see langword="true" /> if authentication secrets should be redacted; otherwise, <see langword="false" />.</value>
+		public bool RedactSecrets {
+			get; set;
+		}
+
+		/// <summary>
+		/// Get or set whether timestamps should be logged.
+		/// </summary>
+		/// <remarks>
+		/// Gets or sets whether or not timestamps should be logged.
+		/// </remarks>
+		/// <value><see langword="true" /> if timestamps should be logged; otherwise, <see langword="false" />.</value>
+		public bool LogTimestamps {
+			get; set;
+		}
+
+		/// <summary>
+		/// Get or set the date and time serialization format that should be used when logging timestamps.
+		/// </summary>
+		/// <remarks>
+		/// Gets or sets the date and time serialization format that should be used when logging timestamps.
+		/// </remarks>
+		/// <value>The date and time serialization format that should be used when logging timestamps.</value>
+		public string TimestampFormat {
+			get; set;
+		}
+
 		#region IProtocolLogger implementation
+
+		/// <summary>
+		/// Get or set the authentication secret detector.
+		/// </summary>
+		/// <remarks>
+		/// Gets or sets the authentication secret detector.
+		/// </remarks>
+		/// <value>The authentication secret detector.</value>
+		public IAuthenticationSecretDetector? AuthenticationSecretDetector { get; set; }
 
 		static void ValidateArguments (byte[] buffer, int offset, int count)
 		{
@@ -173,7 +225,7 @@ namespace MailKit {
 				throw new ArgumentOutOfRangeException (nameof (count));
 		}
 
-		void Log (byte[] prefix, ref bool midline, byte[] buffer, int offset, int count)
+		void Log (byte[] prefix, ref bool midline, byte[] buffer, int offset, int count, bool isClient)
 		{
 			int endIndex = offset + count;
 			int index = offset;
@@ -185,14 +237,32 @@ namespace MailKit {
 				while (index < endIndex && buffer[index] != (byte) '\n')
 					index++;
 
-				if (!midline)
+				if (!midline) {
+					if (LogTimestamps) {
+						var timestamp = Encoding.ASCII.GetBytes (DateTime.UtcNow.ToString (TimestampFormat, CultureInfo.InvariantCulture));
+						stream.Write (timestamp, 0, timestamp.Length);
+						stream.Write (Space, 0, Space.Length);
+					}
+
 					stream.Write (prefix, 0, prefix.Length);
+				}
 
 				if (index < endIndex && buffer[index] == (byte) '\n') {
 					midline = false;
 					index++;
 				} else {
 					midline = true;
+				}
+
+				if (isClient && RedactSecrets && AuthenticationSecretDetector != null) {
+					var secrets = AuthenticationSecretDetector.DetectSecrets (buffer, start, index - start);
+
+					foreach (var secret in secrets) {
+						if (secret.StartIndex > start)
+							stream.Write (buffer, start, secret.StartIndex - start);
+						start = secret.StartIndex + secret.Length;
+						stream.Write (Secret, 0, Secret.Length);
+					}
 				}
 
 				stream.Write (buffer, start, index - start);
@@ -209,7 +279,7 @@ namespace MailKit {
 		/// </remarks>
 		/// <param name="uri">The URI.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="uri"/> is <c>null</c>.
+		/// <paramref name="uri"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ObjectDisposedException">
 		/// The logger has been disposed.
@@ -222,7 +292,14 @@ namespace MailKit {
 			if (uri == null)
 				throw new ArgumentNullException (nameof (uri));
 
-			var message = string.Format ("Connected to {0}\r\n", uri);
+			string message;
+
+			if (LogTimestamps) {
+				message = string.Format ("{0} Connected to {1}\r\n", DateTime.UtcNow.ToString (TimestampFormat, CultureInfo.InvariantCulture), uri);
+			} else {
+				message = string.Format ("Connected to {0}\r\n", uri);
+			}
+
 			var buf = Encoding.ASCII.GetBytes (message);
 
 			if (clientMidline || serverMidline) {
@@ -249,12 +326,12 @@ namespace MailKit {
 		/// <param name='offset'>The offset of the first byte to log.</param>
 		/// <param name='count'>The number of bytes to log.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="buffer"/> is <c>null</c>.
+		/// <paramref name="buffer"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <para><paramref name="offset"/> is less than zero or greater than the length of <paramref name="buffer"/>.</para>
 		/// <para>-or-</para>
-		/// <para>The <paramref name="buffer"/> is not large enough to contain <paramref name="count"/> bytes strting
+		/// <para>The <paramref name="buffer"/> is not large enough to contain <paramref name="count"/> bytes starting
 		/// at the specified <paramref name="offset"/>.</para>
 		/// </exception>
 		/// <exception cref="System.ObjectDisposedException">
@@ -267,7 +344,7 @@ namespace MailKit {
 		{
 			ValidateArguments (buffer, offset, count);
 
-			Log (clientPrefix, ref clientMidline, buffer, offset, count);
+			Log (clientPrefix, ref clientMidline, buffer, offset, count, true);
 		}
 
 		/// <summary>
@@ -282,12 +359,12 @@ namespace MailKit {
 		/// <param name='offset'>The offset of the first byte to log.</param>
 		/// <param name='count'>The number of bytes to log.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="buffer"/> is <c>null</c>.
+		/// <paramref name="buffer"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <para><paramref name="offset"/> is less than zero or greater than the length of <paramref name="buffer"/>.</para>
 		/// <para>-or-</para>
-		/// <para>The <paramref name="buffer"/> is not large enough to contain <paramref name="count"/> bytes strting
+		/// <para>The <paramref name="buffer"/> is not large enough to contain <paramref name="count"/> bytes starting
 		/// at the specified <paramref name="offset"/>.</para>
 		/// </exception>
 		/// <exception cref="System.ObjectDisposedException">
@@ -300,7 +377,7 @@ namespace MailKit {
 		{
 			ValidateArguments (buffer, offset, count);
 
-			Log (serverPrefix, ref serverMidline, buffer, offset, count);
+			Log (serverPrefix, ref serverMidline, buffer, offset, count, false);
 		}
 
 		#endregion
@@ -315,8 +392,8 @@ namespace MailKit {
 		/// Releases the unmanaged resources used by the <see cref="ProtocolLogger"/> and
 		/// optionally releases the managed resources.
 		/// </remarks>
-		/// <param name="disposing"><c>true</c> to release both managed and unmanaged resources;
-		/// <c>false</c> to release only the unmanaged resources.</param>
+		/// <param name="disposing"><see langword="true" /> to release both managed and unmanaged resources;
+		/// <see langword="false" /> to release only the unmanaged resources.</param>
 		protected virtual void Dispose (bool disposing)
 		{
 			if (disposing && !leaveOpen)

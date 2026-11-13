@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -24,11 +24,8 @@
 // THE SOFTWARE.
 //
 
-using System;
 using System.Net;
 using System.Text;
-
-using NUnit.Framework;
 
 using MailKit.Security;
 
@@ -40,28 +37,15 @@ namespace UnitTests.Security {
 		public void TestArgumentExceptions ()
 		{
 			var credentials = new NetworkCredential ("username", "password");
-			var uri = new Uri ("smtp://localhost");
 			SaslMechanism sasl;
 
 			sasl = new SaslMechanismPlain (credentials);
 			Assert.DoesNotThrow (() => sasl.Challenge (null));
 
-			Assert.Throws<ArgumentNullException> (() => new SaslMechanismPlain ((Uri) null, Encoding.UTF8, credentials));
-			Assert.Throws<ArgumentNullException> (() => new SaslMechanismPlain (uri, null, credentials));
-			Assert.Throws<ArgumentNullException> (() => new SaslMechanismPlain (uri, Encoding.UTF8, null));
-			Assert.Throws<ArgumentNullException> (() => new SaslMechanismPlain ((Uri) null, credentials));
-			Assert.Throws<ArgumentNullException> (() => new SaslMechanismPlain (uri, null));
-			Assert.Throws<ArgumentNullException> (() => new SaslMechanismPlain ((Uri) null, Encoding.UTF8, "username", "password"));
-			Assert.Throws<ArgumentNullException> (() => new SaslMechanismPlain (uri, null, "username", "password"));
-			Assert.Throws<ArgumentNullException> (() => new SaslMechanismPlain (uri, Encoding.UTF8, null, "password"));
-			Assert.Throws<ArgumentNullException> (() => new SaslMechanismPlain (uri, Encoding.UTF8, "username", null));
-			Assert.Throws<ArgumentNullException> (() => new SaslMechanismPlain ((Uri) null, "username", "password"));
-			Assert.Throws<ArgumentNullException> (() => new SaslMechanismPlain (uri, null, "password"));
-			Assert.Throws<ArgumentNullException> (() => new SaslMechanismPlain (uri, "username", null));
 			Assert.Throws<ArgumentNullException> (() => new SaslMechanismPlain (null, credentials));
 			Assert.Throws<ArgumentNullException> (() => new SaslMechanismPlain (Encoding.UTF8, null));
 			Assert.Throws<ArgumentNullException> (() => new SaslMechanismPlain (null));
-			Assert.Throws<ArgumentNullException> (() => new SaslMechanismPlain ((Encoding) null, "username", "password"));
+			Assert.Throws<ArgumentNullException> (() => new SaslMechanismPlain (null, "username", "password"));
 			Assert.Throws<ArgumentNullException> (() => new SaslMechanismPlain (Encoding.UTF8, null, "password"));
 			Assert.Throws<ArgumentNullException> (() => new SaslMechanismPlain (Encoding.UTF8, "username", null));
 			Assert.Throws<ArgumentNullException> (() => new SaslMechanismPlain (null, "password"));
@@ -73,13 +57,17 @@ namespace UnitTests.Security {
 			const string expected = "AHVzZXJuYW1lAHBhc3N3b3Jk";
 			string challenge;
 
-			Assert.IsTrue (sasl.SupportsInitialResponse, "{0}: SupportsInitialResponse", prefix);
+			Assert.That (sasl.SupportsChannelBinding, Is.False, $"{prefix}: SupportsChannelBinding");
+			Assert.That (sasl.SupportsInitialResponse, Is.True, $"{prefix}: SupportsInitialResponse");
 
 			challenge = sasl.Challenge (string.Empty);
 
-			Assert.AreEqual (expected, challenge, "{0}: challenge response does not match the expected string.", prefix);
-			Assert.IsTrue (sasl.IsAuthenticated, "{0}: should be authenticated.", prefix);
-			Assert.AreEqual (string.Empty, sasl.Challenge (string.Empty), "{0}: challenge while authenticated.", prefix);
+			Assert.That (challenge, Is.EqualTo (expected), $"{prefix}: challenge response does not match the expected string.");
+			Assert.That (sasl.IsAuthenticated, Is.True, $"{prefix}: should be authenticated.");
+			Assert.That (sasl.NegotiatedChannelBinding, Is.False, $"{prefix}: NegotiatedChannelBinding");
+			Assert.That (sasl.NegotiatedSecurityLayer, Is.False, $"{prefix}: NegotiatedSecurityLayer");
+
+			Assert.That (sasl.Challenge (string.Empty), Is.EqualTo (string.Empty), $"{prefix}: challenge while authenticated.");
 		}
 
 		[Test]
@@ -87,21 +75,12 @@ namespace UnitTests.Security {
 		{
 			var credentials = new NetworkCredential ("username", "password");
 			var sasl = new SaslMechanismPlain (credentials);
-			var uri = new Uri ("smtp://localhost");
 
 			AssertPlain (sasl, "NetworkCredential");
 
 			sasl = new SaslMechanismPlain ("username", "password");
 
 			AssertPlain (sasl, "user/pass");
-
-			sasl = new SaslMechanismPlain (uri, credentials);
-
-			AssertPlain (sasl, "uri/credentials");
-
-			sasl = new SaslMechanismPlain (uri, "username", "password");
-
-			AssertPlain (sasl, "uri/user/pass");
 		}
 
 		[Test]
@@ -111,13 +90,17 @@ namespace UnitTests.Security {
 			var sasl = new SaslMechanismPlain ("username", "password") { AuthorizationId = "authzid" };
 			string challenge;
 
-			Assert.IsTrue (sasl.SupportsInitialResponse, "SupportsInitialResponse");
+			Assert.That (sasl.SupportsChannelBinding, Is.False, "SupportsChannelBinding");
+			Assert.That (sasl.SupportsInitialResponse, Is.True, "SupportsInitialResponse");
 
 			challenge = sasl.Challenge (string.Empty);
 
-			Assert.AreEqual (expected, challenge, "challenge response does not match the expected string.");
-			Assert.IsTrue (sasl.IsAuthenticated, "should be authenticated.");
-			Assert.AreEqual (string.Empty, sasl.Challenge (string.Empty), "challenge while authenticated.");
+			Assert.That (challenge, Is.EqualTo (expected), "challenge response does not match the expected string.");
+			Assert.That (sasl.IsAuthenticated, Is.True, "should be authenticated.");
+			Assert.That (sasl.NegotiatedChannelBinding, Is.False, "NegotiatedChannelBinding");
+			Assert.That (sasl.NegotiatedSecurityLayer, Is.False, "NegotiatedSecurityLayer");
+
+			Assert.That (sasl.Challenge (string.Empty), Is.EqualTo (string.Empty), "challenge while authenticated.");
 		}
 	}
 }

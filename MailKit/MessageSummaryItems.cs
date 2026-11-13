@@ -1,9 +1,9 @@
 ﻿//
-// FetchFlags.cs
+// MessageSummaryItems.cs
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -33,9 +33,9 @@ namespace MailKit {
 	/// <remarks>
 	/// <see cref="MessageSummaryItems"/> are used to specify which properties
 	/// of <see cref="MessageSummary"/> should be populated by calls to
-	/// <see cref="IMailFolder.Fetch(System.Collections.Generic.IList&lt;UniqueId&gt;, MessageSummaryItems, System.Threading.CancellationToken)"/>,
-	/// <see cref="IMailFolder.Fetch(System.Collections.Generic.IList&lt;int&gt;, MessageSummaryItems, System.Threading.CancellationToken)"/>, or
-	/// <see cref="IMailFolder.Fetch(int, int, MessageSummaryItems, System.Threading.CancellationToken)"/>.
+	/// <see cref="IMailFolderExtensions.Fetch(IMailFolder,System.Collections.Generic.IList&lt;UniqueId&gt;, MessageSummaryItems, System.Threading.CancellationToken)"/>,
+	/// <see cref="IMailFolderExtensions.Fetch(IMailFolder,System.Collections.Generic.IList&lt;int&gt;, MessageSummaryItems, System.Threading.CancellationToken)"/>, or
+	/// <see cref="IMailFolderExtensions.Fetch(IMailFolder,int, int, MessageSummaryItems, System.Threading.CancellationToken)"/>.
 	/// </remarks>
 	[Flags]
 	public enum MessageSummaryItems {
@@ -46,7 +46,7 @@ namespace MailKit {
 
 		/// <summary>
 		/// <para>Fetch the <see cref="IMessageSummary.Annotations"/>.</para>
-		/// <para>Fetches all <c>ANNOATION</c> values as defined in
+		/// <para>Fetches all <c>ANNOTATION</c> values as defined in
 		/// <a href="https://tools.ietf.org/html/rfc5257">rfc5257</a>.</para>
 		/// </summary>
 		Annotations    = 1 << 0,
@@ -132,14 +132,6 @@ namespace MailKit {
 		EmailId        = 1 << 10,
 
 		/// <summary>
-		/// <para></para>Fetch the <see cref="IMessageSummary.EmailId"/>.
-		/// <para>Fetches the <c>EMAILID</c> value as defined in
-		/// <a href="https://tools.ietf.org/html/rfc8474">rfc8474</a>.</para>
-		/// </summary>
-		[Obsolete ("Use EmailId instead.")]
-		Id             = EmailId,
-
-		/// <summary>
 		/// <para>Fetch the <see cref="IMessageSummary.ThreadId"/>.</para>
 		/// <para>Fetches the <c>THREADID</c> value as defined in
 		/// <a href="https://tools.ietf.org/html/rfc8474">rfc8474</a>.</para>
@@ -181,7 +173,7 @@ namespace MailKit {
 
 		/// <summary>
 		/// <para>Fetch the <see cref="IMessageSummary.PreviewText"/>.</para>
-		/// <note type="note">This property is quite expensive to calculate because it is not an
+		/// <note type="note">This property can be quite expensive to calculate because it is typically not an
 		/// item that is cached on the IMAP server. Instead, MailKit must download a hunk of the
 		/// message body so that it can decode and parse it in order to generate a meaningful
 		/// text snippet. This usually involves downloading the first 512 bytes for <c>text/plain</c>

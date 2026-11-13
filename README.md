@@ -1,20 +1,64 @@
 # MailKit
 
-[![Join the chat at https://gitter.im/jstedfast/MailKit](https://badges.gitter.im/Join%20Chat.svg)](https://gitter.im/jstedfast/MailKit?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
-
 |  Package  |Latest Release|Latest Build|
 |:----------|:------------:|:----------:|
-|**MimeKit**|[![NuGet Badge MimeKit](https://buildstats.info/nuget/MimeKit)](https://www.nuget.org/packages/MimeKit)|[![MyGet Badge MimeKit](https://buildstats.info/myget/mimekit/MimeKit)](https://www.myget.org/feed/mimekit/package/nuget/MimeKit)|
-|**MailKit**|[![NuGet Badge MailKit](https://buildstats.info/nuget/MailKit)](https://www.nuget.org/packages/MailKit)|[![MyGet Badge MailKit](https://buildstats.info/myget/mimekit/MailKit)](https://www.myget.org/feed/mimekit/package/nuget/MailKit)|
+|**MimeKit**|[![MimeKit NuGet](https://img.shields.io/nuget/v/MimeKit.svg?logo=nuget&style=flat-square)](https://www.nuget.org/packages/MimeKit)[![MimeKit NuGet Downloads](https://img.shields.io/nuget/dt/MimeKit.svg?style=flat-square)](https://www.nuget.org/packages/MimeKit)|[![MimeKit MyGet](https://img.shields.io/myget/mimekit/v/MimeKit.svg?logo=nuget&style=flat-square&label=myget)](https://www.myget.org/feed/mimekit/package/nuget/MimeKit)|
+|**MimeKit.Core**|[![MimeKit.Core NuGet](https://img.shields.io/nuget/v/MimeKit.Core.svg?logo=nuget&style=flat-square)](https://www.nuget.org/packages/MimeKit.Core)[![MimeKit.Core NuGet Downloads](https://img.shields.io/nuget/dt/MimeKit.Core.svg?style=flat-square)](https://www.nuget.org/packages/MimeKit.Core)|[![MimeKit.Core MyGet](https://img.shields.io/myget/mimekit/v/MimeKit.Core.svg?logo=nuget&style=flat-square&label=myget)](https://www.myget.org/feed/mimekit/package/nuget/MimeKit.Core)|
+|**MimeKit.Cryptography**|[![MimeKit.Cryptography NuGet](https://img.shields.io/nuget/v/MimeKit.Cryptography.svg?logo=nuget&style=flat-square)](https://www.nuget.org/packages/MimeKit.Cryptography)[![MimeKit.Cryptography NuGet Downloads](https://img.shields.io/nuget/dt/MimeKit.Cryptography.svg?style=flat-square)](https://www.nuget.org/packages/MimeKit.Cryptography)|[![MimeKit.Cryptography MyGet](https://img.shields.io/myget/mimekit/v/MimeKit.Cryptography.svg?logo=nuget&style=flat-square&label=myget)](https://www.myget.org/feed/mimekit/package/nuget/MimeKit.Cryptography)|
+|**MailKit**|[![MailKit NuGet](https://img.shields.io/nuget/v/MailKit.svg?logo=nuget&style=flat-square)](https://www.nuget.org/packages/MailKit)[![MailKit NuGet Downloads](https://img.shields.io/nuget/dt/MailKit.svg?style=flat-square)](https://www.nuget.org/packages/MailKit)|[![MailKit MyGet](https://img.shields.io/myget/mimekit/v/MailKit.svg?logo=nuget&style=flat-square&label=myget)](https://www.myget.org/feed/mimekit/package/nuget/MailKit)|
+
 
 |  Platform   |Build Status|Code Coverage|Static Analysis|
 |:------------|:----------:|:-----------:|:-------------:|
-|**Linux/Mac**|[![Build Status](https://github.com/jstedfast/MailKit/actions/workflows/main.yml/badge.svg?event=push)](https://github.com/jstedfast/MailKit/actions/workflows/main.yml)|[![Code Coverage](https://coveralls.io/repos/jstedfast/MailKit/badge.svg?branch=master)](https://coveralls.io/r/jstedfast/MailKit?branch=master)|[![Static Analysis](https://scan.coverity.com/projects/3202/badge.svg)](https://scan.coverity.com/projects/3202)|
-|**Windows**  |[![Build Status](https://github.com/jstedfast/MailKit/actions/workflows/main.yml/badge.svg?event=push)](https://github.com/jstedfast/MailKit/actions/workflows/main.yml)|[![Code Coverage](https://coveralls.io/repos/jstedfast/MailKit/badge.svg?branch=master)](https://coveralls.io/r/jstedfast/MailKit?branch=master)|[![Static Analysis](https://scan.coverity.com/projects/3202/badge.svg)](https://scan.coverity.com/projects/3202)|
+|**Linux/Mac**|[![Build Status](https://github.com/jstedfast/MailKit/actions/workflows/main.yml/badge.svg?event=push)](https://github.com/jstedfast/MailKit/actions/workflows/main.yml)|[![Code Coverage](https://img.shields.io/coverallsCoverage/github/jstedfast/MailKit?branch=master)](https://coveralls.io/r/jstedfast/MailKit?branch=master)|[![Static Analysis](https://img.shields.io/coverity/scan/3202)](https://scan.coverity.com/projects/3202)|
+|**Windows**  |[![Build Status](https://github.com/jstedfast/MailKit/actions/workflows/main.yml/badge.svg?event=push)](https://github.com/jstedfast/MailKit/actions/workflows/main.yml)|[![Code Coverage](https://img.shields.io/coverallsCoverage/github/jstedfast/MailKit?branch=master)](https://coveralls.io/r/jstedfast/MailKit?branch=master)|[![Static Analysis](https://img.shields.io/coverity/scan/3202)](https://scan.coverity.com/projects/3202)|
+
+
+**Obsolete Packages:**
+|  Package  |Latest Release|
+|:----------|:------------:|
+|**MimeKitLite**|[![MimeKitLite NuGet](https://img.shields.io/nuget/v/MimeKitLite.svg?logo=nuget&style=flat-square)](https://www.nuget.org/packages/MimeKitLite)[![MimeKit NuGet Downloads](https://img.shields.io/nuget/dt/MimeKitLite.svg?style=flat-square)](https://www.nuget.org/packages/MimeKitLite)|
+|**MailKitLite**|[![MailKitLite NuGet](https://img.shields.io/nuget/v/MailKitLite.svg?logo=nuget&style=flat-square)](https://www.nuget.org/packages/MailKitLite)[![MailKitLite NuGet Downloads](https://img.shields.io/nuget/dt/MailKitLite.svg?style=flat-square)](https://www.nuget.org/packages/MailKitLite)|
 
 ## What is MailKit?
 
 MailKit is a cross-platform mail client library built on top of [MimeKit](https://github.com/jstedfast/MimeKit).
+
+**Supported platforms:** .NET 8.0 and later, .NET Framework 4.6.2 and later, and any platform that implements
+.NET Standard 2.0 or 2.1 (such as Mono, .NET MAUI and Unity).
+
+**Upgrading from MailKit 4.x?** MailKit 5.0 contains a number of breaking changes. See the
+[Porting Guide](https://github.com/jstedfast/MailKit/blob/master/PortingGuide.md) for step-by-step migration instructions and the [Release Notes](https://github.com/jstedfast/MailKit/blob/master/ReleaseNotes.md)
+for the complete list of changes.
+
+## Contents
+
+* [Donate](#donate)
+* [Features](#features)
+* [Goals](#goals)
+* [License Information](#license-information)
+* [Installing via NuGet](#installing-via-nuget)
+  * [Cryptography Support (S/MIME, OpenPGP, DKIM and ARC)](#cryptography-support-smime-openpgp-dkim-and-arc)
+* [Getting the Source Code](#getting-the-source-code)
+* [Building](#building)
+* [Using MailKit](#using-mailkit)
+  * [Connecting Securely](#connecting-securely)
+  * [Authenticating with OAuth2](#authenticating-with-oauth2)
+  * [Logging and Diagnostics](#logging-and-diagnostics)
+  * [Sending Messages](#sending-messages)
+* [Retrieving Messages (via Pop3)](#retrieving-messages-via-pop3)
+* [Using IMAP](#using-imap)
+  * [Fetching Information About the Messages in an IMAP Folder](#fetching-information-about-the-messages-in-an-imap-folder)
+  * [Setting Message Flags in IMAP](#setting-message-flags-in-imap)
+  * [Deleting Messages in IMAP](#deleting-messages-in-imap)
+  * [Searching an IMAP Folder](#searching-an-imap-folder)
+  * [Navigating Folders in IMAP](#navigating-folders-in-imap)
+  * [Monitoring an IMAP Folder for Changes](#monitoring-an-imap-folder-for-changes)
+* [Contributing](#contributing)
+* [Reporting Bugs](#reporting-bugs)
+* [Documentation](#documentation)
+  * [Further Reading](#further-reading)
+* [.NET Foundation](#net-foundation)
 
 ## Donate
 
@@ -25,39 +69,27 @@ Donating helps pay for things such as web hosting, domain registration and licen
 such as a performance profiler, memory profiler, a static code analysis tool, and more. It also helps
 motivate me to continue working on the project.
 
-<a href="https://paypal.me/pools/c/857bGigSJE" _target="blank"><img alt="Click here to lend your support to MailKit by making a donation!" src="https://www.paypal.com/en_US/i/btn/x-click-but21.gif"></a>
+<a href="https://github.com/sponsors/jstedfast" _target="blank"><img alt="Click here to lend your support to MailKit by making a donation!" src="https://www.paypal.com/en_US/i/btn/x-click-but21.gif"></a>
 
 ## Features
 
 * SASL Authentication
-  * [CRAM-MD5](https://tools.ietf.org/html/rfc2195)
-  * [DIGEST-MD5](https://tools.ietf.org/html/rfc2831)
-  * [LOGIN](https://tools.ietf.org/html/draft-murchison-sasl-login-00)
-  * [NTLM](http://davenport.sourceforge.net/ntlm.html)
-  * [PLAIN](https://tools.ietf.org/html/rfc2595)
-  * [SCRAM-SHA-1](https://tools.ietf.org/html/rfc5802)
-  * [SCRAM-SHA-256](https://tools.ietf.org/html/rfc5802)
-  * [SCRAM-SHA-512](https://tools.ietf.org/html/draft-melnikov-scram-sha-512-00)
-  * [OAUTHBEARER](https://tools.ietf.org/html/rfc7628) (partial support - you need to fetch the auth tokens yourself)
-  * XOAUTH2 (partial support - you need to fetch the auth tokens yourself)
+  * Supports the following mechanisms: [CRAM-MD5](https://tools.ietf.org/html/rfc2195), [DIGEST-MD5](https://tools.ietf.org/html/rfc2831),
+  [LOGIN](https://tools.ietf.org/html/draft-murchison-sasl-login-00), [NTLM](https://davenport.sourceforge.net/ntlm.html),
+  [PLAIN](https://tools.ietf.org/html/rfc2595), [SCRAM-SHA-1[-PLUS]](https://tools.ietf.org/html/rfc5802),
+  [SCRAM-SHA-256[-PLUS]](https://tools.ietf.org/html/rfc5802), [SCRAM-SHA-512[-PLUS]](https://tools.ietf.org/html/draft-melnikov-scram-sha-512-04),
+  [OAUTHBEARER](https://tools.ietf.org/html/rfc7628) and XOAUTH2
 * Proxy Support
-  * [SOCKS4/4a](http://www.openssh.com/txt/socks4.protocol)
-  * [SOCKS5](https://tools.ietf.org/html/rfc1928)
-  * [HTTP](https://tools.ietf.org/html/rfc2616)
+  * Supports the following types of proxies: [SOCKS4/4a](https://www.openssh.com/txt/socks4.protocol), [SOCKS5](https://tools.ietf.org/html/rfc1928),
+  and [HTTP/S](https://tools.ietf.org/html/rfc2616)
 * SMTP Client
   * Supports all of the SASL mechanisms listed above.
   * Supports SSL-wrapped connections via the "smtps" protocol.
   * Supports client SSL/TLS certificates.
-  * Supports the following extensions:
-    * [SIZE](https://tools.ietf.org/html/rfc1870)
-    * [DSN](https://tools.ietf.org/html/rfc1891)
-    * [AUTH](https://tools.ietf.org/html/rfc2554)
-    * [8BITMIME](https://tools.ietf.org/html/rfc2821)
-    * [PIPELINING](https://tools.ietf.org/html/rfc2920)
-    * [BINARYMIME](https://tools.ietf.org/html/rfc3030)
-    * [CHUNKING](https://tools.ietf.org/html/rfc3030)
-    * [STARTTLS](https://tools.ietf.org/html/rfc3207)
-    * [SMTPUTF8](https://tools.ietf.org/html/rfc6531)
+  * Supports the following extensions: [SIZE](https://tools.ietf.org/html/rfc1870), [DSN](https://tools.ietf.org/html/rfc1891),
+  [AUTH](https://tools.ietf.org/html/rfc2554), [8BITMIME](https://tools.ietf.org/html/rfc2821), [PIPELINING](https://tools.ietf.org/html/rfc2920),
+  [BINARYMIME](https://tools.ietf.org/html/rfc3030), [CHUNKING](https://tools.ietf.org/html/rfc3030), [STARTTLS](https://tools.ietf.org/html/rfc3207),
+  and [SMTPUTF8](https://tools.ietf.org/html/rfc6531)
   * All APIs are cancellable.
   * Async APIs are available.
 * POP3 Client
@@ -65,65 +97,34 @@ motivate me to continue working on the project.
   * Also supports authentication via [APOP](https://tools.ietf.org/html/rfc1939#page-15) and `USER`/`PASS`.
   * Supports SSL-wrapped connections via the "pops" protocol.
   * Supports client SSL/TLS certificates.
-  * Supports the following extensions:
-    * [TOP](https://tools.ietf.org/html/rfc1939#page-11)
-    * [UIDL](https://tools.ietf.org/html/rfc1939#page-12)
-    * [EXPIRE](https://tools.ietf.org/html/rfc2449)
-    * [LOGIN-DELAY](https://tools.ietf.org/html/rfc2449)
-    * [PIPELINING](https://tools.ietf.org/html/rfc2449)
-    * [SASL](https://tools.ietf.org/html/rfc2449)
-    * [STLS](https://tools.ietf.org/html/rfc2595)
-    * [UTF8](https://tools.ietf.org/html/rfc6856)
-    * [UTF8=USER](https://tools.ietf.org/html/rfc6856)
-    * [LANG](https://tools.ietf.org/html/rfc6856)
+  * Supports the following extensions: [TOP](https://tools.ietf.org/html/rfc1939#page-11), [UIDL](https://tools.ietf.org/html/rfc1939#page-12),
+  [EXPIRE](https://tools.ietf.org/html/rfc2449), [LOGIN-DELAY](https://tools.ietf.org/html/rfc2449), [PIPELINING](https://tools.ietf.org/html/rfc2449),
+  [SASL](https://tools.ietf.org/html/rfc2449), [STLS](https://tools.ietf.org/html/rfc2595), [UTF8](https://tools.ietf.org/html/rfc6856),
+  [UTF8=USER](https://tools.ietf.org/html/rfc6856), and [LANG](https://tools.ietf.org/html/rfc6856)
   * All APIs are cancellable.
   * Async APIs are available.
 * IMAP4 Client
   * Supports all of the SASL mechanisms listed above.
   * Supports SSL-wrapped connections via the "imaps" protocol.
   * Supports client SSL/TLS certificates.
-  * Supports the following extensions:
-    * [ACL](https://tools.ietf.org/html/rfc4314)
-    * [QUOTA](https://tools.ietf.org/html/rfc2087)
-    * [LITERAL+](https://tools.ietf.org/html/rfc2088)
-    * [IDLE](https://tools.ietf.org/html/rfc2177)
-    * [NAMESPACE](https://tools.ietf.org/html/rfc2342)
-    * [ID](https://tools.ietf.org/html/rfc2971)
-    * [CHILDREN](https://tools.ietf.org/html/rfc3348)
-    * [LOGINDISABLED](https://tools.ietf.org/html/rfc3501)
-    * [STARTTLS](https://tools.ietf.org/html/rfc3501)
-    * [MULTIAPPEND](https://tools.ietf.org/html/rfc3502)
-    * [UNSELECT](https://tools.ietf.org/html/rfc3691)
-    * [UIDPLUS](https://tools.ietf.org/html/rfc4315)
-    * [CONDSTORE](https://tools.ietf.org/html/rfc4551)
-    * [ESEARCH](https://tools.ietf.org/html/rfc4731)
-    * [SASL-IR](https://tools.ietf.org/html/rfc4959)
-    * [COMPRESS](https://tools.ietf.org/html/rfc4978)
-    * [WITHIN](https://tools.ietf.org/html/rfc5032)
-    * [ENABLE](https://tools.ietf.org/html/rfc5161)
-    * [QRESYNC](https://tools.ietf.org/html/rfc5162)
-    * [SORT](https://tools.ietf.org/html/rfc5256)
-    * [THREAD](https://tools.ietf.org/html/rfc5256)
-    * [ANNOTATE](https://tools.ietf.org/html/rfc5257)
-    * [LIST-EXTENDED](https://tools.ietf.org/html/rfc5258)
-    * [ESORT](https://tools.ietf.org/html/rfc5267)
-    * [METADATA / METADATA-SERVER](https://tools.ietf.org/html/rfc5464)
-    * [NOTIFY](https://tools.ietf.org/html/rfc5465)
-    * [FILTERS](https://tools.ietf.org/html/rfc5466)
-    * [LIST-STATUS](https://tools.ietf.org/html/rfc5819)
-    * [SORT=DISPLAY](https://tools.ietf.org/html/rfc5957)
-    * [SPECIAL-USE / CREATE-SPECIAL-USE](https://tools.ietf.org/html/rfc6154)
-    * [SEARCH=FUZZY](https://tools.ietf.org/html/rfc6203)
-    * [MOVE](https://tools.ietf.org/html/rfc6851)
-    * [UTF8=ACCEPT / UTF8=ONLY](https://tools.ietf.org/html/rfc6855)
-    * [LITERAL-](https://tools.ietf.org/html/rfc7888)
-    * [APPENDLIMIT](https://tools.ietf.org/html/rfc7889)
-    * [STATUS=SIZE](https://tools.ietf.org/html/rfc8438)
-    * [OBJECTID](https://tools.ietf.org/html/rfc8474)
-    * [REPLACE](https://tools.ietf.org/html/rfc8508)
-    * [SAVEDATE](https://tools.ietf.org/html/rfc8514)
-    * [XLIST](https://developers.google.com/gmail/imap_extensions)
-    * [X-GM-EXT1](https://developers.google.com/gmail/imap_extensions) (X-GM-MSGID, X-GM-THRID, X-GM-RAW and X-GM-LABELS)
+  * Supports [IMAP4rev1](https://tools.ietf.org/html/rfc3501) and [IMAP4rev2](https://tools.ietf.org/html/rfc9051).
+  * Supports the following extensions: [ACL](https://tools.ietf.org/html/rfc4314), [QUOTA](https://tools.ietf.org/html/rfc2087),
+  [LITERAL+](https://tools.ietf.org/html/rfc2088), [IDLE](https://tools.ietf.org/html/rfc2177), [NAMESPACE](https://tools.ietf.org/html/rfc2342),
+  [ID](https://tools.ietf.org/html/rfc2971), [CHILDREN](https://tools.ietf.org/html/rfc3348), [LOGINDISABLED](https://tools.ietf.org/html/rfc3501),
+  [STARTTLS](https://tools.ietf.org/html/rfc3501), [MULTIAPPEND](https://tools.ietf.org/html/rfc3502), [UNSELECT](https://tools.ietf.org/html/rfc3691),
+  [UIDPLUS](https://tools.ietf.org/html/rfc4315), [CONDSTORE](https://tools.ietf.org/html/rfc4551), [ESEARCH](https://tools.ietf.org/html/rfc4731),
+  [SASL-IR](https://tools.ietf.org/html/rfc4959), [COMPRESS](https://tools.ietf.org/html/rfc4978), [WITHIN](https://tools.ietf.org/html/rfc5032),
+  [ENABLE](https://tools.ietf.org/html/rfc5161), [QRESYNC](https://tools.ietf.org/html/rfc5162), [SORT](https://tools.ietf.org/html/rfc5256),
+  [THREAD](https://tools.ietf.org/html/rfc5256), [ANNOTATE](https://tools.ietf.org/html/rfc5257), [LIST-EXTENDED](https://tools.ietf.org/html/rfc5258),
+  [ESORT](https://tools.ietf.org/html/rfc5267), [METADATA / METADATA-SERVER](https://tools.ietf.org/html/rfc5464), [NOTIFY](https://tools.ietf.org/html/rfc5465),
+  [FILTERS](https://tools.ietf.org/html/rfc5466), [LIST-STATUS](https://tools.ietf.org/html/rfc5819), [SORT=DISPLAY](https://tools.ietf.org/html/rfc5957),
+  [SPECIAL-USE / CREATE-SPECIAL-USE](https://tools.ietf.org/html/rfc6154), [SEARCH=FUZZY](https://tools.ietf.org/html/rfc6203),
+  [MOVE](https://tools.ietf.org/html/rfc6851), [UTF8=ACCEPT / UTF8=ONLY](https://tools.ietf.org/html/rfc6855), [LITERAL-](https://tools.ietf.org/html/rfc7888),
+  [APPENDLIMIT](https://tools.ietf.org/html/rfc7889), [STATUS=SIZE](https://tools.ietf.org/html/rfc8438), [OBJECTID](https://tools.ietf.org/html/rfc8474),
+  [REPLACE](https://tools.ietf.org/html/rfc8508), [SAVEDATE](https://tools.ietf.org/html/rfc8514), [PREVIEW](https://tools.ietf.org/html/rfc8970),
+  [QUOTA=RES-* / QUOTASET](https://tools.ietf.org/html/rfc9208), [PARTIAL](https://tools.ietf.org/html/rfc9394),
+  [INPROGRESS](https://tools.ietf.org/html/rfc9585), [XLIST](https://developers.google.com/gmail/imap_extensions),
+  and [X-GM-EXT1](https://developers.google.com/gmail/imap_extensions) (X-GM-MSGID, X-GM-THRID, X-GM-RAW and X-GM-LABELS)
   * All APIs are cancellable.
   * Async APIs are available.
 * Client-side sorting and threading of messages.
@@ -164,10 +165,10 @@ which should improve performance of sending messages (although might not be very
 
 ## License Information
 
-```
+```text
 MIT License
 
-Copyright (C) 2013-2020 .NET Foundation and Contributors
+Copyright (C) 2013-2026 .NET Foundation and Contributors
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -190,63 +191,169 @@ THE SOFTWARE.
 
 ## Installing via NuGet
 
-The easiest way to install MailKit is via [NuGet](https://www.nuget.org/packages/MailKit/).
+The easiest way to install MailKit is via [NuGet](https://www.nuget.org/packages/MailKit/):
 
-In Visual Studio's [Package Manager Console](http://docs.nuget.org/docs/start-here/using-the-package-manager-console),
-enter the following command:
+```bash
+dotnet add package MailKit
+```
 
-    Install-Package MailKit
+Or, in Visual Studio's [Package Manager Console](https://learn.microsoft.com/nuget/consume-packages/install-use-packages-powershell):
+
+```powershell
+Install-Package MailKit
+```
+
+MailKit depends on [MimeKit.Core](https://www.nuget.org/packages/MimeKit.Core), which provides MIME parsing and
+message construction.
+
+### Cryptography Support (S/MIME, OpenPGP, DKIM and ARC)
+
+MailKit itself does not need any cryptography packages, but if you want to sign, encrypt, decrypt or verify
+messages using S/MIME, OpenPGP, DKIM or ARC, you will also need to add a reference to
+[MimeKit.Cryptography](https://www.nuget.org/packages/MimeKit.Cryptography) (or to the
+[MimeKit](https://www.nuget.org/packages/MimeKit) meta-package, which references both MimeKit.Core and
+MimeKit.Cryptography):
+
+```bash
+dotnet add package MimeKit.Cryptography
+```
+
+Then initialize MimeKit's cryptography support once at startup, before using any of those features:
+
+```csharp
+using MimeKit.Cryptography;
+
+CryptographyModule.Initialize ();
+```
+
+For more information, see MimeKit's documentation on
+[using its cryptography support](https://github.com/jstedfast/MimeKit#initializing-mimekits-cryptography-support).
 
 ## Getting the Source Code
 
-First, you'll need to clone MailKit from my GitHub repository. To do this using the command-line version of Git,
-you'll need to issue the following command in your terminal:
+MailKit includes MimeKit as a git submodule, so make sure to clone recursively:
 
-    git clone --recursive https://github.com/jstedfast/MailKit.git
+```bash
+git clone --recursive https://github.com/jstedfast/MailKit.git
+```
 
-If you are using [TortoiseGit](https://tortoisegit.org) on Windows, you'll need to right-click in the directory
-where you'd like to clone MailKit and select **Git Clone...** in the menu. Once you do that, you'll get the
-following dialog:
+To update an existing clone later:
 
-![Download the source code using TortoiseGit](https://github.com/jstedfast/MailKit/blob/master/Documentation/media/clone.png)
-
-Fill in the areas outlined in red and then click **OK**. This will recursively clone MailKit onto your local machine.
-
-## Updating the Source Code
-
-Occasionally you might want to update your local copy of the source code if I have made changes to MailKit since you
-downloaded the source code in the step above. To do this using the command-line version of Git, you'll need to issue
-the following commands in your terminal within the MailKit directory:
-
-    git pull
-    git submodule update
-
-If you are using [TortoiseGit](https://tortoisegit.org) on Windows, you'll need to right-click on the MailKit
-directory and select **Git Sync...** in the menu. Once you do that, you'll need to click the **Pull** and
-**Submodule Update** buttons in the following dialog:
-
-![Update the source code using TortoiseGit](https://github.com/jstedfast/MailKit/blob/master/Documentation/media/update.png)
+```bash
+git pull
+git submodule update --init --recursive
+```
 
 ## Building
 
+MailKit requires the [.NET 10.0 SDK](https://dotnet.microsoft.com/download) (or later) to build. The .NET 8.0 runtime
+is also required to run the unit tests.
+
 In the top-level MailKit directory, there are a number of solution files; they are:
 
-* **MailKit.sln** - includes the projects for .NET 4.5/4.6/4.7/4.8, .NETStandard 1.3/1.6/2.0 as well as the unit tests.
+* **MailKit.sln** - includes the projects for .NET Framework 4.6.2/4.7/4.8, .NETStandard 2.0/2.1, .NET 8.0/10.0 as well as the unit tests.
 * **MailKit.Coverity.sln** - this is used to generate Coverity static analysis builds and is not generally useful.
 * **MailKit.Documentation.sln** - this is used to generate the documentation found at https://mimekit.net/docs
+and requires [Sandcastle Help File Builder](https://github.com/EWSoftware/SHFB).
 
-Once you've opened the appropriate MailKit solution file in [Visual Studio](https://www.visualstudio.com/downloads/),
-you can choose the **Debug** or **Release** build configuration and then build.
+To build from the command-line, run the following commands in the top-level MailKit directory:
 
-Both Visual Studio 2017 and Visual Studio 2019 should be able to build MailKit without any issues, but older versions such as
-Visual Studio 2015 will require modifications to the projects in order to build correctly. It has been reported that adding
-NuGet package references to [Microsoft.Net.Compilers](https://www.nuget.org/packages/Microsoft.Net.Compilers/) >= 3.6.0
-and [System.ValueTuple](https://www.nuget.org/packages/System.ValueTuple/) >= 4.5.0 to the MimeKit and MailKit projects will
-allow them to build successfully.
+    dotnet build MailKit.sln -c Release
+    dotnet test UnitTests/UnitTests.csproj -c Release
+
+Alternatively, you can open **MailKit.sln** in [Visual Studio 2026](https://visualstudio.microsoft.com/downloads/) (or later),
+choose the **Debug** or **Release** build configuration and then build.
 
 Note: The **Release** build will generate the xml API documentation, but the **Debug** build will not.
 
+### Package smoke tests
+
+Run `pwsh -File scripts\test-packages.ps1` on Windows to build and pack MailKit, MimeKit.Core and
+MimeKit.Cryptography, then test fresh consumers outside the checkout. This requires PowerShell 7,
+NuGet CLI, the .NET 10 SDK, .NET 8/10 runtimes and the platform's
+[Native AOT prerequisites](https://learn.microsoft.com/dotnet/core/deploying/native-aot/).
+Initialize the MimeKit submodule before running it.
+If Windows Native AOT tool discovery fails, ensure the Visual Studio Installer directory
+(containing `vswhere.exe`) is on `PATH`.
+
+The script checks package contents, compiles all seven supported frameworks, runs MIME and loopback
+SMTP probes on .NET 8/10, verifies S/MIME signing and module registration, and publishes/runs a
+package-based Native AOT probe. Restores use fresh caches and source mapping; MailKit and MimeKit
+must come from the local packages, and the core dependency graph must not include BouncyCastle.
+No packages are published, no external mail server is used, and no certificates are installed.
+
+Use `-KeepArtifacts` to retain the packages and consumers (failures retain them automatically).
+To test the same packages on Linux, copy the retained `feed` directory and run the script from
+the matching checkout with `-PackageDirectory <feed-directory>` on a host with the required SDK,
+runtimes and AOT toolchain. `-DependencySource <url>` selects a NuGet mirror for third-party
+dependencies. `-SkipCryptography` and `-SkipAot` explicitly omit those checks for a partial run.
+
 ## Using MailKit
+
+Every MailKit API that performs network I/O has both a synchronous and an asynchronous (`*Async`) variant. The
+samples below use the async APIs, which are recommended for most applications (especially UI and server
+applications), but the synchronous APIs work the same way.
+
+### Connecting Securely
+
+The `Connect` and `ConnectAsync` methods take a
+[SecureSocketOptions](https://www.mimekit.net/docs/html/T_MailKit_Security_SecureSocketOptions.htm) value that
+controls how SSL/TLS is used:
+
+| Option | Description | Typical Ports |
+|:-------|:------------|:--------------|
+| `SslOnConnect` | Use SSL/TLS immediately upon connecting. | SMTP: 465, POP3: 995, IMAP: 993 |
+| `StartTls` | Connect in plain text, then upgrade the connection using STARTTLS (fails if the server doesn't support it). | SMTP: 587, POP3: 110, IMAP: 143 |
+| `StartTlsWhenAvailable` | Like `StartTls`, but continues unencrypted if the server doesn't support STARTTLS. **Not recommended.** | SMTP: 25/587, POP3: 110, IMAP: 143 |
+| `Auto` | Choose `SslOnConnect` or `StartTlsWhenAvailable` based on the port. | Any |
+| `None` | No SSL/TLS. **Not recommended.** | Any |
+
+```csharp
+await client.ConnectAsync ("smtp.friends.com", 587, SecureSocketOptions.StartTls);
+```
+
+By default, MailKit rejects server certificates that fail validation. If you need to customize this (for example,
+to trust a self-signed certificate used by your own server), set the client's
+[ServerCertificateValidationCallback](https://www.mimekit.net/docs/html/P_MailKit_MailService_ServerCertificateValidationCallback.htm)
+property before connecting. Please don't simply `return true`, as that disables protection against
+man-in-the-middle attacks. See the [FAQ](https://github.com/jstedfast/MailKit/blob/master/FAQ.md#ssl-handshake-exception)
+for more details.
+
+### Authenticating with OAuth2
+
+Many mail providers, including Microsoft 365/Exchange Online and GMail, require (or strongly encourage) OAuth2
+instead of passwords. Once you have obtained an access token for the user, authenticate using
+[SaslMechanismOAuth2](https://www.mimekit.net/docs/html/T_MailKit_Security_SaslMechanismOAuth2.htm):
+
+```csharp
+using MailKit.Security;
+
+var oauth2 = new SaslMechanismOAuth2 (emailAddress, accessToken);
+
+await client.AuthenticateAsync (oauth2);
+```
+
+For step-by-step instructions on obtaining an access token, see:
+
+* [Using OAuth2 With Exchange (IMAP, POP3 or SMTP)](https://github.com/jstedfast/MailKit/blob/master/ExchangeOAuth2.md)
+* [Using OAuth2 With GMail (IMAP, POP3 or SMTP)](https://github.com/jstedfast/MailKit/blob/master/GMailOAuth2.md)
+
+### Logging and Diagnostics
+
+When something isn't working, the first thing to look at is the protocol log. Pass a
+[ProtocolLogger](https://www.mimekit.net/docs/html/T_MailKit_ProtocolLogger.htm) to the client's constructor to
+record the conversation between the client and the server:
+
+```csharp
+using var client = new SmtpClient (new ProtocolLogger ("smtp.log"));
+```
+
+Authentication secrets are redacted from the log by default, which makes it safe to include in bug reports.
+
+On .NET 8.0 and later, MailKit also supports metrics and tracing via `System.Diagnostics`, so it integrates with
+OpenTelemetry. Call `Telemetry.SmtpClient.Configure ()` (or the equivalent for `Socket`, `Pop3Client` or
+`ImapClient`) to enable the meters. For a list of the available metrics and activities, see
+[Telemetry.md](https://github.com/jstedfast/MailKit/blob/master/Telemetry.md).
 
 ### Sending Messages
 
@@ -254,42 +361,75 @@ One of the more common operations that MailKit is meant for is sending email mes
 
 ```csharp
 using System;
+using System.Threading.Tasks;
 
 using MailKit.Net.Smtp;
+using MailKit.Security;
 using MailKit;
 using MimeKit;
 
 namespace TestClient {
-	class Program
-	{
-		public static void Main (string[] args)
-		{
-			var message = new MimeMessage ();
-			message.From.Add (new MailboxAddress ("Joey Tribbiani", "joey@friends.com"));
-			message.To.Add (new MailboxAddress ("Mrs. Chanandler Bong", "chandler@friends.com"));
-			message.Subject = "How you doin'?";
+    class Program
+    {
+        public static async Task Main (string[] args)
+        {
+            var message = new MimeMessage ();
+            message.From.Add (new MailboxAddress ("Joey Tribbiani", "joey@friends.com"));
+            message.To.Add (new MailboxAddress ("Mrs. Chanandler Bong", "chandler@friends.com"));
+            message.Subject = "How you doin'?";
 
-			message.Body = new TextPart ("plain") {
-				Text = @"Hey Chandler,
+            message.Body = new TextPart ("plain") {
+                Text = @"Hey Chandler,
 
 I just wanted to let you know that Monica and I were going to go play some paintball, you in?
 
 -- Joey"
-			};
+            };
 
-			using (var client = new SmtpClient ()) {
-				client.Connect ("smtp.friends.com", 587, false);
+            using (var client = new SmtpClient ()) {
+                await client.ConnectAsync ("smtp.friends.com", 587, SecureSocketOptions.StartTls);
 
-				// Note: only needed if the SMTP server requires authentication
-				client.Authenticate ("joey", "password");
+                // Note: only needed if the SMTP server requires authentication
+                await client.AuthenticateAsync ("joey", "password");
 
-				client.Send (message);
-				client.Disconnect (true);
-			}
-		}
-	}
+                var result = await client.SendAsync (message);
+                Console.WriteLine ("The server accepted the message: {0}", result.ResponseText);
+
+                await client.DisconnectAsync (true);
+            }
+        }
+    }
 }
 ```
+
+`SendAsync ()` returns a [SendResult](https://www.mimekit.net/docs/html/T_MailKit_SendResult.htm) that contains the
+server's response along with the lists of accepted and rejected recipients.
+
+By default, `SmtpClient` throws an `SmtpCommandException` if the server rejects any of the recipients. To deliver
+the message to the remaining recipients instead, use an `SmtpSendRequest` that overrides `OnRecipientNotAccepted ()`:
+
+```csharp
+class LenientSendRequest : SmtpSendRequest
+{
+    public LenientSendRequest (MimeMessage message) : base (message)
+    {
+    }
+
+    public override void OnRecipientNotAccepted (MailboxAddress recipient, SmtpResponse response)
+    {
+        // Don't throw; the recipient will be listed in SendResult.RejectedRecipients instead.
+    }
+}
+
+// ...
+
+var result = await client.SendAsync (new LenientSendRequest (message));
+
+foreach (var recipient in result.RejectedRecipients)
+    Console.WriteLine ("Rejected: {0}", recipient);
+```
+
+`SmtpSendRequest` is also how you request per-message SMTP options such as delivery status notifications (DSN).
 
 ## Retrieving Messages (via Pop3)
 
@@ -297,30 +437,32 @@ One of the other main uses of MailKit is retrieving messages from pop3 servers.
 
 ```csharp
 using System;
+using System.Threading.Tasks;
 
 using MailKit.Net.Pop3;
+using MailKit.Security;
 using MailKit;
 using MimeKit;
 
 namespace TestClient {
-	class Program
-	{
-		public static void Main (string[] args)
-		{
-			using (var client = new Pop3Client ()) {
-				client.Connect ("pop.friends.com", 110, false);
+    class Program
+    {
+        public static async Task Main (string[] args)
+        {
+            using (var client = new Pop3Client ()) {
+                await client.ConnectAsync ("pop.friends.com", 995, SecureSocketOptions.SslOnConnect);
 
-				client.Authenticate ("joey", "password");
+                await client.AuthenticateAsync ("joey", "password");
 
-				for (int i = 0; i < client.Count; i++) {
-					var message = client.GetMessage (i);
-					Console.WriteLine ("Subject: {0}", message.Subject);
-				}
+                for (int i = 0; i < client.Count; i++) {
+                    var message = await client.GetMessageAsync (i);
+                    Console.WriteLine ("Subject: {0}", message.Subject);
+                }
 
-				client.Disconnect (true);
-			}
-		}
-	}
+                await client.DisconnectAsync (true);
+            }
+        }
+    }
 }
 ```
 
@@ -330,38 +472,40 @@ More important than POP3 support is the IMAP support. Here's a simple use-case o
 
 ```csharp
 using System;
+using System.Threading.Tasks;
 
-using MailKit.Net.Imap;
-using MailKit.Search;
-using MailKit;
 using MimeKit;
+using MailKit;
+using MailKit.Search;
+using MailKit.Security;
+using MailKit.Net.Imap;
 
 namespace TestClient {
-	class Program
-	{
-		public static void Main (string[] args)
-		{
-			using (var client = new ImapClient ()) {
-				client.Connect ("imap.friends.com", 993, true);
+    class Program
+    {
+        public static async Task Main (string[] args)
+        {
+            using (var client = new ImapClient ()) {
+                await client.ConnectAsync ("imap.friends.com", 993, SecureSocketOptions.SslOnConnect);
 
-				client.Authenticate ("joey", "password");
+                await client.AuthenticateAsync ("joey", "password");
 
-				// The Inbox folder is always available on all IMAP servers...
-				var inbox = client.Inbox;
-				inbox.Open (FolderAccess.ReadOnly);
+                // The Inbox folder is always available on all IMAP servers...
+                var inbox = client.Inbox;
+                await inbox.OpenAsync (FolderAccess.ReadOnly);
 
-				Console.WriteLine ("Total messages: {0}", inbox.Count);
-				Console.WriteLine ("Recent messages: {0}", inbox.Recent);
+                Console.WriteLine ("Total messages: {0}", inbox.Count);
+                Console.WriteLine ("Recent messages: {0}", inbox.Recent);
 
-				for (int i = 0; i < inbox.Count; i++) {
-					var message = inbox.GetMessage (i);
-					Console.WriteLine ("Subject: {0}", message.Subject);
-				}
+                for (int i = 0; i < inbox.Count; i++) {
+                    var message = await inbox.GetMessageAsync (i);
+                    Console.WriteLine ("Subject: {0}", message.Subject);
+                }
 
-				client.Disconnect (true);
-			}
-		}
-	}
+                await client.DisconnectAsync (true);
+            }
+        }
+    }
 }
 ```
 
@@ -370,12 +514,30 @@ namespace TestClient {
 One of the advantages of IMAP over POP3 is that the IMAP protocol allows clients to retrieve information about
 the messages in a folder without having to first download all of them.
 
-Using the [Fetch](http://www.mimekit.net/docs/html/Overload_MailKit_Net_Imap_ImapFolder_Fetch.htm) method overloads,
+Using the [Fetch](https://www.mimekit.net/docs/html/Overload_MailKit_Net_Imap_ImapFolder_Fetch.htm) and
+[FetchAsync](https://www.mimekit.net/docs/html/Overload_MailKit_Net_Imap_ImapFolder_FetchAsync.htm) method overloads
+(or the convenient [extension methods](https://www.mimekit.net/docs/html/Overload_MailKit_IMailFolderFetchExtensions_Fetch.htm)),
 it's possible to obtain any subset of summary information for any range of messages in a given folder.
 
 ```csharp
-foreach (var summary in inbox.Fetch (0, -1, MessageSummaryItems.Full)) {
-	Console.WriteLine ("[summary] {0:D2}: {1}", summary.Index, summary.Envelope.Subject);
+foreach (var summary in await inbox.FetchAsync (0, -1, MessageSummaryItems.Envelope)) {
+    Console.WriteLine ("[summary] {0:D2}: {1}", summary.Index, summary.Envelope.Subject);
+}
+```
+
+It's also possible to use Fetch/FetchAsync APIs that take an [IFetchRequest](https://www.mimekit.net/docs/html/T_MailKit_IFetchRequest.htm)
+argument to get even more control over what to fetch:
+
+```csharp
+// Let's Fetch non-Received headers:
+var request = new FetchRequest {
+    Headers = new HeaderSet (new HeaderId[] { HeaderId.Received }) {
+        Exclude = true
+    }
+};
+
+foreach (var summary in await inbox.FetchAsync (0, -1, request)) {
+    Console.WriteLine ("[summary] {0:D2}: {1}", summary.Index, summary.Headers[HeaderId.Subject]);
 }
 ```
 
@@ -383,25 +545,25 @@ The results of a Fetch method can also be used to download individual MIME parts
 than downloading the entire message. For example:
 
 ```csharp
-foreach (var summary in inbox.Fetch (0, -1, MessageSummaryItems.UniqueId | MessageSummaryItems.BodyStructure)) {
+foreach (var summary in await inbox.FetchAsync (0, -1, MessageSummaryItems.UniqueId | MessageSummaryItems.BodyStructure)) {
     if (summary.TextBody != null) {
-	// this will download *just* the text/plain part
-	var text = inbox.GetBodyPart (summary.UniqueId, summary.TextBody);
+        // this will download *just* the text/plain part
+        var text = await inbox.GetBodyPartAsync (summary.UniqueId, summary.TextBody);
     }
-    
+
     if (summary.HtmlBody != null) {
         // this will download *just* the text/html part
-	var html = inbox.GetBodyPart (summary.UniqueId, summary.HtmlBody);
+        var html = await inbox.GetBodyPartAsync (summary.UniqueId, summary.HtmlBody);
     }
-    
+
     // if you'd rather grab, say, an image attachment... it might look something like this:
     if (summary.Body is BodyPartMultipart) {
         var multipart = (BodyPartMultipart) summary.Body;
-        
+
         var attachment = multipart.BodyParts.OfType<BodyPartBasic> ().FirstOrDefault (x => x.FileName == "logo.jpg");
         if (attachment != null) {
             // this will download *just* the attachment
-            var part = inbox.GetBodyPart (summary.UniqueId, attachment);
+            var part = await inbox.GetBodyPartAsync (summary.UniqueId, attachment);
         }
     }
 }
@@ -416,7 +578,7 @@ An obvious reason to want to update message flags is to mark a message as "read"
 message and read it.
 
 ```csharp
-folder.AddFlags (uid, MessageFlags.Seen, true);
+await folder.StoreAsync (uid, new StoreFlagsRequest (StoreAction.Add, MessageFlags.Seen) { Silent = true });
 ```
 
 ### Deleting Messages in IMAP
@@ -426,8 +588,8 @@ Deleting messages in IMAP involves setting a `\Deleted` flag on a message and, o
 The way to mark a message as `\Deleted` works the same way as marking a message as `\Seen`.
 
 ```csharp
-folder.AddFlags (uid, MessageFlags.Deleted, true);
-folder.Expunge ();
+await folder.StoreAsync (uid, new StoreFlagsRequest (StoreAction.Add, MessageFlags.Deleted) { Silent = true });
+await folder.ExpungeAsync ();
 ```
 
 ### Searching an IMAP Folder
@@ -439,24 +601,24 @@ You may also be interested in sorting and searching...
 var query = SearchQuery.DeliveredAfter (DateTime.Parse ("2013-01-12"))
     .And (SearchQuery.SubjectContains ("MailKit")).And (SearchQuery.Seen);
 
-foreach (var uid in inbox.Search (query)) {
-	var message = inbox.GetMessage (uid);
-	Console.WriteLine ("[match] {0}: {1}", uid, message.Subject);
+foreach (var uid in await inbox.SearchAsync (query)) {
+    var message = await inbox.GetMessageAsync (uid);
+    Console.WriteLine ("[match] {0}: {1}", uid, message.Subject);
 }
 
 // let's do the same search, but this time sort them in reverse arrival order
 var orderBy = new [] { OrderBy.ReverseArrival };
-foreach (var uid in inbox.Sort (query, orderBy)) {
-	var message = inbox.GetMessage (uid);
-	Console.WriteLine ("[match] {0}: {1}", uid, message.Subject);
+foreach (var uid in await inbox.SortAsync (query, orderBy)) {
+    var message = await inbox.GetMessageAsync (uid);
+    Console.WriteLine ("[match] {0}: {1}", uid, message.Subject);
 }
 
 // you'll notice that the orderBy argument is an array... this is because you
 // can actually sort the search results based on multiple columns:
 orderBy = new [] { OrderBy.ReverseArrival, OrderBy.Subject };
-foreach (var uid in inbox.Sort (query, orderBy)) {
-	var message = inbox.GetMessage (uid);
-	Console.WriteLine ("[match] {0}: {1}", uid, message.Subject);
+foreach (var uid in await inbox.SortAsync (query, orderBy)) {
+    var message = await inbox.GetMessageAsync (uid);
+    Console.WriteLine ("[match] {0}: {1}", uid, message.Subject);
 }
 ```
 
@@ -470,18 +632,18 @@ How about navigating folders? MailKit can do that, too:
 ```csharp
 // Get the first personal namespace and list the toplevel folders under it.
 var personal = client.GetFolder (client.PersonalNamespaces[0]);
-foreach (var folder in personal.GetSubfolders (false))
-	Console.WriteLine ("[folder] {0}", folder.Name);
+foreach (var folder in await personal.GetSubfoldersAsync (false))
+    Console.WriteLine ("[folder] {0}", folder.Name);
 ```
 
-If the IMAP server supports the SPECIAL-USE or the XLIST (GMail) extension, you can get ahold of
+If the IMAP server supports the SPECIAL-USE or the XLIST (GMail) extension, you can get a hold of
 the pre-defined All, Drafts, Flagged (aka Important), Junk, Sent, Trash, etc folders like this:
 
 ```csharp
-if ((client.Capabilities & (ImapCapabilities.SpecialUse | ImapCapabilities.XList)) != 0) {
-	var drafts = client.GetFolder (SpecialFolder.Drafts);
+if (client.Capabilities.Contains (ImapCapability.SpecialUse) || client.Capabilities.Contains (ImapCapability.XList)) {
+    var drafts = client.GetFolder (SpecialFolder.Drafts);
 } else {
-	// maybe check the user's preferences for the Drafts folder?
+    // maybe check the user's preferences for the Drafts folder?
 }
 ```
 
@@ -492,11 +654,11 @@ might use logic similar to this:
 ```csharp
 static string[] CommonSentFolderNames = { "Sent Items", "Sent Mail", "Sent Messages", /* maybe add some translated names */ };
 
-static IFolder GetSentFolder (ImapClient client, CancellationToken cancellationToken)
+static async Task<IMailFolder?> GetSentFolderAsync (ImapClient client, CancellationToken cancellationToken)
 {
     var personal = client.GetFolder (client.PersonalNamespaces[0]);
 
-    foreach (var folder in personal.GetSubfolders (false, cancellationToken)) {
+    foreach (var folder in await personal.GetSubfoldersAsync (false, cancellationToken)) {
         foreach (var name in CommonSentFolderNames) {
             if (folder.Name == name)
                 return folder;
@@ -512,11 +674,13 @@ Using LINQ, you could simplify this down to something more like this:
 ```csharp
 static string[] CommonSentFolderNames = { "Sent Items", "Sent Mail", "Sent Messages", /* maybe add some translated names */ };
 
-static IFolder GetSentFolder (ImapClient client, CancellationToken cancellationToken)
+static async Task<IMailFolder?> GetSentFolderAsync (ImapClient client, CancellationToken cancellationToken)
 {
     var personal = client.GetFolder (client.PersonalNamespaces[0]);
-    
-    return personal.GetSubfolders (false, cancellationToken).FirstOrDefault (x => CommonSentFolderNames.Contains (x.Name));
+
+    var folders = await personal.GetSubfoldersAsync (false, cancellationToken);
+
+    return folders.FirstOrDefault (x => CommonSentFolderNames.Contains (x.Name));
 }
 ```
 
@@ -525,14 +689,41 @@ Sent folder, Drafts folder, Trash folder, etc.
 
 How you handle this is up to you.
 
+### Monitoring an IMAP Folder for Changes
+
+To be notified when new messages arrive (or when messages are deleted or their flags change), use an
+[ImapIdleSession](https://www.mimekit.net/docs/html/T_MailKit_Net_Imap_ImapIdleSession.htm). It uses the
+`IDLE` command when the server supports it (restarting it periodically so that the connection isn't dropped)
+and falls back to polling with `NOOP` when the server doesn't:
+
+```csharp
+await client.Inbox.OpenAsync (FolderAccess.ReadOnly);
+
+var session = client.CreateIdleSession ();
+
+// Cancel the token to stop monitoring; the IDLE command is ended gracefully and the client remains usable.
+try {
+    await foreach (var changes in session.ReadChangesAsync (cancellationToken)) {
+        if (changes.MessagesArrived)
+            Console.WriteLine ("New messages have arrived! The Inbox now has {0} messages.", client.Inbox.Count);
+    }
+} catch (OperationCanceledException) {
+}
+```
+
+The `IDLE` command has already been ended by the time each batch of changes is returned, so it is safe to issue
+other commands (such as fetching the new messages) while processing them. For a more complete example, see
+[ImapIdleSessionExample.cs](https://github.com/jstedfast/MailKit/blob/master/Documentation/Examples/ImapIdleSessionExample.cs).
+
 ## Contributing
 
 The first thing you'll need to do is fork MailKit to your own GitHub repository. For instructions on how to
-do that, see the section titled **Getting the Source Code**.
+clone it, see the section titled **Getting the Source Code**.
 
-If you use [Visual Studio for Mac](https://visualstudio.microsoft.com/vs/mac/) or [MonoDevelop](http://monodevelop.com),
-all of the solution files are configured with the coding style used by MailKit. If you use Visual Studio on Windows
-or some other editor, please try to maintain the existing coding style as best as you can.
+MailKit uses an [`.editorconfig`](https://github.com/jstedfast/MailKit/blob/master/.editorconfig) file to describe
+its coding style (tabs for indentation and a space before the opening parenthesis of method calls and
+declarations), which is supported by Visual Studio, Visual Studio Code, Rider and most other editors. Please try
+to follow the existing coding style as best as you can.
 
 Once you've got some changes that you'd like to submit upstream to the official MailKit repository,
 send me a **Pull Request** and I will try to review your changes in a timely manner.
@@ -553,7 +744,7 @@ to avoid submitting duplicates. It may also be worth checking the
 have had.
 
 If MailKit does not work with your mail server, please include a [protocol
-log](https://github.com/jstedfast/MailKit/blob/master/FAQ.md#ProtocolLog) in your bug report, otherwise
+log](https://github.com/jstedfast/MailKit/blob/master/FAQ.md#protocol-log) in your bug report, otherwise
 there is nothing I can do to fix the problem.
 
 If you are getting an exception from somewhere within MailKit, don't just provide the `Exception.Message`
@@ -561,14 +752,29 @@ string. Please include the `Exception.StackTrace` as well. The `Message`, by its
 
 ## Documentation
 
-API documentation can be found at [http://www.mimekit.net/docs](http://www.mimekit.net/docs).
+API documentation can be found at [https://www.mimekit.net/docs](https://www.mimekit.net/docs).
+
+Some example snippets can be found in the [`Documentation/Examples`](https://github.com/jstedfast/MailKit/tree/master/Documentation/Examples) directory.
+
+Sample applications can be found in the [`samples`](https://github.com/jstedfast/MailKit/tree/master/samples) directory.
 
 A copy of the XML-formatted API reference documentation is also included in the NuGet package.
+
+### Further Reading
+
+* [Frequently Asked Questions](https://github.com/jstedfast/MailKit/blob/master/FAQ.md)
+* [Porting Guide (MailKit 4.x to 5.0)](https://github.com/jstedfast/MailKit/blob/master/PortingGuide.md)
+* [Release Notes](https://github.com/jstedfast/MailKit/blob/master/ReleaseNotes.md)
+* [Using OAuth2 With Exchange](https://github.com/jstedfast/MailKit/blob/master/ExchangeOAuth2.md)
+* [Using OAuth2 With GMail](https://github.com/jstedfast/MailKit/blob/master/GMailOAuth2.md)
+* [Telemetry (Metrics and Tracing)](https://github.com/jstedfast/MailKit/blob/master/Telemetry.md)
+* [Supported RFCs](https://github.com/jstedfast/MailKit/blob/master/RFCs.md)
+* [Security Policy](https://github.com/jstedfast/MailKit/blob/master/SECURITY.md)
 
 ## .NET Foundation
 
 MailKit is a [.NET Foundation](https://www.dotnetfoundation.org/projects) project.
 
-This project has adopted the code of conduct defined by the [Contributor Covenant](http://contributor-covenant.org/) to clarify expected behavior in our community. For more information, see the [.NET Foundation Code of Conduct](http://www.dotnetfoundation.org/code-of-conduct).
+This project has adopted the code of conduct defined by the [Contributor Covenant](https://contributor-covenant.org/) to clarify expected behavior in our community. For more information, see the [.NET Foundation Code of Conduct](https://www.dotnetfoundation.org/code-of-conduct).
 
 General .NET OSS discussions: [.NET Foundation forums](https://forums.dotnetfoundation.org)

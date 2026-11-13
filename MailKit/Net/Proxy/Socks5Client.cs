@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -25,9 +25,9 @@
 //
 
 using System;
+using System.IO;
 using System.Net;
 using System.Text;
-using System.Buffers;
 using System.Threading;
 using System.Net.Sockets;
 using System.Globalization;
@@ -40,9 +40,12 @@ namespace MailKit.Net.Proxy
 	/// <summary>
 	/// A SOCKS5 proxy client.
 	/// </summary>
-	/// <remarkas>
+	/// <remarks>
 	/// A SOCKS5 proxy client.
-	/// </remarkas>
+	/// </remarks>
+	/// <example>
+	/// <code language="c#" source="Examples\ProxyExamples.cs" region="ProxyClient" />
+	/// </example>
 	public class Socks5Client : SocksClient
 	{
 		/// <summary>
@@ -51,10 +54,13 @@ namespace MailKit.Net.Proxy
 		/// <remarks>
 		/// Initializes a new instance of the <see cref="T:MailKit.Net.Proxy.Socks5Client"/> class.
 		/// </remarks>
+		/// <example>
+		/// <code language="c#" source="Examples\ProxyExamples.cs" region="ProxyClient" />
+		/// </example>
 		/// <param name="host">The host name of the proxy server.</param>
 		/// <param name="port">The proxy server port.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="host"/> is <c>null</c>.
+		/// <paramref name="host"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <paramref name="port"/> is not between <c>1</c> and <c>65535</c>.
@@ -74,13 +80,16 @@ namespace MailKit.Net.Proxy
 		/// <remarks>
 		/// Initializes a new instance of the <see cref="T:MailKit.Net.Proxy.Socks5Client"/> class.
 		/// </remarks>
+		/// <example>
+		/// <code language="c#" source="Examples\ProxyExamples.cs" region="ProxyClient" />
+		/// </example>
 		/// <param name="host">The host name of the proxy server.</param>
 		/// <param name="port">The proxy server port.</param>
 		/// <param name="credentials">The credentials to use to authenticate with the proxy server.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <para><paramref name="host"/> is <c>null</c>.</para>
+		/// <para><paramref name="host"/> is <see langword="null" />.</para>
 		/// <para>-or-</para>
-		/// <para><paramref name="credentials"/>is <c>null</c>.</para>
+		/// <para><paramref name="credentials"/>is <see langword="null" />.</para>
 		/// </exception>
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <paramref name="port"/> is not between <c>1</c> and <c>65535</c>.
@@ -145,7 +154,7 @@ namespace MailKit.Net.Proxy
 			}
 		}
 
-		internal static Socks5AddressType GetAddressType (string host, out IPAddress ip)
+		internal static Socks5AddressType GetAddressType (string host, out IPAddress? ip)
 		{
 			if (!IPAddress.TryParse (host, out ip))
 				return Socks5AddressType.Domain;
@@ -163,7 +172,7 @@ namespace MailKit.Net.Proxy
 				throw new ProxyProtocolException (string.Format (CultureInfo.InvariantCulture, "Proxy server responded with unknown SOCKS version: {0}", (int) version));
 		}
 
-		async Task<Socks5AuthMethod> NegotiateAuthMethodAsync (Socket socket, bool doAsync, CancellationToken cancellationToken, params Socks5AuthMethod[] methods)
+		byte[] GetNegotiateAuthMethodCommand (Socks5AuthMethod[] methods)
 		{
 			// +-----+----------+----------+
 			// | VER | NMETHODS | METHODS  |
@@ -171,34 +180,55 @@ namespace MailKit.Net.Proxy
 			// |  1  |    1     | 1 to 255 |
 			// +-----+----------+----------+
 			var buffer = new byte[2 + methods.Length];
-			int nread, n = 0;
+			int n = 0;
 
 			buffer[n++] = (byte) SocksVersion;
 			buffer[n++] = (byte) methods.Length;
 			for (int i = 0; i < methods.Length; i++)
 				buffer[n++] = (byte) methods[i];
 
-			await SendAsync (socket, buffer, 0, n, doAsync, cancellationToken).ConfigureAwait (false);
+			return buffer;
+		}
+
+		Socks5AuthMethod NegotiateAuthMethod (Socket socket, CancellationToken cancellationToken, params Socks5AuthMethod[] methods)
+		{
+			var buffer = GetNegotiateAuthMethodCommand (methods);
+
+			Send (socket, buffer, 0, buffer.Length, cancellationToken);
 
 			// +-----+--------+
 			// | VER | METHOD |
 			// +-----+--------+
 			// |  1  |   1    |
 			// +-----+--------+
-			n = 0;
-			do {
-				if ((nread = await ReceiveAsync (socket, buffer, 0 + n, 2 - n, doAsync, cancellationToken).ConfigureAwait (false)) > 0)
-					n += nread;
-			} while (n < 2);
+			ReceiveExactly (socket, buffer, 0, 2, cancellationToken);
 
 			VerifySocksVersion (buffer[0]);
 
 			return (Socks5AuthMethod) buffer[1];
 		}
 
-		async Task AuthenticateAsync (Socket socket, bool doAsync, CancellationToken cancellationToken)
+		async Task<Socks5AuthMethod> NegotiateAuthMethodAsync (Socket socket, CancellationToken cancellationToken, params Socks5AuthMethod[] methods)
 		{
-			var user = Encoding.UTF8.GetBytes (ProxyCredentials.UserName);
+			var buffer = GetNegotiateAuthMethodCommand (methods);
+
+			await SendAsync (socket, buffer, 0, buffer.Length, cancellationToken).ConfigureAwait (false);
+
+			// +-----+--------+
+			// | VER | METHOD |
+			// +-----+--------+
+			// |  1  |   1    |
+			// +-----+--------+
+			await ReceiveExactlyAsync (socket, buffer, 0, 2, cancellationToken).ConfigureAwait (false);
+
+			VerifySocksVersion (buffer[0]);
+
+			return (Socks5AuthMethod) buffer[1];
+		}
+
+		byte[] GetAuthenticateCommand ()
+		{
+			var user = Encoding.UTF8.GetBytes (ProxyCredentials!.UserName);
 
 			if (user.Length > 255)
 				throw new AuthenticationException ("User name too long.");
@@ -211,7 +241,7 @@ namespace MailKit.Net.Proxy
 			}
 
 			var buffer = new byte[user.Length + passwd.Length + 3];
-			int nread, n = 0;
+			int n = 0;
 
 			buffer[n++] = 1;
 			buffer[n++] = (byte) user.Length;
@@ -219,136 +249,94 @@ namespace MailKit.Net.Proxy
 			n += user.Length;
 			buffer[n++] = (byte) passwd.Length;
 			Buffer.BlockCopy (passwd, 0, buffer, n, passwd.Length);
-			n += passwd.Length;
 
 			Array.Clear (passwd, 0, passwd.Length);
 
-			await SendAsync (socket, buffer, 0, n, doAsync, cancellationToken).ConfigureAwait (false);
+			return buffer;
+		}
 
-			n = 0;
-			do {
-				if ((nread = await ReceiveAsync (socket, buffer, 0 + n, 2 - n, doAsync, cancellationToken).ConfigureAwait (false)) > 0)
-					n += nread;
-			} while (n < 2);
+		void Authenticate (Socket socket, CancellationToken cancellationToken)
+		{
+			var buffer = GetAuthenticateCommand ();
+
+			Send (socket, buffer, 0, buffer.Length, cancellationToken);
+
+			ReceiveExactly (socket, buffer, 0, 2, cancellationToken);
 
 			if (buffer[1] != (byte) Socks5Reply.Success)
 				throw new AuthenticationException ("Failed to authenticate with SOCKS5 proxy server.");
 		}
 
-		async Task<Socket> ConnectAsync (string host, int port, bool doAsync, CancellationToken cancellationToken)
+		async Task AuthenticateAsync (Socket socket, CancellationToken cancellationToken)
 		{
-			Socks5AddressType addrType;
-			IPAddress ip;
+			var buffer = GetAuthenticateCommand ();
 
-			ValidateArguments (host, port);
+			await SendAsync (socket, buffer, 0, buffer.Length, cancellationToken).ConfigureAwait (false);
 
-			addrType = GetAddressType (host, out ip);
+			await ReceiveExactlyAsync (socket, buffer, 0, 2, cancellationToken).ConfigureAwait (false);
 
-			cancellationToken.ThrowIfCancellationRequested ();
+			if (buffer[1] != (byte) Socks5Reply.Success)
+				throw new AuthenticationException ("Failed to authenticate with SOCKS5 proxy server.");
+		}
 
-			var socket = await SocketUtils.ConnectAsync (ProxyHost, ProxyPort, LocalEndPoint, doAsync, cancellationToken).ConfigureAwait (false);
-			byte[] domain = null, addr = null;
+		byte[] GetConnectCommand (Socks5AddressType addrType, byte[]? domain, IPAddress? ip, int port, out int n)
+		{
+			// +----+-----+-------+------+----------+----------+
+			// |VER | CMD |  RSV  | ATYP | DST.ADDR | DST.PORT |
+			// +----+-----+-------+------+----------+----------+
+			// | 1  |  1  | X'00' |  1   | Variable |    2     |
+			// +----+-----+-------+------+----------+----------+
+			var buffer = new byte[4 + 257 + 2];
+			byte[] addr;
 
-			if (addrType == Socks5AddressType.Domain)
-				domain = Encoding.UTF8.GetBytes (host);
+			n = 0;
 
-			try {
-				Socks5AuthMethod method;
+			buffer[n++] = (byte) SocksVersion;
+			buffer[n++] = (byte) Socks5Command.Connect;
+			buffer[n++] = 0x00;
+			buffer[n++] = (byte) addrType;
+			switch (addrType) {
+			case Socks5AddressType.Domain:
+				buffer[n++] = (byte) domain!.Length;
+				Buffer.BlockCopy (domain, 0, buffer, n, domain.Length);
+				n += domain.Length;
+				break;
+			case Socks5AddressType.IPv6:
+				addr = ip!.GetAddressBytes ();
+				Buffer.BlockCopy (addr, 0, buffer, n, addr.Length);
+				n += 16;
+				break;
+			case Socks5AddressType.IPv4:
+				addr = ip!.GetAddressBytes ();
+				Buffer.BlockCopy (addr, 0, buffer, n, addr.Length);
+				n += 4;
+				break;
+			}
+			buffer[n++] = (byte) (port >> 8);
+			buffer[n++] = (byte) port;
 
-				if (ProxyCredentials != null)
-					method = await NegotiateAuthMethodAsync (socket, doAsync, cancellationToken, Socks5AuthMethod.UserPassword, Socks5AuthMethod.Anonymous).ConfigureAwait (false);
-				else
-					method = await NegotiateAuthMethodAsync (socket, doAsync, cancellationToken, Socks5AuthMethod.Anonymous).ConfigureAwait (false);
+			return buffer;
+		}
 
-				switch (method) {
-				case Socks5AuthMethod.UserPassword:
-					await AuthenticateAsync (socket, doAsync, cancellationToken).ConfigureAwait (false);
-					break;
-				case Socks5AuthMethod.Anonymous:
-					break;
-				default:
-					throw new ProxyProtocolException ("Failed to negotiate authentication method with the proxy server.");
-				}
+		int ProcessPartialConnectResponse (string host, int port, byte[] buffer)
+		{
+			VerifySocksVersion (buffer[0]);
 
-				// +----+-----+-------+------+----------+----------+
-				// |VER | CMD |  RSV  | ATYP | DST.ADDR | DST.PORT |
-				// +----+-----+-------+------+----------+----------+
-				// | 1  |  1  | X'00' |  1   | Variable |    2     |
-				// +----+-----+-------+------+----------+----------+
-				var buffer = new byte[4 + 257 + 2];
-				int nread, n = 0;
+			if (buffer[1] != (byte) Socks5Reply.Success)
+				throw new ProxyProtocolException (string.Format (CultureInfo.InvariantCulture, "Failed to connect to {0}:{1}: {2}", host, port, GetFailureReason (buffer[1])));
 
-				buffer[n++] = (byte) SocksVersion;
-				buffer[n++] = (byte) Socks5Command.Connect;
-				buffer[n++] = 0x00;
-				buffer[n++] = (byte) addrType;
-				switch (addrType) {
-				case Socks5AddressType.Domain:
-					buffer[n++] = (byte) domain.Length;
-					Buffer.BlockCopy (domain, 0, buffer, n, domain.Length);
-					n += domain.Length;
-					break;
-				case Socks5AddressType.IPv6:
-					addr = ip.GetAddressBytes ();
-					Buffer.BlockCopy (addr, 0, buffer, n, addr.Length);
-					n += 16;
-					break;
-				case Socks5AddressType.IPv4:
-					addr = ip.GetAddressBytes ();
-					Buffer.BlockCopy (addr, 0, buffer, n, addr.Length);
-					n += 4;
-					break;
-				}
-				buffer[n++] = (byte) (port >> 8);
-				buffer[n++] = (byte) port;
+			// +-----+-----+-------+------+----------+----------+
+			// | VER | REP |  RSV  | ATYP | BND.ADDR | BND.PORT |
+			// +-----+-----+-------+------+----------+----------+
+			// |  1  |  1  | X'00' |  1   | Variable |    2     |
+			// +-----+-----+-------+------+----------+----------+
+			var addrType = (Socks5AddressType) buffer[3];
 
-				await SendAsync (socket, buffer, 0, n, doAsync, cancellationToken).ConfigureAwait (false);
-
-				// +-----+-----+-------+------+----------+----------+
-				// | VER | REP |  RSV  | ATYP | BND.ADDR | BND.PORT |
-				// +-----+-----+-------+------+----------+----------+
-				// |  1  |  1  | X'00' |  1   | Variable |    2     |
-				// +-----+-----+-------+------+----------+----------+
-
-				// Note: We know we'll need at least 4 bytes of header + a minimum of 1 byte
-				// to determine the length of the BND.ADDR field if ATYP is a domain.
-				int need = 5;
-				n = 0;
-
-				do {
-					if ((nread = await ReceiveAsync (socket, buffer, 0 + n, need - n, doAsync, cancellationToken).ConfigureAwait (false)) > 0)
-						n += nread;
-				} while (n < need);
-
-				VerifySocksVersion (buffer[0]);
-
-				if (buffer[1] != (byte) Socks5Reply.Success)
-					throw new ProxyProtocolException (string.Format (CultureInfo.InvariantCulture, "Failed to connect to {0}:{1}: {2}", host, port, GetFailureReason (buffer[1])));
-
-				addrType = (Socks5AddressType) buffer[3];
-
-				switch (addrType) {
-				case Socks5AddressType.Domain: need += buffer[4] + 2; break;
-				case Socks5AddressType.IPv6: need += (16 - 1) + 2; break;
-				case Socks5AddressType.IPv4: need += (4 - 1) + 2; break;
-				default: throw new ProxyProtocolException ("Proxy server returned unknown address type.");
-				}
-
-				do {
-					if ((nread = await ReceiveAsync (socket, buffer, 0 + n, need - n, doAsync, cancellationToken).ConfigureAwait (false)) > 0)
-						n += nread;
-				} while (n < need);
-
-				// TODO: do we care about BND.ADDR and BND.PORT?
-
-				return socket;
-			} catch {
-#if !NETSTANDARD1_3 && !NETSTANDARD1_6
-				if (socket.Connected)
-					socket.Disconnect (false);
-#endif
-				socket.Dispose ();
-				throw;
+			switch (addrType) {
+			case Socks5AddressType.Domain: return 4 + 1 + buffer[4] + 2;
+			case Socks5AddressType.IPv6: return 4 + 16 + 2;
+			case Socks5AddressType.IPv4: return 4 + 4 + 2;
+			default: throw new ProxyProtocolException ("Proxy server returned unknown address type.");
 			}
 		}
 
@@ -358,12 +346,12 @@ namespace MailKit.Net.Proxy
 		/// <remarks>
 		/// Connects to the target host and port through the proxy server.
 		/// </remarks>
-		/// <returns>The connected socket.</returns>
-		/// <param name="host">The host name of the proxy server.</param>
-		/// <param name="port">The proxy server port.</param>
+		/// <returns>The connected network stream.</returns>
+		/// <param name="host">The host name of the target server.</param>
+		/// <param name="port">The target server port.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="host"/> is <c>null</c>.
+		/// <paramref name="host"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <paramref name="port"/> is not between <c>0</c> and <c>65535</c>.
@@ -380,9 +368,68 @@ namespace MailKit.Net.Proxy
 		/// <exception cref="System.IO.IOException">
 		/// An I/O error occurred.
 		/// </exception>
-		public override Socket Connect (string host, int port, CancellationToken cancellationToken = default (CancellationToken))
+		public override Stream Connect (string host, int port, CancellationToken cancellationToken = default)
 		{
-			return ConnectAsync (host, port, false, cancellationToken).GetAwaiter ().GetResult ();
+			ValidateArguments (host, port);
+
+			cancellationToken.ThrowIfCancellationRequested ();
+
+			var socket = SocketUtils.Connect (ProxyHost, ProxyPort, LocalEndPoint, cancellationToken);
+			var addrType = GetAddressType (host, out var ip);
+			byte[]? domain = null;
+
+			if (addrType == Socks5AddressType.Domain)
+				domain = Encoding.UTF8.GetBytes (host);
+
+			try {
+				Socks5AuthMethod method;
+
+				if (ProxyCredentials != null)
+					method = NegotiateAuthMethod (socket, cancellationToken, Socks5AuthMethod.UserPassword, Socks5AuthMethod.Anonymous);
+				else
+					method = NegotiateAuthMethod (socket, cancellationToken, Socks5AuthMethod.Anonymous);
+
+				switch (method) {
+				case Socks5AuthMethod.UserPassword:
+					Authenticate (socket, cancellationToken);
+					break;
+				case Socks5AuthMethod.Anonymous:
+					break;
+				default:
+					throw new ProxyProtocolException ("Failed to negotiate authentication method with the proxy server.");
+				}
+
+				var buffer = GetConnectCommand (addrType, domain, ip, port, out int n);
+
+				Send (socket, buffer, 0, n, cancellationToken);
+
+				// +-----+-----+-------+------+----------+----------+
+				// | VER | REP |  RSV  | ATYP | BND.ADDR | BND.PORT |
+				// +-----+-----+-------+------+----------+----------+
+				// |  1  |  1  | X'00' |  1   | Variable |    2     |
+				// +-----+-----+-------+------+----------+----------+
+
+				// Note: We know we'll need at least 4 bytes of header + a minimum of 1 byte
+				// to determine the length of the BND.ADDR field if ATYP is a domain.
+				ReceiveExactly (socket, buffer, 0, 5, cancellationToken);
+
+				int need = ProcessPartialConnectResponse (host, port, buffer);
+
+				ReceiveExactly (socket, buffer, 5, need - 5, cancellationToken);
+
+				// Note: For a CONNECT request, BND.ADDR and BND.PORT are the address and port that
+				// the proxy server bound to in order to connect to the target host. They are only
+				// meaningful for BIND and UDP ASSOCIATE requests (which we do not support), so we
+				// just consume and ignore them.
+
+				return new NetworkStream (socket, true);
+			} catch {
+				if (socket.Connected)
+					socket.Disconnect (false);
+
+				socket.Dispose ();
+				throw;
+			}
 		}
 
 		/// <summary>
@@ -391,12 +438,12 @@ namespace MailKit.Net.Proxy
 		/// <remarks>
 		/// Asynchronously connects to the target host and port through the proxy server.
 		/// </remarks>
-		/// <returns>The connected socket.</returns>
-		/// <param name="host">The host name of the proxy server.</param>
-		/// <param name="port">The proxy server port.</param>
+		/// <returns>The connected network stream.</returns>
+		/// <param name="host">The host name of the target server.</param>
+		/// <param name="port">The target server port.</param>
 		/// <param name="cancellationToken">The cancellation token.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="host"/> is <c>null</c>.
+		/// <paramref name="host"/> is <see langword="null" />.
 		/// </exception>
 		/// <exception cref="System.ArgumentOutOfRangeException">
 		/// <paramref name="port"/> is not between <c>0</c> and <c>65535</c>.
@@ -413,9 +460,68 @@ namespace MailKit.Net.Proxy
 		/// <exception cref="System.IO.IOException">
 		/// An I/O error occurred.
 		/// </exception>
-		public override Task<Socket> ConnectAsync (string host, int port, CancellationToken cancellationToken = default (CancellationToken))
+		public override async Task<Stream> ConnectAsync (string host, int port, CancellationToken cancellationToken = default)
 		{
-			return ConnectAsync (host, port, true, cancellationToken);
+			ValidateArguments (host, port);
+
+			cancellationToken.ThrowIfCancellationRequested ();
+
+			var socket = await SocketUtils.ConnectAsync (ProxyHost, ProxyPort, LocalEndPoint, cancellationToken).ConfigureAwait (false);
+			var addrType = GetAddressType (host, out var ip);
+			byte[]? domain = null;
+
+			if (addrType == Socks5AddressType.Domain)
+				domain = Encoding.UTF8.GetBytes (host);
+
+			try {
+				Socks5AuthMethod method;
+
+				if (ProxyCredentials != null)
+					method = await NegotiateAuthMethodAsync (socket, cancellationToken, Socks5AuthMethod.UserPassword, Socks5AuthMethod.Anonymous).ConfigureAwait (false);
+				else
+					method = await NegotiateAuthMethodAsync (socket, cancellationToken, Socks5AuthMethod.Anonymous).ConfigureAwait (false);
+
+				switch (method) {
+				case Socks5AuthMethod.UserPassword:
+					await AuthenticateAsync (socket, cancellationToken).ConfigureAwait (false);
+					break;
+				case Socks5AuthMethod.Anonymous:
+					break;
+				default:
+					throw new ProxyProtocolException ("Failed to negotiate authentication method with the proxy server.");
+				}
+
+				var buffer = GetConnectCommand (addrType, domain, ip, port, out int n);
+
+				await SendAsync (socket, buffer, 0, n, cancellationToken).ConfigureAwait (false);
+
+				// +-----+-----+-------+------+----------+----------+
+				// | VER | REP |  RSV  | ATYP | BND.ADDR | BND.PORT |
+				// +-----+-----+-------+------+----------+----------+
+				// |  1  |  1  | X'00' |  1   | Variable |    2     |
+				// +-----+-----+-------+------+----------+----------+
+
+				// Note: We know we'll need at least 4 bytes of header + a minimum of 1 byte
+				// to determine the length of the BND.ADDR field if ATYP is a domain.
+				await ReceiveExactlyAsync (socket, buffer, 0, 5, cancellationToken).ConfigureAwait (false);
+
+				int need = ProcessPartialConnectResponse (host, port, buffer);
+
+				await ReceiveExactlyAsync (socket, buffer, 5, need - 5, cancellationToken).ConfigureAwait (false);
+
+				// Note: For a CONNECT request, BND.ADDR and BND.PORT are the address and port that
+				// the proxy server bound to in order to connect to the target host. They are only
+				// meaningful for BIND and UDP ASSOCIATE requests (which we do not support), so we
+				// just consume and ignore them.
+
+				return new NetworkStream (socket, true);
+			} catch {
+				if (socket.Connected)
+					socket.Disconnect (false);
+
+				socket.Dispose ();
+				throw;
+			}
 		}
 	}
 }

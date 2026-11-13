@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -24,11 +24,7 @@
 // THE SOFTWARE.
 //
 
-using System.IO;
-using System.Runtime.Serialization.Formatters.Binary;
-
-using NUnit.Framework;
-
+using MailKit;
 using MailKit.Net.Pop3;
 
 namespace UnitTests.Net.Pop3 {
@@ -36,64 +32,28 @@ namespace UnitTests.Net.Pop3 {
 	public class Pop3CommandExceptionTests
 	{
 		[Test]
-		public void TestPop3CommandException ()
+		public void TestArgumentExceptions ()
 		{
-			Pop3CommandException expected;
+			Assert.Throws<ArgumentNullException> (() => new Pop3CommandException ("Message", (string) null));
+			Assert.Throws<ArgumentNullException> (() => new Pop3CommandException ("Message", null, new Exception ("inner")));
+		}
+		[TestCase ("[IN-USE] Mailbox is locked by another session.", "IN-USE", CommandErrorType.InUse)]
+		[TestCase ("[LOGIN-DELAY] Please wait before logging in again.", "LOGIN-DELAY", CommandErrorType.TemporaryFailure)]
+		[TestCase ("[SYS/TEMP] Temporary system failure.", "SYS/TEMP", CommandErrorType.TemporaryFailure)]
+		[TestCase ("[sys/temp/disk] Temporary disk failure.", "SYS/TEMP/DISK", CommandErrorType.TemporaryFailure)]
+		[TestCase ("[SYS/PERM] Permanent system failure.", "SYS/PERM", CommandErrorType.ServerError)]
+		[TestCase ("[AUTH] Authentication failed.", "AUTH", CommandErrorType.PermissionDenied)]
+		[TestCase ("[X-CUSTOM] Something else.", "X-CUSTOM", CommandErrorType.Rejected)]
+		[TestCase ("No such message.", null, CommandErrorType.Rejected)]
+		[TestCase ("[] Empty response code.", null, CommandErrorType.Rejected)]
+		[TestCase ("[UNTERMINATED response code.", null, CommandErrorType.Rejected)]
+		[TestCase ("", null, CommandErrorType.Rejected)]
+		public void TestPop3CommandExceptionErrorType (string statusText, string responseCode, CommandErrorType expected)
+		{
+			var ex = new Pop3CommandException ("message", statusText);
 
-			expected = new Pop3CommandException ();
-			using (var stream = new MemoryStream ()) {
-				var formatter = new BinaryFormatter ();
-				formatter.Serialize (stream, expected);
-				stream.Position = 0;
-
-				var ex = (Pop3CommandException)formatter.Deserialize (stream);
-				Assert.AreEqual (expected.Message, ex.Message, "Unexpected Message.");
-				Assert.AreEqual (expected.StatusText, ex.StatusText, "Unexpected StatusText.");
-			}
-
-			expected = new Pop3CommandException ("This is the error message.");
-			using (var stream = new MemoryStream ()) {
-				var formatter = new BinaryFormatter ();
-				formatter.Serialize (stream, expected);
-				stream.Position = 0;
-
-				var ex = (Pop3CommandException) formatter.Deserialize (stream);
-				Assert.AreEqual (expected.Message, ex.Message, "Unexpected Message.");
-				Assert.AreEqual (expected.StatusText, ex.StatusText, "Unexpected StatusText.");
-			}
-
-			expected = new Pop3CommandException ("This is the error message.", new IOException ("There was an IO error."));
-			using (var stream = new MemoryStream ()) {
-				var formatter = new BinaryFormatter ();
-				formatter.Serialize (stream, expected);
-				stream.Position = 0;
-
-				var ex = (Pop3CommandException) formatter.Deserialize (stream);
-				Assert.AreEqual (expected.Message, ex.Message, "Unexpected Message.");
-				Assert.AreEqual (expected.StatusText, ex.StatusText, "Unexpected StatusText.");
-			}
-
-			expected = new Pop3CommandException ("This is the error message.", "This is the status text");
-			using (var stream = new MemoryStream ()) {
-				var formatter = new BinaryFormatter ();
-				formatter.Serialize (stream, expected);
-				stream.Position = 0;
-
-				var ex = (Pop3CommandException) formatter.Deserialize (stream);
-				Assert.AreEqual (expected.Message, ex.Message, "Unexpected Message.");
-				Assert.AreEqual (expected.StatusText, ex.StatusText, "Unexpected StatusText.");
-			}
-
-			expected = new Pop3CommandException ("This is the error message.", "This is the status text", new IOException ("There was an IO error."));
-			using (var stream = new MemoryStream ()) {
-				var formatter = new BinaryFormatter ();
-				formatter.Serialize (stream, expected);
-				stream.Position = 0;
-
-				var ex = (Pop3CommandException) formatter.Deserialize (stream);
-				Assert.AreEqual (expected.Message, ex.Message, "Unexpected Message.");
-				Assert.AreEqual (expected.StatusText, ex.StatusText, "Unexpected StatusText.");
-			}
+			Assert.That (ex.ResponseCode, Is.EqualTo (responseCode), "ResponseCode");
+			Assert.That (ex.ErrorType, Is.EqualTo (expected), "ErrorType");
 		}
 	}
 }

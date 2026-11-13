@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -27,6 +27,8 @@
 using System;
 using System.Text;
 
+using MimeKit;
+
 namespace MailKit {
 	/// <summary>
 	/// A message/rfc822 body part.
@@ -42,7 +44,14 @@ namespace MailKit {
 		/// <remarks>
 		/// Creates a new <see cref="BodyPartMessage"/>.
 		/// </remarks>
-		public BodyPartMessage ()
+		/// <param name="contentType">The content type.</param>
+		/// <param name="partSpecifier">The part specifier.</param>
+		/// <exception cref="ArgumentNullException">
+		/// <para><paramref name="contentType"/> is <see langword="null" />.</para>
+		/// <para>-or-</para>
+		/// <para><paramref name="partSpecifier"/> is <see langword="null" />.</para>
+		/// </exception>
+		public BodyPartMessage (ContentType contentType, string partSpecifier) : base (contentType, partSpecifier)
 		{
 		}
 
@@ -53,7 +62,7 @@ namespace MailKit {
 		/// Gets the envelope of the message, if available.
 		/// </remarks>
 		/// <value>The envelope.</value>
-		public Envelope Envelope {
+		public Envelope? Envelope {
 			get; set;
 		}
 
@@ -64,7 +73,7 @@ namespace MailKit {
 		/// Gets the body structure of the message.
 		/// </remarks>
 		/// <value>The body structure.</value>
-		public BodyPart Body {
+		public BodyPart? Body {
 			get; set;
 		}
 
@@ -72,10 +81,11 @@ namespace MailKit {
 		/// Gets the length of the message, in lines.
 		/// </summary>
 		/// <remarks>
-		/// Gets the length of the message, in lines.
+		/// <para>Gets the length of the message, in lines.</para>
+		/// <para>This value will never be negative.</para>
 		/// </remarks>
 		/// <value>The number of lines.</value>
-		public uint Lines {
+		public long Lines {
 			get; set;
 		}
 
@@ -92,7 +102,7 @@ namespace MailKit {
 		/// </remarks>
 		/// <param name="visitor">The visitor.</param>
 		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="visitor"/> is <c>null</c>.
+		/// <paramref name="visitor"/> is <see langword="null" />.
 		/// </exception>
 		public override void Accept (BodyPartVisitor visitor)
 		{
@@ -100,6 +110,21 @@ namespace MailKit {
 				throw new ArgumentNullException (nameof (visitor));
 
 			visitor.VisitBodyPartMessage (this);
+		}
+
+		internal void EncodePrefix (StringBuilder builder)
+		{
+			base.Encode (builder);
+
+			builder.Append (' ');
+			Encode (builder, Envelope);
+			builder.Append (' ');
+		}
+
+		internal void EncodeSuffix (StringBuilder builder)
+		{
+			builder.Append (' ');
+			Encode (builder, Lines);
 		}
 
 		/// <summary>
@@ -111,14 +136,9 @@ namespace MailKit {
 		/// <param name="builder">The string builder.</param>
 		protected override void Encode (StringBuilder builder)
 		{
-			base.Encode (builder);
-
-			builder.Append (' ');
-			Encode (builder, Envelope);
-			builder.Append (' ');
+			EncodePrefix (builder);
 			Encode (builder, Body);
-			builder.Append (' ');
-			Encode (builder, Lines);
+			EncodeSuffix (builder);
 		}
 	}
 }

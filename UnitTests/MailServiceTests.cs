@@ -1,0 +1,133 @@
+﻿//
+// MailServiceTests.cs
+//
+// Author: Jeffrey Stedfast <jestedfa@microsoft.com>
+//
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
+//
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+//
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+// THE SOFTWARE.
+//
+
+using System.Net.Security;
+using System.Security.Cryptography.X509Certificates;
+
+using MailKit;
+using MailKit.Security;
+using MailKit.Net.Imap;
+using MailKit.Net.Pop3;
+using MailKit.Net.Smtp;
+
+namespace UnitTests {
+	[TestFixture]
+	public class MailServiceTests
+	{
+		bool SslCertificateValidationCallback (object sender, X509Certificate certificate, X509Chain chain, SslPolicyErrors sslPolicyErrors)
+		{
+			var certificate2 = certificate as X509Certificate2;
+
+			Assert.That (certificate2, Is.Not.Null, "Cast");
+
+			return true;
+		}
+
+		[Test]
+		public void TestIsKnownMailServerCertificate ()
+		{
+			var servers = new string[] {
+				"imap://imap.gmail.com:993",
+				"pop://pop.gmail.com:995",
+				"smtp://smtp.gmail.com:587",
+
+				"imap://outlook.office365.com:993",
+				"pop://outlook.office365.com:995",
+				"smtp://smtp.office365.com:587",
+			};
+
+			foreach (var server in servers) {
+				var uri = new Uri (server);
+				MailService client;
+
+				switch (uri.Scheme) {
+				case "imap": client = new ImapClient (); break;
+				case "pop": client = new Pop3Client (); break;
+				case "smtp": client = new SmtpClient (); break;
+				default: throw new Exception ("Unsupported protocol");
+				}
+
+				using (client) {
+					client.ServerCertificateValidationCallback = SslCertificateValidationCallback;
+					try {
+						client.Connect (uri.Host, uri.Port, SecureSocketOptions.Auto);
+					} catch {
+						continue;
+					}
+					client.Disconnect (true);
+				}
+			}
+		}
+
+		static IEnumerable<Func<IProtocolLogger, MailService>> ClientFactories ()
+		{
+			yield return logger => new ImapClient (logger);
+			yield return logger => new Pop3Client (logger);
+			yield return logger => new SmtpClient (logger);
+		}
+
+		[TestCaseSource (nameof (ClientFactories))]
+		public async Task TestDisposeAsync (Func<IProtocolLogger, MailService> createClient)
+		{
+			var log = new MemoryStream ();
+			var client = createClient (new ProtocolLogger (log));
+
+			await using (client) {
+				Assert.That (client.IsConnected, Is.False);
+			}
+
+			Assert.That (log.CanWrite, Is.False, "The ProtocolLogger should have been disposed.");
+			Assert.Throws<ObjectDisposedException> (() => client.Connect (new MemoryStream (), "localhost", 143, SecureSocketOptions.None));
+			Assert.ThrowsAsync<ObjectDisposedException> (() => client.ConnectAsync (new MemoryStream (), "localhost", 143, SecureSocketOptions.None));
+
+			// Disposing more than once should be harmless.
+			await client.DisposeAsync ();
+			client.Dispose ();
+		}
+
+		class AsyncDisposeTrackingImapClient : ImapClient
+		{
+			public int DisposeAsyncCoreCount;
+
+			protected override async ValueTask DisposeAsyncCore ()
+			{
+				DisposeAsyncCoreCount++;
+				await base.DisposeAsyncCore ();
+			}
+		}
+
+		[Test]
+		public async Task TestDisposeAsyncCoreOverride ()
+		{
+			var client = new AsyncDisposeTrackingImapClient ();
+
+			await ((IAsyncDisposable) client).DisposeAsync ();
+
+			Assert.That (client.DisposeAsyncCoreCount, Is.EqualTo (1));
+			Assert.Throws<ObjectDisposedException> (() => client.Connect (new MemoryStream (), "localhost", 143, SecureSocketOptions.None));
+		}
+	}
+}

@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -40,6 +40,9 @@ namespace MailKit.Search {
 		/// <summary>
 		/// Initializes a new instance of the <see cref="MailKit.Search.OrderBy"/> class.
 		/// </summary>
+		/// <remarks>
+		/// Creates a new <see cref="OrderBy"/> instance.
+		/// </remarks>
 		/// <param name="type">The field to sort by.</param>
 		/// <param name="order">The sort order.</param>
 		/// <exception cref="System.ArgumentOutOfRangeException">
@@ -85,10 +88,10 @@ namespace MailKit.Search {
 		public static readonly OrderBy Arrival = new OrderBy (OrderByType.Arrival, SortOrder.Ascending);
 
 		/// <summary>
-		/// Sort results by arrival date in desending order.
+		/// Sort results by arrival date in descending order.
 		/// </summary>
 		/// <remarks>
-		/// Sort results by arrival date in desending order.
+		/// Sort results by arrival date in descending order.
 		/// </remarks>
 		public static readonly OrderBy ReverseArrival = new OrderBy (OrderByType.Arrival, SortOrder.Descending);
 

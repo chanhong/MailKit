@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -31,7 +31,9 @@ namespace MailKit.Net.Imap {
 	/// Constructor arguments for <see cref="ImapFolder"/>.
 	/// </summary>
 	/// <remarks>
-	/// Constructor arguments for <see cref="ImapFolder"/>.
+	/// <para>Constructor arguments for <see cref="ImapFolder"/>.</para>
+	/// <para>The <see cref="ImapFolderConstructorArgs"/> are meant only to allow subclassing of <see cref="ImapFolder"/>
+	/// by overriding the <see cref="ImapClient.CreateImapFolder(ImapFolderConstructorArgs)"/> method.</para>
 	/// </remarks>
 	public sealed class ImapFolderConstructorArgs
 	{
@@ -45,18 +47,13 @@ namespace MailKit.Net.Imap {
 		/// <param name="encodedName">The encoded name.</param>
 		/// <param name="attributes">The attributes.</param>
 		/// <param name="delim">The directory separator.</param>
-		internal ImapFolderConstructorArgs (ImapEngine engine, string encodedName, FolderAttributes attributes, char delim) : this ()
+		internal ImapFolderConstructorArgs (ImapEngine engine, string encodedName, FolderAttributes attributes, char delim)
 		{
 			FullName = engine.DecodeMailboxName (encodedName);
-			Name = GetBaseName (FullName, delim);
 			DirectorySeparator = delim;
 			EncodedName = encodedName;
 			Attributes = attributes;
 			Engine = engine;
-		}
-
-		ImapFolderConstructorArgs ()
-		{
 		}
 
 		/// <summary>
@@ -90,24 +87,6 @@ namespace MailKit.Net.Imap {
 		/// <value>The full name of the folder.</value>
 		public string FullName {
 			get; private set;
-		}
-
-		/// <summary>
-		/// Get the name of the folder.
-		/// </summary>
-		/// <remarks>
-		/// This is the equivalent of the file name of a file on the file system.
-		/// </remarks>
-		/// <value>The name of the folder.</value>
-		public string Name {
-			get; private set;
-		}
-
-		static string GetBaseName (string fullName, char delim)
-		{
-			var names = fullName.Split (new [] { delim }, StringSplitOptions.RemoveEmptyEntries);
-
-			return names.Length > 0 ? names[names.Length - 1] : fullName;
 		}
 	}
 }

@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -35,6 +35,16 @@ namespace MailKit {
 	public abstract class BodyPartVisitor
 	{
 		/// <summary>
+		/// Initialize a new instance of the <see cref="BodyPartVisitor"/> class.
+		/// </summary>
+		/// <remarks>
+		/// Creates a new <see cref="BodyPartVisitor"/>.
+		/// </remarks>
+		protected BodyPartVisitor ()
+		{
+		}
+
+		/// <summary>
 		/// Dispatches the entity to one of the more specialized visit methods in this class.
 		/// </summary>
 		/// <remarks>
@@ -43,8 +53,7 @@ namespace MailKit {
 		/// <param name="body">The MIME body part.</param>
 		public virtual void Visit (BodyPart body)
 		{
-			if (body != null)
-				body.Accept (this);
+			body?.Accept (this);
 		}
 
 		/// <summary>
@@ -79,8 +88,7 @@ namespace MailKit {
 		/// <param name="message">The body part representing the message/rfc822 message.</param>
 		protected virtual void VisitMessage (BodyPart message)
 		{
-			if (message != null)
-				message.Accept (this);
+			message.Accept (this);
 		}
 
 		/// <summary>
@@ -93,7 +101,9 @@ namespace MailKit {
 		protected internal virtual void VisitBodyPartMessage (BodyPartMessage entity)
 		{
 			VisitBodyPartBasic (entity);
-			VisitMessage (entity.Body);
+
+			if (entity.Body != null)
+				VisitMessage (entity.Body);
 		}
 
 		/// <summary>

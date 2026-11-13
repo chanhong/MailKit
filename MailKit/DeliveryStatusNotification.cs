@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -33,8 +33,11 @@ namespace MailKit {
 	/// <remarks>
 	/// A set of flags that may be bitwise-or'd together to specify
 	/// when a delivery status notification should be sent for a
-	/// particlar recipient.
+	/// particular recipient.
 	/// </remarks>
+	/// <example>
+	/// <code language="c#" source="Examples\SmtpExamples.cs" region="DeliveryStatusNotification"/>
+	/// </example>
 	[Flags]
 	public enum DeliveryStatusNotification {
 		/// <summary>

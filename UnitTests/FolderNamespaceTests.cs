@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -24,10 +24,7 @@
 // THE SOFTWARE.
 //
 
-using System;
 using System.Collections;
-
-using NUnit.Framework;
 
 using MailKit;
 
@@ -54,32 +51,32 @@ namespace UnitTests {
 			Assert.Throws<ArgumentOutOfRangeException> (() => ns = namespaces[-1]);
 			Assert.Throws<ArgumentOutOfRangeException> (() => namespaces[-1] = new FolderNamespace ('.', ""));
 
-			Assert.AreEqual (0, namespaces.Count);
+			Assert.That (namespaces, Is.Empty);
 
 			ns = new FolderNamespace ('.', "");
 			namespaces.Add (ns);
-			Assert.AreEqual (1, namespaces.Count);
-			Assert.IsTrue (namespaces.Contains (ns));
+			Assert.That (namespaces, Has.Count.EqualTo (1));
+			Assert.That (namespaces.Contains (ns), Is.True);
 			Assert.Throws<ArgumentNullException> (() => namespaces[0] = null);
 
 			ns = new FolderNamespace ('\\', "");
 			namespaces[0] = ns;
-			Assert.AreEqual (1, namespaces.Count);
-			Assert.IsTrue (namespaces.Contains (ns));
+			Assert.That (namespaces, Has.Count.EqualTo (1));
+			Assert.That (namespaces.Contains (ns), Is.True);
 
-			Assert.IsTrue (namespaces.Remove (ns));
-			Assert.AreEqual (0, namespaces.Count);
-			Assert.IsFalse (namespaces.Contains (ns));
+			Assert.That (namespaces.Remove (ns), Is.True);
+			Assert.That (namespaces, Is.Empty);
+			Assert.That (namespaces.Contains (ns), Is.False);
 
 			namespaces.Add (new FolderNamespace ('.', ""));
 			namespaces.Add (new FolderNamespace ('\\', ""));
 			foreach (var item in namespaces)
-				Assert.AreEqual (namespaces[i++], item);
+				Assert.That (item, Is.EqualTo (namespaces[i++]));
 			i = 0;
 			foreach (object item in (IEnumerable) namespaces)
-				Assert.AreEqual (namespaces[i++], item);
+				Assert.That (item, Is.EqualTo (namespaces[i++]));
 
-			Assert.AreEqual ("((\".\" \"\")(\"\\\\\" \"\"))", namespaces.ToString ());
+			Assert.That (namespaces.ToString (), Is.EqualTo ("((\".\" \"\")(\"\\\\\" \"\"))"));
 		}
 	}
 }

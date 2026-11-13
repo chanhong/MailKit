@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -25,10 +25,6 @@
 //
 
 using System;
-#if SERIALIZABLE
-using System.Security;
-using System.Runtime.Serialization;
-#endif
 
 namespace MailKit.Net.Imap {
 	/// <summary>
@@ -39,29 +35,8 @@ namespace MailKit.Net.Imap {
 	/// <see cref="ImapProtocolException"/> is typically fatal and requires the <see cref="ImapClient"/>
 	/// to be reconnected.
 	/// </remarks>
-#if SERIALIZABLE
-	[Serializable]
-#endif
 	public class ImapProtocolException : ProtocolException
 	{
-#if SERIALIZABLE
-		/// <summary>
-		/// Initializes a new instance of the <see cref="MailKit.Net.Imap.ImapProtocolException"/> class.
-		/// </summary>
-		/// <remarks>
-		/// Creates a new <see cref="ImapProtocolException"/> from the serialized data.
-		/// </remarks>
-		/// <param name="info">The serialization info.</param>
-		/// <param name="context">The streaming context.</param>
-		/// <exception cref="System.ArgumentNullException">
-		/// <paramref name="info"/> is <c>null</c>.
-		/// </exception>
-		[SecuritySafeCritical]
-		protected ImapProtocolException (SerializationInfo info, StreamingContext context) : base (info, context)
-		{
-		}
-#endif
-
 		/// <summary>
 		/// Initializes a new instance of the <see cref="MailKit.Net.Imap.ImapProtocolException"/> class.
 		/// </summary>
@@ -91,19 +66,61 @@ namespace MailKit.Net.Imap {
 		/// <remarks>
 		/// Creates a new <see cref="ImapProtocolException"/>.
 		/// </remarks>
+		/// <param name="message">The error message.</param>
+		/// <param name="errorType">The type of protocol error.</param>
+		/// <param name="innerException">An inner exception.</param>
+		public ImapProtocolException (string message, ProtocolErrorType errorType, Exception innerException) : base (message, errorType, innerException)
+		{
+		}
+
+		/// <summary>
+		/// Initializes a new instance of the <see cref="MailKit.Net.Imap.ImapProtocolException"/> class.
+		/// </summary>
+		/// <remarks>
+		/// Creates a new <see cref="ImapProtocolException"/>.
+		/// </remarks>
+		/// <param name="message">The error message.</param>
+		/// <param name="errorType">The type of protocol error.</param>
+		public ImapProtocolException (string message, ProtocolErrorType errorType) : base (message, errorType)
+		{
+		}
+
+		/// <summary>
+		/// Initializes a new instance of the <see cref="MailKit.Net.Imap.ImapProtocolException"/> class.
+		/// </summary>
+		/// <remarks>
+		/// Creates a new <see cref="ImapProtocolException"/>.
+		/// </remarks>
 		public ImapProtocolException ()
 		{
 		}
 
 		/// <summary>
-		/// Gets or sets whether or not this exception was thrown due to an unexpected token.
+		/// Create a new <see cref="ImapProtocolException"/> based on the <see cref="ImapCommand"/> state.
 		/// </summary>
 		/// <remarks>
-		/// Gets or sets whether or not this exception was thrown due to an unexpected token.
+		/// Create a new <see cref="ImapProtocolException"/> based on the <see cref="ImapCommand"/> state.
 		/// </remarks>
-		/// <value><c>true</c> if an unexpected token was encountered; otherwise, <c>false</c>.</value>
-		internal bool UnexpectedToken {
-			get; set;
+		/// <returns>A new protocol exception.</returns>
+		/// <param name="ic">The command state.</param>
+		internal static ImapProtocolException Create (ImapCommand ic)
+		{
+			string? message = null;
+
+			if (string.IsNullOrEmpty (ic.ResponseText)) {
+				for (int i = ic.RespCodes.Count - 1; i >= 0; i--) {
+					if (ic.RespCodes[i].IsError && !string.IsNullOrEmpty (ic.RespCodes[i].Message)) {
+						message = ic.RespCodes[i].Message;
+						break;
+					}
+				}
+
+				message ??= string.Empty;
+			} else {
+				message = ic.ResponseText!;
+			}
+
+			return ic.Exception != null ? new ImapProtocolException (message, ProtocolErrorType.ServerDisconnected, ic.Exception) : new ImapProtocolException (message, ProtocolErrorType.ServerDisconnected);
 		}
 	}
 }

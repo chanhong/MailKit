@@ -3,7 +3,7 @@
 //
 // Author: Jeffrey Stedfast <jestedfa@microsoft.com>
 //
-// Copyright (c) 2013-2020 .NET Foundation and Contributors
+// Copyright (c) 2013-2026 .NET Foundation and Contributors
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -24,16 +24,11 @@
 // THE SOFTWARE.
 //
 
-using System;
 using System.Net;
 using System.Text;
-using System.Threading;
 using System.Net.Sockets;
-using System.Threading.Tasks;
 
 using MailKit.Net;
-
-using NetworkStream = MailKit.Net.NetworkStream;
 
 namespace UnitTests.Net.Proxy {
 	class Socks5ProxyListener : ProxyListener
@@ -100,7 +95,7 @@ namespace UnitTests.Net.Proxy {
 
 		static Socks5ParseResult Parse (byte[] request, int requestLength, out Socks5AuthMethod[] methods)
 		{
-			methods = new Socks5AuthMethod[0];
+			methods = Array.Empty<Socks5AuthMethod> ();
 
 			// +-----+----------+----------+
 			// | VER | NMETHODS | METHODS  |
@@ -130,10 +125,9 @@ namespace UnitTests.Net.Proxy {
 
 		byte[] NegotiateAuthMethod ()
 		{
-			Socks5AuthMethod[] methods;
 			Socks5AuthMethod method;
 
-			var result = Parse (request, requestLength, out methods);
+			var result = Parse (request, requestLength, out var methods);
 			if (result == Socks5ParseResult.NotEnoughData)
 				return null;
 
@@ -216,9 +210,7 @@ namespace UnitTests.Net.Proxy {
 
 		byte[] Authenticate ()
 		{
-			string user, passwd;
-
-			var result = Parse (request, requestLength, out user, out passwd);
+			var result = Parse (request, requestLength, out var user, out var passwd);
 			if (result == Socks5ParseResult.NotEnoughData)
 				return null;
 
@@ -362,7 +354,7 @@ namespace UnitTests.Net.Proxy {
 			return GetCommandResponse (reply, null);
 		}
 
-		protected override async Task<Socket> ClientCommandReceived (NetworkStream client, byte[] buffer, int length, CancellationToken cancellationToken)
+		protected override async Task<Socket> ClientCommandReceived (Stream client, byte[] buffer, int length, CancellationToken cancellationToken)
 		{
 			byte[] response = null;
 			Socket server = null;
@@ -382,7 +374,7 @@ namespace UnitTests.Net.Proxy {
 				switch (result) {
 				case Socks5ParseResult.Success:
 					try {
-						server = await SocketUtils.ConnectAsync (host, port, null, true, cancellationToken).ConfigureAwait (false);
+						server = await SocketUtils.ConnectAsync (host, port, null, cancellationToken).ConfigureAwait (false);
 						var remote = (IPEndPoint) server.RemoteEndPoint;
 
 						response = GetCommandResponse (Socks5Reply.Success, remote);
